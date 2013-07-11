@@ -27,89 +27,11 @@ import pytwalk
 import emcee
 import statsmodels.api as sm
 
-
-# In order to parametrise the correlations of a GWB, or any other signal, we
-# need to have a numbering scheme between parameter number, and correlation
-# coefficient. This particular scheme stems from a much earlier implementation,
-# and it is currently not used in the bang-legacy interface. However, we include
-# it here since these parameters are present in the HDF5 format. Any other
-# transformation of these parameters (e.g. Lentati et al., 2013 in prep.) can of
-# course be used as well.
-#
-# The GWB is a is a power-law signal, correlated between all pulsars. Because we
-# also want to be able to construct these correlation coefficients from the
-# data, we need to be able to include these correlations as model parameters as
-# well. Therefore, a GWB that applies to k pulsars has k*(k+1)/2 extra
-# parameters: the H&D correlation parameters. For convenience, we define a
-# numbering scheme for these correlation parameters.  The correlation index
-# between pulsar i and j, with 0 <= j <= i < k is n_{i,j} = j + i(i+1)/2
-# Example:
-# 
-# i =  0  1  2  3  4         j
-#    _______________________ =
-#    | 0  1  3  6  10  ... | 0
-#    |    2  4  7  11  ... | 1
-#    |       5  8  12  ... | 2
-#    |          9  13  ... | 3
-#    |             14  ... | 4
-#
-#  So for n_{3,2} = 8
-#
-# TODO: Is it necessary to implement this scheme ourselves? Use for now, with
-# these functions:
-# Calculate n(i,j)
-def cn(i, j):
-    return np.int32(np.float32(j) + np.float32(i)*(np.float32(i)+1)/2)
-    
-# Calculate i(n)
-def ci(n):
-    return np.int32(-0.5 + math.sqrt(2*np.float32(n)+0.25))
-
-# Calculate j(n)
-def cj(n):
-    return np.int32(n - cn(ci(n), 0))
-
-# Given i and j, what is the parameter number
-def cparfromij(i, j):
-    return cn(i, j) + 3
-
-# Given the parameter number, what is i and j
-def cijfrompar(p):
-    return ci(p-3), cj(p-3)
-
-# Given two coordinate pairs, what is the GWB correlation? Note: this assumes
-# that no two pulsars have exactly the same coordinates
-# TODO: Check consistency of the arguments
-def gwbcorr(raja, decja, rajb, decjb):
-    dcor = np.zeros(len(raja))
-
-    # Calculate the dot-product of the two pulsar positions
-    kax = np.cos(decja)*np.cos(raja)
-    kay = np.cos(decja)*np.sin(raja)
-    kaz = np.sin(decja)
-    kbx = np.cos(decjb)*np.cos(rajb)
-    kby = np.cos(decjb)*np.sin(rajb)
-    kbz = np.sin(decjb)
-    dotprod = kax*kbx+kay*kby+kaz*kbz
-
-    # This is the Hellings & Downs correlation
-    dx = 0.5 * (1.0 - dotprod)
-
-    # Find out which indices to set ourselves due to log function
-    inda = dx <= 0.0
-    indc = np.logical_not(inda)
-
-    # Those correlations are 0.5
-    dcor[inda] = 0.5
-
-    # The others are given by the Hellings and Downs function
-    dcor[indc] = 1.5 * dx[indc] * np.log(dx[indc]) - 0.25 * dx[indc] + 0.5
-
-    # If the two locations are the same (same pulsar), add 0.5 to correlation
-    addition = np.logical_and(raja==rajb, decja==decjb)
-    dcor += addition * np.array([0.5] * len(raja))
-
-    return dcor
+# For DM calculations, use this constant
+# See You et al. (2007) - http://arxiv.org/abs/astro-ph/0702366
+# Lee et al. (in prep.) - ...
+# Units here are such that delay = DMk * DM * freq^-2 with freq in MHz
+DMk = 4.15e3    #  Units MHz^2 cm^3 pc sec
 
 
 
@@ -282,812 +204,28 @@ class DataFile(object):
             #flaggroup.create_dataset(flagid, data=t2pulsar.flagvalue(flagid))
             flaggroup.create_dataset(flagid, data=t2pulsar.flags[flagid])
 
-        # Close the hdf5 file
-        self.h5file.close()
-        self.h5file = None
-
-    """
-    Create a model folder, and process all the data with all the flags
-    """
-    def preprocessmodeldata(self):
-        # Open read/write, but file must exist
-        self.h5file = h5.File(self.filename, 'r+')
-
-        # Retrieve the data group
-        if not "Data" in self.h5file:
-            self.h5file.close()
-            self.h5file = None
-            raise IOError, "no data group in hdf5 file"
-
-        datagroup = self.h5file["Data"]
-
-        # Retrieve the list of pulsars
-        if not "Pulsars" in datagroup:
-            raise IOError, "no pulsar group in hdf5 file"
-
-        pulsarsgroup = datagroup["Pulsars"]
-
-        # Create the model group
-        if not "Models" in self.h5file:
-            self.h5file.create_group("Models")
-
-        modelsgroup = self.h5file["Models"]
-
-        # Create the model, named "rgp-ban-legacy"
-        modelname = "rgp-ban-legacy"
-        if "rgp-ban-legacy" in modelsgroup:
-            print "WARNING: deleting already existing model (%s)" % (modelname)
-            del modelsgroup[modelname]
-
-        modelgroup = modelsgroup.create_group(modelname)
-
-        # Write an identifier that it is a van haasteren et al. (2009) model
-        #   This does not include data compression
-        modelid = 'vHLML2009'
-        modelgroup.create_dataset('modelid', data=np.array([modelid]), dtype='a'+str(len(modelid)))
-
-        # Create a data folder, which contains a copy of all the data, but now in a more
-        # usable format
-        # TODO: make these into symbolic links?
-        processeddatagroup = modelgroup.create_group("ProcessedData")
-
-        # The relevant data in this model (quad precision numpy arrays)
-        totaltoas = np.array([], dtype='f16')
-        totalprefitres = np.array([], dtype='f16')
-        totalpostfitres = np.array([], dtype='f16')
-        totaltoaerr = np.array([], dtype='f16')
-        totalfreq = np.array([], dtype='f16')
-
-        # The flags in this model (list)
-        totalflags = []
-
-        # Loop over all pulsars, and create the datasets
-        for pulsar in pulsarsgroup:
-            totaltoas = np.append(totaltoas, pulsarsgroup[pulsar]['TOAs'])
-            totalprefitres = np.append(totalprefitres, pulsarsgroup[pulsar]['prefitRes'])
-            totalpostfitres = np.append(totalpostfitres, pulsarsgroup[pulsar]['postfitRes'])
-            totaltoaerr = np.append(totaltoaerr, pulsarsgroup[pulsar]['toaErr'])
-            totalfreq = np.append(totalfreq, pulsarsgroup[pulsar]['freq'])
-
-            if not "Flags" in pulsarsgroup[pulsar]:
-                raise IOError, "no flags group in hdf5 file for pulsar (%s)" % (pulsar)
-
-            flagsgroup = pulsarsgroup[pulsar]["Flags"]
-            totalflags += list(flagsgroup)
-
-        # Write the data to the processeddatagroup 
-        # TODO: Do not downconvert to double precision
-        processeddatagroup.create_dataset('TOAs', data=np.double(totaltoas))
-        processeddatagroup.create_dataset('prefitRes', data=np.double(totalprefitres))
-        processeddatagroup.create_dataset('postfitRes', data=np.double(totalpostfitres))
-        processeddatagroup.create_dataset('toaErr', data=np.double(totaltoaerr))
-        processeddatagroup.create_dataset('freq', data=np.double(totalfreq))
-
-        # Create the model group for flags
-        modelflaggroup = processeddatagroup.create_group("Flags")
-
-        # Reduce the flags to just the unique flags in the files
-        uniqueflags = sets.Set(totalflags)
-
-        print "Looping over all flags (Make this faster!)"
-
-        # Loop over all the flags, and write the all-pulsar flag group
-        for flag in uniqueflags:
-            flagvalues = []
-            for pulsar in pulsarsgroup:
-                flagsgroup = pulsarsgroup[pulsar]["Flags"]
-
-                if flag in flagsgroup:
-                    # This line is what takes up so much time
-                    flagvalues += str(flagsgroup[flag])
-                else:
-                    flagvalues += [""] * len(pulsarsgroup[pulsar]['TOAs'])
-
-            # Write these flag values
-            modelflaggroup.create_dataset(flag, data=flagvalues)
-
-        print "Done with that"
-
-        # Create a few more flags for each TOA:
-        # - The pulsarid flag, an enumerated value (starting 0) indicating pulsar id
-        # - The pulsar name flag, which is equal to the HDF5 used name
-        # - The efacequad flag, which is a unique identifier for the efac/equad signals
-        totalpulsarid = np.empty(0, dtype='u4')
-        totalpulsarname = []
-        totalefacequad = []
-        pid = 0
-        for pulsar in pulsarsgroup:
-            nobs = len(pulsarsgroup[pulsar]['TOAs'])
-
-            # Construct the flags for just this pulsar first
-            pulsarname = map(str, [pulsar] * nobs)
-            pulsarid = pid*np.ones(nobs, dtype='u4')
-
-            # Concatenate the pulsar name with the sys flag, and make that the efacequad
-            # flag
-            if "sys" in pulsarsgroup[pulsar]["Flags"]:
-                efacequad = map('-'.join, zip(pulsarname, pulsarsgroup[pulsar]["Flags"]['sys']))
+        if not "efacequad" in flaggroup:
+            # Check if the sys-flag is present in this set. If it is, add an
+            # efacequad flag with pulsarname+content of the sys-flag. If it isn't, add an
+            # efacequad flag with the pulsar name as it's elements.
+            efacequad = []
+            nobs = len(t2pulsar.toas())
+            pulsarname = map(str, [t2pulsar.name] * nobs)
+            if "sys" in flaggroup:
+                efacequad = map('-'.join, zip(pulsarname, flaggroup['sys']))
             else:
                 efacequad = pulsarname
 
-            # Add these three to the total
-            totalpulsarname += map(str, pulsarname)
-            totalpulsarid = np.append(totalpulsarid, pulsarid)
-            totalefacequad += map(str, efacequad)
+            flaggroup.create_dataset("efacequad", data=efacequad)
 
-            pid += 1
+        if not "pulsarname" in flaggroup:
+            nobs = len(t2pulsar.toas())
+            pulsarname = map(str, [t2pulsar.name] * nobs)
+            flaggroup.create_dataset("pulsarname", data=pulsarname)
 
-        modelflaggroup.create_dataset("pulsarid", data=totalpulsarid)
-        modelflaggroup.create_dataset("pulsarname", data=totalpulsarname)
-        modelflaggroup.create_dataset("efacequad", data=totalefacequad)
-
+        # Close the hdf5 file
         self.h5file.close()
         self.h5file = None
-
-    """
-    Add the linear model of all the tempo2 design matrices
-    """
-    def addt2signals(self):
-        # Open read/write, but file must exist
-        self.h5file = h5.File(self.filename, 'r+')
-
-        # Retrieve the models group
-        if not "Models" in self.h5file:
-            self.h5file.close()
-            self.h5file = None
-            raise IOError, "no Models group in hdf5 file"
-
-        modelsgroup = self.h5file["Models"]
-
-        modelname = "rgp-ban-legacy"
-        modelgroup = modelsgroup[modelname]
-        processeddatagroup = modelgroup["ProcessedData"]
-
-
-        # Add the linear signals
-        if not 'Signals' in modelgroup:
-            modelgroup.create_group("Signals")
-        signalgroup = modelgroup["Signals"]
-
-        # Add all the timing model parameters: linear timing model parameters
-        lineartmp = signalgroup.create_group("linear")
-        lineartempo2 = lineartmp.create_group("tempo2")
-
-        # Figure out how many toas and timing model parameters we have
-        # TODO: This should not be done through the pulsarsgroup
-        datagroup = self.h5file["Data"]
-        pulsarsgroup = datagroup["Pulsars"]
-        totalobs = len(processeddatagroup['TOAs'])
-        totaltmps = 0
-        for pulsar in pulsarsgroup:
-            totaltmps += len(pulsarsgroup[pulsar]['tmp_name'])
-
-        # Create the design matrix (this one is double precision), and the timing model
-        # parameter values/descriptions
-        designmatrix = np.zeros((totalobs, totaltmps), dtype='f8')
-        totaltmp_name = []
-        totaltmp_valpost = np.empty(0, dtype='f8')
-        totaltmp_valpre = np.empty(0, dtype='f8')
-        totaltmp_errpost = np.empty(0, dtype='f8')
-        totaltmp_errpre = np.empty(0, dtype='f8')
-        index1 = 0
-        index2 = 0
-        for pulsar in pulsarsgroup:
-            # Do the design matrix
-            nobs = len(pulsarsgroup[pulsar]['TOAs'])
-            ntmps = len(pulsarsgroup[pulsar]['tmp_name'])
-            # Use the comma, and not [..][..] when slicing multiple dimensions
-            designmatrix[index1:(index1+nobs),index2:(index2+ntmps)] = pulsarsgroup[pulsar]['designmatrix']
-
-            # Create the timing model parameter name
-            totaltmp_name += map(str, map(':'.join, zip([pulsar]*ntmps, pulsarsgroup[pulsar]['tmp_name'])))
-            totaltmp_valpost = np.append(totaltmp_valpost, pulsarsgroup[pulsar]['tmp_valpost'])
-            totaltmp_valpre = np.append(totaltmp_valpre, pulsarsgroup[pulsar]['tmp_valpre'])
-            totaltmp_errpost = np.append(totaltmp_errpost, pulsarsgroup[pulsar]['tmp_errpost'])
-            totaltmp_errpre = np.append(totaltmp_errpre, pulsarsgroup[pulsar]['tmp_errpre'])
-
-            index1 += nobs
-            index2 += ntmps
-
-        lineartempo2.create_dataset("designmatrix", data=designmatrix)
-        lineartempo2.create_dataset("tmp_name", data=totaltmp_name)
-        lineartempo2.create_dataset("tmp_valpost", data=totaltmp_valpost)
-        lineartempo2.create_dataset("tmp_valpre", data=totaltmp_valpre)
-        lineartempo2.create_dataset("tmp_errpost", data=totaltmp_errpost)
-        lineartempo2.create_dataset("tmp_errpre", data=totaltmp_errpre)
-
-        self.h5file.close()
-        self.h5file = None
-
-    """
-    Add the error bars, and efac parameters
-    """
-    def addmodelerrorbars(self, vary=False, separateforeeflags=False):
-        # Open read/write, but file must exist
-        self.h5file = h5.File(self.filename, 'r+')
-
-        # Retrieve the models group
-        if not "Models" in self.h5file:
-            self.h5file.close()
-            self.h5file = None
-            raise IOError, "no Models group in hdf5 file"
-
-        modelsgroup = self.h5file["Models"]
-        datagroup = self.h5file["Data"]
-        pulsarsgroup = datagroup["Pulsars"]
-        psrnames = map(str, pulsarsgroup)
-
-        modelname = "rgp-ban-legacy"
-        modelgroup = modelsgroup[modelname]
-        processeddatagroup = modelgroup["ProcessedData"]
-
-
-        # Add the linear signals
-        if not 'Signals' in modelgroup:
-            self.h5file.close()
-            self.h5file = None
-            raise IOError, "no Models group in hdf5 file"
-
-        signalgroup = modelgroup["Signals"]
-        modelflaggroup = processeddatagroup["Flags"]
-
-        # The stochastic signals require a 
-        stochasticsignals = signalgroup.create_group("stochastic")
-
-        # All unique efacequad flags require an efac error-bar source, and an equad
-        uefacequad = psrnames
-        flagname = 'pulsarname'
-        if separateforeeflags:
-            uefacequad = sets.Set(modelflaggroup["efacequad"])
-            flagname = 'efacequad'
-        else:
-            uefacequad = psrnames
-            flagname = 'pulsarname'
-
-        for eeflag in uefacequad:
-            eelabel = 'efac-' + str(eeflag)
-            efacsource = stochasticsignals.create_group(eelabel)
-            efacsource.create_dataset("type", data=['efac', 'uncor'])
-            efacsource.create_dataset("flag", data=[flagname, eeflag])
-            efacsource.create_dataset("parname", data=['efac'])
-            efacsource.create_dataset("units", data=['log(linear)'])
-            efacsource.create_dataset("min", data=[-5])
-            efacsource.create_dataset("max", data=[5.0])
-            efacsource.create_dataset("start", data=[0.0])
-            efacsource.create_dataset("stepscale", data=[0.1])
-            efacsource.create_dataset("vary", data=[vary])
-
-        self.h5file.close()
-        self.h5file = None
-
-    """
-    Add the white/jitter noise (equad)
-    """
-    def addwhitenoise(self, vary=False, separateforeeflags=False):
-        # Open read/write, but file must exist
-        self.h5file = h5.File(self.filename, 'r+')
-
-        # Retrieve the models group
-        if not "Models" in self.h5file:
-            self.h5file.close()
-            self.h5file = None
-            raise IOError, "no Models group in hdf5 file"
-
-        modelsgroup = self.h5file["Models"]
-        datagroup = self.h5file["Data"]
-        pulsarsgroup = datagroup["Pulsars"]
-        psrnames = map(str, pulsarsgroup)
-
-        modelname = "rgp-ban-legacy"
-        modelgroup = modelsgroup[modelname]
-        processeddatagroup = modelgroup["ProcessedData"]
-
-
-        # Add the linear signals
-        if not 'Signals' in modelgroup:
-            self.h5file.close()
-            self.h5file = None
-            raise IOError, "no Models group in hdf5 file"
-
-        signalgroup = modelgroup["Signals"]
-        modelflaggroup = processeddatagroup["Flags"]
-
-        # The stochastic signals require a 
-        if not "stochastic" in signalgroup:
-            signalgroup.create_group("stochastic")
-
-        stochasticsignals = signalgroup["stochastic"]
-
-        # All unique efacequad flags require an efac error-bar source, and an equad
-        uefacequad = psrnames
-        flagname = 'pulsarname'
-        if separateforeeflags:
-            uefacequad = sets.Set(modelflaggroup["efacequad"])
-            flagname = 'efacequad'
-        else:
-            uefacequad = psrnames
-            flagname = 'pulsarname'
-
-        for eeflag in uefacequad:
-            eelabel = 'equad-' + str(eeflag)
-            equadsource = stochasticsignals.create_group(eelabel)
-            equadsource.create_dataset("type", data=['equad', 'uncor'])
-            equadsource.create_dataset("flag", data=[flagname, eeflag])
-            equadsource.create_dataset("parname", data=['equad'])
-            equadsource.create_dataset("units", data=['log(linear:sec)'])
-            equadsource.create_dataset("min", data=[np.log(1e-11)])
-            equadsource.create_dataset("max", data=[np.log(1.0e-3)])
-            equadsource.create_dataset("start", data=[np.log(1e-7)])
-            equadsource.create_dataset("stepscale", data=[0.1])
-            equadsource.create_dataset("vary", data=[vary])
-
-        self.h5file.close()
-        self.h5file = None
-
-    """
-    Add power-law red noise
-    """
-    def addrednoise(self, vary=False, separateforeeflags=False):
-        # Open read/write, but file must exist
-        self.h5file = h5.File(self.filename, 'r+')
-
-        # Retrieve the models group
-        if not "Models" in self.h5file:
-            self.h5file.close()
-            self.h5file = None
-            raise IOError, "no Models group in hdf5 file"
-
-        modelsgroup = self.h5file["Models"]
-        datagroup = self.h5file["Data"]
-        pulsarsgroup = datagroup["Pulsars"]
-        psrnames = map(str, pulsarsgroup)
-
-        modelname = "rgp-ban-legacy"
-        modelgroup = modelsgroup[modelname]
-        processeddatagroup = modelgroup["ProcessedData"]
-
-
-        # Add the linear signals
-        if not 'Signals' in modelgroup:
-            self.h5file.close()
-            self.h5file = None
-            raise IOError, "no Models group in hdf5 file"
-
-        signalgroup = modelgroup["Signals"]
-        modelflaggroup = processeddatagroup["Flags"]
-
-        # The stochastic signals require a 
-        if not "stochastic" in signalgroup:
-            signalgroup.create_group("stochastic")
-
-        stochasticsignals = signalgroup["stochastic"]
-
-        # All unique efacequad flags require an efac error-bar source, and an equad
-        flagname = 'pulsarname'
-        pulsarflags = psrnames
-        if separateforeeflags:
-            pulsarflags = sets.Set(modelflaggroup["efacequad"])
-            flagname = 'efacequad'
-        else:
-            flagname = 'pulsarname'
-            pulsarflags = psrnames
-
-        for pflag in pulsarflags:
-            rnlabel = 'rednoise-' + str(pflag)
-            rnsource = stochasticsignals.create_group(rnlabel)
-            rnsource.create_dataset("type", data=['powerlaw', 'uncor'])
-            rnsource.create_dataset("flag", data=[flagname, pflag])
-            rnsource.create_dataset("parname", data=['amplitude', 'spectral index', 'low-frequency cut off'])
-            # TODO: come up with better units
-            rnsource.create_dataset("units", data=['log(linear:1e-15)', 'linear', 'yr-1'])
-            rnsource.create_dataset("min", data=[np.log(0.1), 1.16, 0.00001])
-            rnsource.create_dataset("max", data=[np.log(1.0e4), 6.82, 1.0])
-            rnsource.create_dataset("start", data=[0.00, 2.16, 0.05])
-            rnsource.create_dataset("stepscale", data=[0.1, 0.1, 0.01])
-            rnsource.create_dataset("vary", data=[vary, vary, False])
-
-        self.h5file.close()
-        self.h5file = None
-
-    """
-    Add power-law dispersion measure variations
-    """
-    def adddmv(self, vary=False, separateforeeflags=False):
-        # Open read/write, but file must exist
-        self.h5file = h5.File(self.filename, 'r+')
-
-        # Retrieve the models group
-        if not "Models" in self.h5file:
-            self.h5file.close()
-            self.h5file = None
-            raise IOError, "no Models group in hdf5 file"
-
-        modelsgroup = self.h5file["Models"]
-        datagroup = self.h5file["Data"]
-        pulsarsgroup = datagroup["Pulsars"]
-        psrnames = map(str, pulsarsgroup)
-
-        modelname = "rgp-ban-legacy"
-        modelgroup = modelsgroup[modelname]
-        processeddatagroup = modelgroup["ProcessedData"]
-
-        # Check for the linear signals
-        if not 'Signals' in modelgroup:
-            self.h5file.close()
-            self.h5file = None
-            raise IOError, "no Models group in hdf5 file"
-
-        signalgroup = modelgroup["Signals"]
-        modelflaggroup = processeddatagroup["Flags"]
-
-        # The stochastic signals require a 
-        if not "stochastic" in signalgroup:
-            signalgroup.create_group("stochastic")
-
-        stochasticsignals = signalgroup["stochastic"]
-
-        # All unique efacequad flags require an efac error-bar source, and an equad
-        flagname = 'pulsarname'
-        pulsarflags = psrnames
-        if separateforeeflags:
-            pulsarflags = sets.Set(modelflaggroup["efacequad"])
-            flagname = 'efacequad'
-        else:
-            flagname = 'pulsarname'
-            pulsarflags = psrnames
-
-        for pflag in pulsarflags:
-            rnlabel = 'dmv-' + str(pflag)
-            rnsource = stochasticsignals.create_group(rnlabel)
-            rnsource.create_dataset("type", data=['dmv', 'uncor'])
-            rnsource.create_dataset("flag", data=[flagname, pflag])
-            rnsource.create_dataset("parname", data=['amplitude', 'spectral index', 'low-frequency cut off'])
-            # TODO: come up with better units
-            rnsource.create_dataset("units", data=['log(linear)', 'linear', 'yr-1'])
-            rnsource.create_dataset("min", data=[np.log(0.1), 1.16, 0.00001])
-            rnsource.create_dataset("max", data=[np.log(1.0e4), 6.82, 1.0])
-            rnsource.create_dataset("start", data=[0.00, 2.16, 0.05])
-            rnsource.create_dataset("stepscale", data=[0.1, 0.1, 0.01])
-            rnsource.create_dataset("vary", data=[vary, vary, False])
-
-        self.h5file.close()
-        self.h5file = None
-
-
-    """
-    Add a GWB signal
-    """
-    def addgwb(self, vary=False):
-        # Open read/write, but file must exist
-        self.h5file = h5.File(self.filename, 'r+')
-
-        # Retrieve the models group
-        if not "Models" in self.h5file:
-            self.h5file.close()
-            self.h5file = None
-            raise IOError, "no Models group in hdf5 file"
-
-        modelsgroup = self.h5file["Models"]
-        datagroup = self.h5file["Data"]
-        pulsarsgroup = datagroup["Pulsars"]
-        psrnames = map(str, pulsarsgroup)
-
-        modelname = "rgp-ban-legacy"
-        modelgroup = modelsgroup[modelname]
-        processeddatagroup = modelgroup["ProcessedData"]
-
-
-        # Add the linear signals
-        if not 'Signals' in modelgroup:
-            self.h5file.close()
-            self.h5file = None
-            raise IOError, "no Models group in hdf5 file"
-
-        signalgroup = modelgroup["Signals"]
-        modelflaggroup = processeddatagroup["Flags"]
-
-        # The stochastic signals require a 
-        if not "stochastic" in signalgroup:
-            signalgroup.create_group("stochastic")
-
-        stochasticsignals = signalgroup["stochastic"]
-
-        pulsarflags = psrnames
-        k = len(pulsarflags)
-
-        # Label the pulsar indices of the upper triangular correlation matrix
-        index_i, index_j = np.triu_indices(k)
-        index_n = cn(index_i, index_j)
-
-        # Retrieve the list of pulsars
-        if not "Pulsars" in datagroup:
-            raise IOError, "no pulsar group in hdf5 file"
-
-        pulsarsgroup = datagroup["Pulsars"]
-
-        # Pulsar angles
-        # Note: in ban-legacy, the declination is different. Here we use the tempo2
-        # convention.
-        # decl_tempo2 = pi/2 - decl_ban-legacy
-        # TODO: This should not depend on pulsarsgroup
-        raj = np.zeros(k)
-        decj = np.zeros(k)
-        pid = 0
-        for pulsar in pulsarsgroup:
-            rajind = np.flatnonzero(np.array(pulsarsgroup[pulsar]['tmp_name']) == 'RAJ')
-            decjind = np.flatnonzero(np.array(pulsarsgroup[pulsar]['tmp_name']) == 'DECJ')
-            if len(rajind) != 1 or len(decjind) != 1:
-                raise IOError, "RAJ or DECJ not set properly for " + pulsarname
-
-            raj[pid] = np.array(pulsarsgroup[pulsar]['tmp_valpre'])[rajind]
-            decj[pid] = np.array(pulsarsgroup[pulsar]['tmp_valpre'])[decjind]
-            pid += 1
-
-
-        # Make an array, k*(k+1)/2 long, of pulsar positions which list all possible
-        # coordinate combinations. Also name the combinations as:
-        # J0030+451:J0437-4715
-        pulsarnames = np.array(list(pulsarsgroup))
-        raj_index_i, decj_index_i = raj[index_i], decj[index_i]
-        raj_index_j, decj_index_j = raj[index_j], decj[index_j]
-        hdcoefnames = map(str, map(':'.join, zip(pulsarnames[index_i], pulsarnames[index_j])))
-
-        # Calculate the k*(k+1)/2 Hellings & Downs coefficients
-        hdcoefs = gwbcorr(raj_index_i, decj_index_i, raj_index_j, decj_index_j)
-
-        # Set the label, and the gwb parameters
-        gwblabel = 'gwb-pow-gr'
-        gwbtype = ['powerlaw', 'gr']
-        gwbflags = ['pulsarname'] + pulsarflags
-        gwbparnames = ['amplitude', 'spectral index', 'low-frequency cut off'] + hdcoefnames
-        gwbunits = ['log(linear:1e-15)', 'linear', 'yr-1'] + ['corr']*len(hdcoefs)
-        gwbparsstart = np.append([0.0, 4.33, 0.05], hdcoefs)
-        gwbparsmin = [np.log(0.01), 1.16, 1.0e-7] + [-1.0]*len(hdcoefs)
-        gwbparsmax = [np.log(1.0e4), 6.85, 1.00] + [1.0]*len(hdcoefs)
-        gwbparstepscale = [0.1, 0.1, 0.01] + [0.1]*len(hdcoefs)
-        gwbparsvary = [vary, vary, False] + [False]*len(hdcoefs)
-
-        gwbsource = stochasticsignals.create_group(gwblabel)
-        gwbsource.create_dataset("type", data=gwbtype)
-        gwbsource.create_dataset("flag", data=gwbflags)
-        gwbsource.create_dataset("parname", data=gwbparnames)
-        gwbsource.create_dataset("units", data=gwbunits)
-        gwbsource.create_dataset("min", data=gwbparsmin)
-        gwbsource.create_dataset("max", data=gwbparsmax)
-        gwbsource.create_dataset("start", data=gwbparsstart)
-        gwbsource.create_dataset("stepscale", data=gwbparstepscale)
-        gwbsource.create_dataset("vary", data=gwbparsvary)
-
-        self.h5file.close()
-        self.h5file = None
-
-
-    """
-    Add a Time-Standard signal
-    """
-    def addclockerr(self, vary=False):
-        # Open read/write, but file must exist
-        self.h5file = h5.File(self.filename, 'r+')
-
-        # Retrieve the models group
-        if not "Models" in self.h5file:
-            self.h5file.close()
-            self.h5file = None
-            raise IOError, "no Models group in hdf5 file"
-
-        modelsgroup = self.h5file["Models"]
-        datagroup = self.h5file["Data"]
-        pulsarsgroup = datagroup["Pulsars"]
-        psrnames = map(str, pulsarsgroup)
-
-        modelname = "rgp-ban-legacy"
-        modelgroup = modelsgroup[modelname]
-        processeddatagroup = modelgroup["ProcessedData"]
-
-
-        # Add the linear signals
-        if not 'Signals' in modelgroup:
-            self.h5file.close()
-            self.h5file = None
-            raise IOError, "no Models group in hdf5 file"
-
-        signalgroup = modelgroup["Signals"]
-        modelflaggroup = processeddatagroup["Flags"]
-
-        # The stochastic signals require a 
-        if not "stochastic" in signalgroup:
-            signalgroup.create_group("stochastic")
-
-        stochasticsignals = signalgroup["stochastic"]
-
-        pulsarflags = psrnames
-        k = len(pulsarflags)
-
-        # Label the pulsar indices of the upper triangular correlation matrix
-        index_i, index_j = np.triu_indices(k)
-        index_n = cn(index_i, index_j)
-
-        # Retrieve the list of pulsars
-        if not "Pulsars" in datagroup:
-            raise IOError, "no pulsar group in hdf5 file"
-
-        pulsarsgroup = datagroup["Pulsars"]
-
-        # Pulsar angles
-        # Note: in ban-legacy, the declination is different. Here we use the tempo2
-        # convention.
-        # decl_tempo2 = pi/2 - decl_ban-legacy
-        # TODO: This should not depend on pulsarsgroup
-        raj = np.zeros(k)
-        decj = np.zeros(k)
-        pid = 0
-        for pulsar in pulsarsgroup:
-            rajind = np.flatnonzero(np.array(pulsarsgroup[pulsar]['tmp_name']) == 'RAJ')
-            decjind = np.flatnonzero(np.array(pulsarsgroup[pulsar]['tmp_name']) == 'DECJ')
-            if len(rajind) != 1 or len(decjind) != 1:
-                raise IOError, "RAJ or DECJ not set properly for " + pulsarname
-
-            raj[pid] = np.array(pulsarsgroup[pulsar]['tmp_valpre'])[rajind]
-            decj[pid] = np.array(pulsarsgroup[pulsar]['tmp_valpre'])[decjind]
-            pid += 1
-
-
-        # Make an array, k*(k+1)/2 long, of pulsar positions which list all possible
-        # coordinate combinations. Also name the combinations as:
-        # J0030+451:J0437-4715
-        pulsarnames = np.array(list(pulsarsgroup))
-        raj_index_i, decj_index_i = raj[index_i], decj[index_i]
-        raj_index_j, decj_index_j = raj[index_j], decj[index_j]
-        hdcoefnames = map(str, map(':'.join, zip(pulsarnames[index_i], pulsarnames[index_j])))
-
-        # Calculate the k*(k+1)/2 Hellings & Downs coefficients
-        hdcoefs = gwbcorr(raj_index_i, decj_index_i, raj_index_j, decj_index_j)
-
-        # Set the label, and the clock parameters
-        clocklabel = 'clock-pow-gr'
-        clocktype = ['powerlaw', 'gr']
-        clockflags = ['pulsarname'] + pulsarflags
-        clockparnames = ['amplitude', 'spectral index', 'low-frequency cut off'] + hdcoefnames
-        clockunits = ['log(linear:1e-15)', 'linear', 'yr-1'] + ['corr']*len(hdcoefs)
-        clockparsstart = np.append([0.0, 4.33, 0.05], hdcoefs)
-        clockparsmin = [np.log(0.01), 1.16, 1.0e-7] + [-1.0]*len(hdcoefs)
-        clockparsmax = [np.log(1.0e4), 6.85, 1.00] + [1.0]*len(hdcoefs)
-        clockparstepscale = [0.1, 0.1, 0.01] + [0.1]*len(hdcoefs)
-        clockparsvary = [vary, vary, False] + [False]*len(hdcoefs)
-
-        clocksource = stochasticsignals.create_group(clocklabel)
-        clocksource.create_dataset("type", data=clocktype)
-        clocksource.create_dataset("flag", data=clockflags)
-        clocksource.create_dataset("parname", data=clockparnames)
-        clocksource.create_dataset("units", data=clockunits)
-        clocksource.create_dataset("min", data=clockparsmin)
-        clocksource.create_dataset("max", data=clockparsmax)
-        clocksource.create_dataset("start", data=clockparsstart)
-        clocksource.create_dataset("stepscale", data=clockparstepscale)
-        clocksource.create_dataset("vary", data=clockparsvary)
-
-        self.h5file.close()
-        self.h5file = None
-
-
-    """
-    Add an anisotropic GWB signal (up to dipole order)
-    """
-    def adddipolegwb(self, vary=False):
-        # Open read/write, but file must exist
-        self.h5file = h5.File(self.filename, 'r+')
-
-        # Retrieve the models group
-        if not "Models" in self.h5file:
-            self.h5file.close()
-            self.h5file = None
-            raise IOError, "no Models group in hdf5 file"
-
-        modelsgroup = self.h5file["Models"]
-        datagroup = self.h5file["Data"]
-        pulsarsgroup = datagroup["Pulsars"]
-        psrnames = map(str, pulsarsgroup)
-
-        modelname = "rgp-ban-legacy"
-        modelgroup = modelsgroup[modelname]
-        processeddatagroup = modelgroup["ProcessedData"]
-
-
-        # Add the linear signals
-        if not 'Signals' in modelgroup:
-            self.h5file.close()
-            self.h5file = None
-            raise IOError, "no Models group in hdf5 file"
-
-        signalgroup = modelgroup["Signals"]
-        modelflaggroup = processeddatagroup["Flags"]
-
-        # The stochastic signals require a 
-        if not "stochastic" in signalgroup:
-            signalgroup.create_group("stochastic")
-
-        stochasticsignals = signalgroup["stochastic"]
-
-        pulsarflags = psrnames
-        k = len(pulsarflags)
-
-        # Set the label, and the gwb parameters
-        gwbflags = ['pulsarname'] + pulsarflags
-        gwbparnames = ['amplitude', 'spectral index', 'low-frequency cut off']
-        gwbunits = ['log(linear:1e-15)', 'linear', 'yr-1']
-        gwbparsstart = [0.0, 4.33, 0.05]
-        gwbparsmin = [np.log(0.01), 1.16, 1.0e-7]
-        gwbparsmax = [np.log(1.0e4), 6.85, 1.00]
-        gwbparstepscale = [0.1, 0.1, 0.01]
-        gwbparsvary = [vary, vary, False]
-
-        gwblabel = 'gwb-pow-dipole-00'
-        gwbtype = ['powerlaw', 'dipole', '00']
-        gwbsource = stochasticsignals.create_group(gwblabel)
-        gwbsource.create_dataset("type", data=gwbtype)
-        gwbsource.create_dataset("flag", data=gwbflags)
-        gwbsource.create_dataset("parname", data=gwbparnames)
-        gwbsource.create_dataset("units", data=gwbunits)
-        gwbsource.create_dataset("min", data=gwbparsmin)
-        gwbsource.create_dataset("max", data=gwbparsmax)
-        gwbsource.create_dataset("start", data=gwbparsstart)
-        gwbsource.create_dataset("stepscale", data=gwbparstepscale)
-        gwbsource.create_dataset("vary", data=gwbparsvary)
-
-        gwblabel = 'gwb-pow-dipole-1-1'
-        gwbtype = ['powerlaw', 'dipole', '1-1']
-        gwbsource = stochasticsignals.create_group(gwblabel)
-        gwbsource.create_dataset("type", data=gwbtype)
-        gwbsource.create_dataset("flag", data=gwbflags)
-        gwbsource.create_dataset("parname", data=gwbparnames)
-        gwbsource.create_dataset("units", data=gwbunits)
-        gwbsource.create_dataset("min", data=gwbparsmin)
-        gwbsource.create_dataset("max", data=gwbparsmax)
-        gwbsource.create_dataset("start", data=gwbparsstart)
-        gwbsource.create_dataset("stepscale", data=gwbparstepscale)
-        gwbsource.create_dataset("vary", data=gwbparsvary)
-
-        gwblabel = 'gwb-pow-dipole-10'
-        gwbtype = ['powerlaw', 'dipole', '10']
-        gwbsource = stochasticsignals.create_group(gwblabel)
-        gwbsource.create_dataset("type", data=gwbtype)
-        gwbsource.create_dataset("flag", data=gwbflags)
-        gwbsource.create_dataset("parname", data=gwbparnames)
-        gwbsource.create_dataset("units", data=gwbunits)
-        gwbsource.create_dataset("min", data=gwbparsmin)
-        gwbsource.create_dataset("max", data=gwbparsmax)
-        gwbsource.create_dataset("start", data=gwbparsstart)
-        gwbsource.create_dataset("stepscale", data=gwbparstepscale)
-        gwbsource.create_dataset("vary", data=gwbparsvary)
-
-        gwblabel = 'gwb-pow-dipole-11'
-        gwbtype = ['powerlaw', 'dipole', '11']
-        gwbsource = stochasticsignals.create_group(gwblabel)
-        gwbsource.create_dataset("type", data=gwbtype)
-        gwbsource.create_dataset("flag", data=gwbflags)
-        gwbsource.create_dataset("parname", data=gwbparnames)
-        gwbsource.create_dataset("units", data=gwbunits)
-        gwbsource.create_dataset("min", data=gwbparsmin)
-        gwbsource.create_dataset("max", data=gwbparsmax)
-        gwbsource.create_dataset("start", data=gwbparsstart)
-        gwbsource.create_dataset("stepscale", data=gwbparstepscale)
-        gwbsource.create_dataset("vary", data=gwbparsvary)
-
-        self.h5file.close()
-        self.h5file = None
-
-
-
-    """
-    Create a model "rgp-ban-legacy", which describes the data as:
-    Random Gaussian process, error bars for all observations, efac parameter for
-    all system/pulsar combinations, power-law red noise for all pulsars,
-    analytic marginalisation over all timing model parameters
-
-    Currently done manually, so not used yet
-    """
-    def creategwbsearchmodel(self):
-        pass
 
 
     """
@@ -1134,244 +272,6 @@ class DataFile(object):
 
     def setfile(self, filename):
         self.filename = filename
-
-
-
-
-"""
-The bang-legacy code encodes all the different dipole modes independently.
-However, the spectral index is shared between all the modes, and the dipole
-modes need to be converted to real parameters (amplitude and c_lm)
-
-This function returns the bang-parameters A00, A1-1, A10, A11, based on the
-physical parametes A, and the c_lm's
-
-Input: x is a 4D array, with elements
-- A, the GWB amplitude
-- c1-1
-- c10
-- c11
-
-Output: another 4D array, with elements
-- A00, A1-1, A10, A11
-"""
-def dipoleconvertfromreal(x):
-    # x is a 4-D 
-    return x
-
-"""
-Based on the original (wrapper) parameter dictionary, this function returns the
-parameter dictionary and indices as the user will see it. Some parameters are
-changed, and
-"""
-def dipoleampindices(origpardict):
-    mode = 0
-    origindex = 0
-    parindex = 0
-
-    wrapdai = np.array([0, 0, 0, 0])    # Wrapper dipole amplitude indices
-    userdai = np.array([0, 0, 0, 0])    # User dipole amplitude indices
-    wrapdsi = np.array([0, 0, 0, 0])    # Wrapper dipole spectral index indices
-    userdsi = np.array([0])             # User dipole spectral index indices
-    #pardict = [pardict[i].copy() for i in range(len(pardict))]
-    pardict = []
-    
-    for par in origpardict:
-        if par['signaltype'] == 'powerlaw' and par['signalcorrelation'] == 'dipole':
-            # It is a dipole GWB, so which parameter is it?
-            if par['mode'] == '00':
-                # mode 0, 0
-                mode = 0
-            elif par['mode'] == '1-1':
-                # mode 1, -1
-                mode = 1
-            elif par['mode'] == '10':
-                # mode 1, 0
-                mode = 2
-            elif par['mode'] == '11':
-                # mode 1, 1
-                mode = 3
-            else:
-                # This should not happen, since we already checked it
-                raise IOError, "Incorrect parameter dictionary (signal %s)" % (par['signal'])
-
-            if par['parname'] == 'amplitude' and par['vary'] > 0:
-                pardict.append(par.copy())      # Always copy amplitude
-                wrapdai[mode] = origindex
-                userdai[mode] = parindex
-                parindex += 1
-
-                if mode == 0:
-                    pardict[-1]['parname'] = 'Amplitude'
-                else:
-                    pardict[-1]['parname'] = 'c' + par['mode']
-                    pardict[-1]['units'] = ''
-                    pardict[-1]['start'] = 0.0
-                    pardict[-1]['min'] = -1.0
-                    pardict[-1]['max'] = 1.0
-                    pardict[-1]['stepscale'] = 0.1
-            elif par['parname'] == 'spectral index' and par['vary'] > 0 and mode == 0: 
-                pardict.append(par.copy())      # Copy first spectral index
-                wrapdsi[mode] = origindex
-                userdsi[mode] = parindex
-                parindex += 1
-            elif par['parname'] == 'spectral index' and par['vary'] > 0 and mode > 0: 
-                wrapdsi[mode] = origindex
-            else:
-                # This should not happen, since we already checked it
-                raise IOError, "Incorrect parameter dictionary (signal %s)" % (par['signal'])
-
-        else:
-            # No dipole parameter, append without question
-            pardict.append(par.copy())
-            parindex += 1
-
-        # Increase the parameter number index
-        origindex += 1
-
-    return (pardict, wrapdai, userdai, wrapdsi, userdsi)
-
-"""
-Based on the original varying parameter dictionary, this function returns
-whether or not there is one, and exactly one, dipole signal in the dictionary
-
-Because of the mixing of real and apparent parameters, we will require that this
-signal has _exactly_ 8 varying parameters.
-"""
-def havedipolesignal(pardict):
-    dipars = np.zeros(8)  # A00, gamma, A1-1, gamma, A10, gamma, A11, gamma
-    ind = np.array([0, 1])
-
-    for par in pardict:
-        if par['signaltype'] == 'powerlaw' and par['signalcorrelation'] == 'dipole':
-            # It is a dipole GWB, so which parameter is it?
-            if par['mode'] == '00':
-                # mode 0, 0
-                ind = np.array([0, 1])
-            elif par['mode'] == '1-1':
-                # mode 1, -1
-                ind = np.array([2, 3])
-            elif par['mode'] == '10':
-                # mode 1, 0
-                ind = np.array([4, 5])
-            elif par['mode'] == '11':
-                # mode 1, 1
-                ind = np.array([6, 7])
-            else:
-                return False
-
-            if par['parname'] == 'amplitude' and par['vary'] > 0 and dipars[ind[0]] == 0:
-                dipars[ind[0]] = 1
-            elif par['parname'] == 'spectral index' and par['vary'] > 0 and dipars[ind[1]] == 0: 
-                dipars[ind[1]] = 1
-            else:
-                return False
-
-    # All parameters must be present and varying
-    return (np.sum(dipars) == 8)
-
-
-
-
-# Calculate the PTA covariance matrix (only GWB)
-def Cgw_sec(model, alpha=-2.0/3.0, fL=1.0/500, approx_ksum=False, inc_cor=True):
-    """ Compute the residual covariance matrix for an hc = 1 x (f year)^alpha GW background.
-        Result is in units of (100 ns)^2.
-        Modified from Michele Vallisneri's mc3pta (https://github.com/vallis/mc3pta)
-
-        @param: list of libstempo pulsar objects
-                (as returned by readRealisations)
-        @param: the H&D correlation matrix
-        @param: the TOAs
-        @param: the GWB spectral index
-        @param: the low-frequency cut-off
-        @param: approx_ksum
-    """
-    psrobs = model[6]
-    alphaab = model[5]
-    times_f = model[0]
-    
-    day    = 86400.0              # seconds, sidereal (?)
-    year   = 3.15581498e7         # seconds, sidereal (?)
-
-    EulerGamma = 0.5772156649015329
-
-    npsrs = alphaab.shape[0]
-
-    t1, t2 = np.meshgrid(times_f,times_f)
-
-    # t1, t2 are in units of days; fL in units of 1/year (sidereal for both?)
-    # so typical values here are 10^-6 to 10^-3
-    x = 2 * np.pi * (day/year) * fL * np.abs(t1 - t2)
-
-    del t1
-    del t2
-
-    # note that the gamma is singular for all half-integer alpha < 1.5
-    #
-    # for -1 < alpha < 0, the x exponent ranges from 4 to 2 (it's 3.33 for alpha = -2/3)
-    # so for the lower alpha values it will be comparable in value to the x**2 term of ksum
-    #
-    # possible alpha limits for a search could be [-0.95,-0.55] in which case the sign of `power`
-    # is always positive, and the x exponent ranges from ~ 3 to 4... no problem with cancellation
-
-    # The tolerance for which to use the Gamma function expansion
-    tol = 1e-5
-
-    # the exact solutions for alpha = 0, -1 should be acceptable in a small interval around them...
-    if abs(alpha) < 1e-7:
-        cosx, sinx = np.cos(x), np.sin(x)
-
-        power = cosx - x * sinx
-        sinint, cosint = sl.sici(x)
-
-        corr = (year**2 * fL**-2) / (24 * math.pi**2) * (power + x**2 * cosint)
-    elif abs(alpha + 1) < 1e-7:
-        cosx, sinx = np.cos(x), np.sin(x)
-
-        power = 6 * cosx - 2 * x * sinx - x**2 * cosx + x**3 * sinx
-        sinint, cosint = ss.sici(x)
-
-        corr = (year**2 * fL**-4) / (288 * np.pi**2) * (power - x**4 * cosint)
-    else:
-        # leading-order expansion of Gamma[-2+2*alpha]*Cos[Pi*alpha] around -0.5 and 0.5
-        if   abs(alpha - 0.5) < tol:
-            cf =  np.pi/2   + (np.pi - np.pi*EulerGamma)              * (alpha - 0.5)
-        elif abs(alpha + 0.5) < tol:
-            cf = -np.pi/12  + (-11*np.pi/36 + EulerGamma*math.pi/6)     * (alpha + 0.5)
-        elif abs(alpha + 1.5) < tol:
-            cf =  np.pi/240 + (137*np.pi/7200 - EulerGamma*np.pi/120) * (alpha + 1.5)
-        else:
-            cf = ss.gamma(-2+2*alpha) * np.cos(np.pi*alpha)
-
-        power = cf * x**(2-2*alpha)
-
-        # Mathematica solves Sum[(-1)^n x^(2 n)/((2 n)! (2 n + 2 alpha - 2)), {n, 0, Infinity}]
-        # as HypergeometricPFQ[{-1+alpha}, {1/2,alpha}, -(x^2/4)]/(2 alpha - 2)
-        # the corresponding scipy.special function is hyp1f2 (which returns value and error)
-        # TO DO, for speed: could replace with the first few terms of the sum!
-        if approx_ksum:
-            ksum = 1.0 / (2*alpha - 2) - x**2 / (4*alpha) + x**4 / (24 * (2 + 2*alpha))
-        else:
-            ksum = ss.hyp1f2(alpha-1,0.5,alpha,-0.25*x**2)[0]/(2*alpha-2)
-
-        del x
-
-        # this form follows from Eq. (A31) of Lee, Jenet, and Price ApJ 684:1304 (2008)
-        corr = -(year**2 * fL**(-2+2*alpha)) / (12 * np.pi**2) * (power + ksum)
-
-    if inc_cor:
-        # multiply by alphaab; there must be a more numpythonic way to do it
-        # npsrs psrobs
-        inda, indb = 0, 0
-        for a in range(npsrs):
-            for b in range(npsrs):
-                corr[inda:inda+psrobs[a], indb:indb+psrobs[b]] *= alphaab[a, b]
-                indb += psrobs[b]
-            indb = 0
-            inda += psrobs[a]
-        
-    return corr
 
 
 
@@ -1886,27 +786,27 @@ frequencies for all pulsars.
 """
 class mark2signal(object):
     pulsarind = None        # pulsar nr. for EFAC/EQUAD
-    stype = "none"          # EFAC, EQUAD, spectrum, powerlaw
+    stype = "none"          # EFAC, EQUAD, spectrum, powerlaw, dmspectrum, dmpowerlaw
     corr = "single"         # single, gr, uni, dipole...
+
+    flagname = 'efacequad'  # Name of flag this applies to
+    flagvalue = 'noname'    # Flag value this applies to
 
     npars = 0               # Number of parameters
     nindex = 0              # index in total parameters array
 
     # Quantities for EFAC/EQUAD
     GNG = None
+    Nvec = None             # For in the mark3 likelihood
 
     # If this pulsar has only one efac/equad parameter, use computational
     # shortcut, using:
-    Naccel = False
-    GGNGG = None
-    GNGldet = None
-    rGGNGGr = None
-    rGGNGGF = None
-    FGGNGGF = None
+    accelNoise = False      # Works only for efac-only (implement automagically?)
 
     # Quantities for spectral noise
     Tmax = None
     hdmat = None
+
 
 
     
@@ -1934,9 +834,25 @@ class mark2Pulsar(object):
 
     # The auxiliary quantities
     Fmat = None
+    Dmat = None
+    DF = None
     Ffreqs = None
     Gr = None
+    GGr = None
     GtF = None
+    GGtF = None
+    GtD = None
+    GGtD = None
+
+    # Auxiliaries used in the likelihood
+    GNG = None
+    GNGinv = None
+    GGNGG = None
+    GNGldet = None
+    rGGNGGr = None
+    rGGNGGF = None
+    FGGNGGF = None
+    Nvec = None             # For in the mark3 likelihood (projection approx.)
 
     def __init__(self):
         self.raj = 0
@@ -1953,9 +869,15 @@ class mark2Pulsar(object):
         self.name = "J0000+0000"
 
         self.Fmat = None
+        self.Dmat = None
+        self.DF = None
         self.Ffreqs = None
         self.Gr = None
+        self.GGr = None
         self.GtF = None
+        self.GGtF = None
+        self.GtD = None
+        self.GGtD = None
 
     def readFromH5(self, filename, psrname):
         h5file = h5.File(filename, 'r+')
@@ -2020,7 +942,25 @@ class mark2Pulsar(object):
     def createAuxiliaries(self, nfreqs, Tmax):
         (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
         self.Gr = np.dot(self.Gmat.T, self.residuals)
+        self.GGr = np.dot(self.Gmat, self.Gr)
         self.GtF = np.dot(self.Gmat.T, self.Fmat)
+        self.GGtF = np.dot(self.Gmat, self.GtF)
+
+        # For the DM stuff
+        self.Dmat = np.diag(DMk / self.freqs**2)
+        self.DF = np.dot(Dmat, Fmat)
+        self.GtD = np.dot(self.Gmat.T, self.DF)
+        self.GGtG = np.dot(self.Gmat, self.GtD)
+
+    # Assuming that GNG has been set, create all the acceleration auxiliaries
+    def createAccelAuxiliaries(self):
+        cf = sl.cho_factor(self.GNG)
+        self.GNGldet = 2*np.sum(np.log(np.diag(cf[0])))
+        self.GNGinv = sl.cho_solve(cf, np.identity(self.GNG.shape[0]))
+        self.GGNGG = np.dot(self.Gmat, np.dot(self.GNGinv, self.Gmat.T))
+        self.rGGNGGr = np.dot(self.residuals, np.dot(self.GGNGG, self.residuals))
+        self.rGGNGGF = np.dot(self.Fmat.T, np.dot(self.GGNGG, self.residuals))
+        self.FGGNGGF = np.dot(self.Fmat.T, np.dot(self.GGNGG, self.Fmat))
 
 
 class mark2Likelihood(object):
@@ -2037,8 +977,12 @@ class mark2Likelihood(object):
     # The model/signals description
     m2signals = []
 
+    # What likelihood function to use
+    likfunc = 'mark2'
+
     def __init__(self):
         self.m2psrs = []
+        self.m2signals = []
 
         self.dimensions = 0
         self.pmin = None
@@ -2047,6 +991,7 @@ class mark2Likelihood(object):
         self.pwidth = None
         self.pamplitudeind = None
         self.initialised = False
+        self.likfunc = 'mark2'
 
     def initFromFile(self, filename):
         h5file = h5.File(filename, 'r+')
@@ -2077,7 +1022,9 @@ class mark2Likelihood(object):
             self.m2psrs.append(newpsr)
 
     # Initialise the model
-    def initModel(self, nfreqmodes=20, modelIndependent=True, varyEfac=False, incRedNoise=False):
+    def initModel(self, nfreqmodes=20, modelIndependent=True, varyEfac=False, \
+            incRedNoise=False, incEquad=False, separateEfacs=False, \
+            incGWB=False, incDM=False, accelNoise=False, likfunc='mark2'):
         # For every pulsar, construct the auxiliary quantities like the Fourier
         # design matrix etc
         if len(self.m2psrs) < 1:
@@ -2085,6 +1032,7 @@ class mark2Likelihood(object):
 
         Tstart = np.min(self.m2psrs[0].toas)
         Tfinish = np.max(self.m2psrs[0].toas)
+        self.likfunc = likfunc
 
         for m2psr in self.m2psrs:
             Tstart = np.min([np.min(self.m2psrs[0].toas), Tstart])
@@ -2095,35 +1043,89 @@ class mark2Likelihood(object):
         for m2psr in self.m2psrs:
             m2psr.createAuxiliaries(nfreqmodes, Tmax)
 
+        # Check if we really can use acceleration
+        if accelNoise and separateEfacs == False and incEquad == False:
+            self.accelNoise = True
+        else:
+            self.accelNoise = False
+
+
         # Initialise the mark2signal objects
         # Currently: one efac per pulsar, and red noise
         self.m2signals = []
         index = 0
         for ii in range(len(self.m2psrs)):
-            # Create an efac signal
-            newsignal = mark2signal()
-            newsignal.pulsarind = ii
-            newsignal.stype = 'efac'
-            newsignal.corr = 'single'
-            N = np.diag(self.m2psrs[ii].toaerrs**2)
-            newsignal.GNG = np.dot(self.m2psrs[ii].Gmat.T, np.dot(N, self.m2psrs[ii].Gmat))
-            newsignal.npars = 0
-            if varyEfac:
+            if separateEfacs:
+                # Create an efac for every efacequad flag value
+                uflagvals = list(sets.Set(self.m2psrs[ii].flags))   # uniques
+                for flagval in uflagvals:
+                    newsignal = mark2signal()
+                    newsignal.pulsarind = ii
+                    newsignal.stype = 'efac'
+                    newsignal.corr = 'single'
+                    newsignal.flagname = 'efacequad'
+                    newsignal.flagvalue = flagval
+
+                    ind = np.array(self.m2psrs[ii].flags) != flagval
+                    newsignal.Nvec = self.m2psrs[ii].toaerrs**2
+                    newsignal.Nvec[ind] = 0.0
+                    N = np.diag(newsignal.Nvec)
+
+                    if likfunc=='mark2':
+                        # To not calculate useless quantities
+                        newsignal.GNG = np.dot(self.m2psrs[ii].Gmat.T, np.dot(N, self.m2psrs[ii].Gmat))
+                    newsignal.npars = 0
+                    if varyEfac:
+                        newsignal.npars = 1
+                    newsignal.nindex = index
+                    index += newsignal.npars
+
+                    self.m2signals.append(newsignal)
+            else:
+                # One efac to rule them all
+                newsignal = mark2signal()
+                newsignal.pulsarind = ii
+                newsignal.stype = 'efac'
+                newsignal.corr = 'single'
+                newsignal.flagname = 'pulsarname'
+                newsignal.flagvalue = self.m2psrs[ii].name
+                newsignal.Nvec = self.m2psrs[ii].toaerrs**2
+                N = np.diag(newsignal.Nvec)
+                if likfunc=='mark2':
+                    # To not calculate useless quantities
+                    newsignal.GNG = np.dot(self.m2psrs[ii].Gmat.T, np.dot(N, self.m2psrs[ii].Gmat))
+                newsignal.npars = 0
+                if varyEfac:
+                    newsignal.npars = 1
+                newsignal.nindex = index
+                index += newsignal.npars
+
+                # Create the computational-shortcut stuff
+                if self.accelNoise:
+                    newsignal.accelNoise = True
+                    self.m2psrs[ii].GNG = newsignal.GNG
+                    self.m2psrs[ii].createAccelAuxiliaries()
+
+                self.m2signals.append(newsignal)
+
+            if incEquad:
+                # One efac to rule them all
+                newsignal = mark2signal()
+                newsignal.pulsarind = ii
+                newsignal.stype = 'equad'
+                newsignal.corr = 'single'
+                newsignal.flagname = 'pulsarname'
+                newsignal.flagvalue = self.m2psrs[ii].name
+                newsignal.Nvec = np.ones(len(self.m2psrs[ii].toaerrs))
+                N = np.diag(newsignal.Nvec)
+                if likfunc=='mark2':
+                    # To not calculate useless quantities
+                    newsignal.GNG = np.dot(self.m2psrs[ii].Gmat.T, np.dot(N, self.m2psrs[ii].Gmat))
                 newsignal.npars = 1
-            newsignal.nindex = index
-            index += newsignal.npars
+                newsignal.nindex = index
+                index += newsignal.npars
 
-            # Create the computational-shortcut stuff
-            newsignal.Naccel = True
-            cf = sl.cho_factor(newsignal.GNG)
-            newsignal.GNGldet = 2*np.sum(np.log(np.diag(cf[0])))
-            GNGinv = sl.cho_solve(cf, np.identity(newsignal.GNG.shape[0]))
-            newsignal.GGNGG = np.dot(self.m2psrs[ii].Gmat, np.dot(GNGinv, self.m2psrs[ii].Gmat.T))
-            newsignal.rGGNGGr = np.dot(self.m2psrs[ii].residuals, np.dot(newsignal.GGNGG, self.m2psrs[ii].residuals))
-            newsignal.rGGNGGF = np.dot(self.m2psrs[ii].Fmat.T, np.dot(newsignal.GGNGG, self.m2psrs[ii].residuals))
-            newsignal.FGGNGGF = np.dot(self.m2psrs[ii].Fmat.T, np.dot(newsignal.GGNGG, self.m2psrs[ii].Fmat))
-
-            self.m2signals.append(newsignal)
+                self.m2signals.append(newsignal)
 
             if incRedNoise:
                 # Create a spectral signal
@@ -2141,21 +1143,22 @@ class mark2Likelihood(object):
                 self.m2signals.append(newsignal)
                 index += newsignal.npars
 
-        # Now include a GWB
-        newsignal = mark2signal()
-        newsignal.pulsarind = -1
-        if modelIndependent:
-            newsignal.stype = 'spectrum'
-            newsignal.npars = int(len(self.m2psrs[0].Ffreqs)/2) # Check how many
-        else:
-            newsignal.stype = 'powerlaw'
-            newsignal.npars = 2
-        newsignal.corr = 'gr'
-        newsignal.nindex = index
-        newsignal.Tmax = Tmax
-        newsignal.hdmat = hdcorrmat(self.m2psrs)           # The H&D matrix
-        self.m2signals.append(newsignal)
-        index += newsignal.npars
+        if incGWB:
+            # Now include a GWB
+            newsignal = mark2signal()
+            newsignal.pulsarind = -1
+            if modelIndependent:
+                newsignal.stype = 'spectrum'
+                newsignal.npars = int(len(self.m2psrs[0].Ffreqs)/2) # Check how many
+            else:
+                newsignal.stype = 'powerlaw'
+                newsignal.npars = 2
+            newsignal.corr = 'gr'
+            newsignal.nindex = index
+            newsignal.Tmax = Tmax
+            newsignal.hdmat = hdcorrmat(self.m2psrs)           # The H&D matrix
+            self.m2signals.append(newsignal)
+            index += newsignal.npars
 
     def initPrior(self):
         self.dimensions = 0
@@ -2198,16 +1201,12 @@ class mark2Likelihood(object):
 
 
     """
-    Parameters are: efac, coefficients (for now)
-
     # For every pulsar, we assume that the power spectrum frequencies are
     # the same (if included)
     """
     def m2loglikelihood(self, parameters):
-        # Calculating the log-likelihood happens in several steps. Here, we are
-        # going to assume computational tricks for all efac/equad signals. It
-        # 'll take too long otherwise.
-        # Single-pulsar spectra could be added though.
+        # Calculating the log-likelihood happens in several steps.
+        # Single-pulsar spectra could be added
 
         # For all pulsars, we will need the quantities:
         # rGGNGGr, rGGNGGF, FGGNGGF and Phi
@@ -2228,31 +1227,62 @@ class mark2Likelihood(object):
         Phi = np.zeros((np.sum(npf), np.sum(npf)))
         Sigma = np.zeros((np.sum(npf), np.sum(npf))) 
         GNGldet = np.zeros(npsrs)
-        
+
+        # Check for which pulsar we can avoid re-calculating the inverse of GNG
+        pAccel = np.array([True]*npsrs, dtype=np.bool)  # Which pulsars accelerate
+        for ii in range(len(self.m2signals)):
+            if self.m2signals[ii].stype == 'efac' or self.m2signals[ii].stype == 'equad':
+                if self.m2signals[ii].accelNoise == False:
+                    pAccel[self.m2signals[ii].pulsarind] = False
+                    self.m2psrs[self.m2signals[ii].pulsarind].GNG = np.zeros(self.m2signals[ii].GNG.shape)
+
+        # Add up all the GNG combinations for all pulsars
+        for m2signal in self.m2signals:
+            if m2signal.pulsarind >= 0:
+                if m2signal.stype == 'efac' and pAccel[m2signal.pulsarind] == False:
+                    # Non-accelerated, create GNG
+                    pefac = 1.0
+                    if m2signal.npars == 1:
+                        pefac = parameters[m2signal.nindex]
+                        
+                    self.m2psrs[m2signal.pulsarind].GNG += m2signal.GNG * (pefac**2)
+                elif m2signal.stype == 'equad' and pAccel[m2signal.pulsarind] == False:
+                    # Non-accelerated, create GNG
+                    pequadsqr = 10**(2*parameters[m2signal.nindex])
+                    self.m2psrs[m2signal.pulsarind].GNG += m2signal.GNG * pequadsqr
+
+        # For the now-created GNGs, create the auxiliaries
+        for ii in range(npsrs):
+            if pAccel[ii] == False:
+                self.m2psrs[ii].createAccelAuxiliaries()
+
+                findex = np.sum(npf[:ii])
+                nfreq = npf[ii]/2
+
+                rGr[ii] = self.m2psrs[ii].rGGNGGr
+                rGF[findex:findex+2*nfreq] = self.m2psrs[ii].rGGNGGF
+                GNGldet[ii] = self.m2psrs[ii].GNGldet
+                FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = self.m2psrs[ii].FGGNGGF
+
+        # Loop over all accelerated signals, and create other noise auxiliaries
+        for m2signal in self.m2signals:
+            if m2signal.pulsarind >= 0:
+                findex = np.sum(npf[:m2signal.pulsarind])
+                nfreq = npf[m2signal.pulsarind]/2
+                if m2signal.stype == 'efac' and pAccel[m2signal.pulsarind]:
+                    # Accelerated
+                    pefacsqr = 1.0
+                    if m2signal.npars == 1:
+                        pefacsqr = parameters[m2signal.nindex]**2
+
+                    rGr[m2signal.pulsarind] = self.m2psrs[m2signal.pulsarind].rGGNGGr / pefacsqr
+                    rGF[findex:findex+2*nfreq] = self.m2psrs[m2signal.pulsarind].rGGNGGF / pefacsqr
+                    GNGldet[m2signal.pulsarind] = self.m2psrs[m2signal.pulsarind].GNGldet + np.log(pefacsqr) * self.m2psrs[m2signal.pulsarind].Gmat.shape[1]
+                    FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = self.m2psrs[m2signal.pulsarind].FGGNGGF / pefacsqr
+
         # Loop over all signals, and fill the above arrays
         for m2signal in self.m2signals:
-            if m2signal.stype == 'efac':
-                pefac = 1.0
-                if m2signal.npars == 1:
-                    pefac = parameters[m2signal.nindex]
-
-                findex = np.sum(npf[:m2signal.pulsarind])
-                nfreq = npf[m2signal.pulsarind]/2
-
-                rGr[m2signal.pulsarind] = m2signal.rGGNGGr / pefac
-                rGF[findex:findex+2*nfreq] = m2signal.rGGNGGF / pefac
-                GNGldet[m2signal.pulsarind] = m2signal.GNGldet + np.log(pefac) * self.m2psrs[m2signal.pulsarind].Gmat.shape[1]
-                FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] += m2signal.FGGNGGF / pefac
-            elif m2signal.stype == 'equad':
-                # TODO: Change this from an efac, now is the same
-                findex = np.sum(npf[:m2signal.pulsarind])
-                nfreq = npf[m2signal.pulsarind]/2
-
-                rGr[m2signal.pulsarind] = m2signal.rGGNGGr / parameters[m2signal.nindex]
-                rGF[findex:findex+2*nfreq] = m2signal.rGGNGGF / parameters[m2signal.nindex]
-                GNGldet[m2signal.pulsarind] = m2signal.GNGldet + np.log(parameters[m2signal.nindex]) * self.m2psrs[m2signal.pulsarind].Gmat.shape[1]
-                FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] += m2signal.FGGNGGF / parameters[m2signal.nindex]
-            elif m2signal.stype == 'spectrum':
+            if m2signal.stype == 'spectrum':
                 if m2signal.corr == 'single':
                     findex = np.sum(npf[:m2signal.pulsarind])
                     nfreq = npf[m2signal.pulsarind]/2
@@ -2332,11 +1362,394 @@ class mark2Likelihood(object):
         # Now we are ready to return the log-likelihood
         return -0.5*np.sum(rGr) - 0.5*np.sum(GNGldet) + 0.5*rGSigmaGr - 0.5*PhiLD - 0.5*SigmaLD
 
+
+    """
+    mark3 loglikelihood of the mark2 model/likelihood implementation
+
+    This likelihood uses an approximation for the noise matrices: in general GNG
+    is not diagonal for the noise. Use that the projection of the inverse is
+    roughly equal to the inverse of the projection (not true for red noise).
+    Rationale is that white noise is not covariant with the timing model
+    """
+    def m3loglikelihood(self, parameters):
+        # Calculating the log-likelihood happens in several steps.
+
+        # For all pulsars, we will need the quantities:
+        # rGGNGGr, rGGNGGF, FGGNGGF and Phi
+
+        # For the total, we will construct the full matrix Sigma from these.
+        # After that, the log-likelihood can be calculated
+
+        # First figure out how large we have to make the arrays
+        npsrs = len(self.m2psrs)
+        npf = np.zeros(npsrs, dtype=np.int)
+        for ii in range(npsrs):
+            npf[ii] = len(self.m2psrs[ii].Ffreqs)
+
+        # Define the total arrays
+        rGr = np.zeros(npsrs)
+        rGF = np.zeros(np.sum(npf))
+        FGGNGGF = np.zeros((np.sum(npf), np.sum(npf)))
+        Phi = np.zeros((np.sum(npf), np.sum(npf)))
+        Sigma = np.zeros((np.sum(npf), np.sum(npf))) 
+        GNGldet = np.zeros(npsrs)
+
+        # For every pulsar, set the noise vector to zero
+        for m2psr in self.m2psrs:
+            m2psr.Nvec = np.zeros(len(m2psr.toas))
+
+        # Loop over all white noise signals, and fill the pulsar Nvec
+        for m2signal in self.m2signals:
+            if m2signal.stype == 'efac':
+                pefac = 1.0
+                if m2signal.npars == 1:
+                    pefac = parameters[m2signal.nindex]
+                self.m2psrs[m2signal.pulsarind].Nvec += m2signal.Nvec * pefac**2
+            elif m2signal.stype == 'equad':
+                pequadsqr = 10**(2*parameters[m2signal.nindex])
+                self.m2psrs[m2signal.pulsarind].Nvec += m2signal.Nvec * pequadsqr
+
+        # Armed with the Noise (and it's inverse), we'll construct the
+        # auxiliaries for all pulsars
+        for ii in range(npsrs):
+            findex = np.sum(npf[:ii])
+            nfreq = npf[ii]/2
+
+            """
+            GNG = np.dot(self.m2psrs[ii].Gmat.T, np.dot(np.diag(self.m2psrs[ii].Nvec), self.m2psrs[ii].Gmat))
+            cf = sl.cho_factor(GNG)
+            GNGldet[ii] = 2*np.sum(np.diag(np.log(cf[0])))
+            GNGinv = sl.cho_solve(cf, np.identity(GNG.shape[0]))
+
+            rGr[ii] = np.dot(self.m2psrs[ii].Gr, np.dot(GNGinv, self.m2psrs[ii].Gr))
+            rGF[findex:findex+2*nfreq] = np.dot(self.m2psrs[ii].GtF.T, np.dot(GNGinv, self.m2psrs[ii].Gr))
+            FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = np.dot(self.m2psrs[ii].GtF.T, np.dot(GNGinv, self.m2psrs[ii].GtF))
+
+            Ninv = np.diag(1.0 / self.m2psrs[ii].Nvec)
+            temp0 = np.dot(self.m2psrs[ii].GGtF.T, np.dot(Ninv, self.m2psrs[ii].GGtF))
+            temp1 = np.dot(self.m2psrs[ii].GtF.T, np.dot(GNGinv, self.m2psrs[ii].GtF))
+            cf0 = sl.cho_factor(temp0)
+            cf1 = sl.cho_factor(temp1)
+            """
+
+            #"""
+            # One temporary quantity
+            NGGF = np.array([(1.0/self.m2psrs[ii].Nvec) * self.m2psrs[ii].GGtF[:,i] for i in range(self.m2psrs[ii].Fmat.shape[1])]).T
+
+            # Fill the auxiliaries
+            nobs = len(self.m2psrs[ii].toas)
+            ng = self.m2psrs[ii].Gmat.shape[1]
+            rGr[ii] = np.sum(self.m2psrs[ii].GGr ** 2 / self.m2psrs[ii].Nvec)
+            rGF[findex:findex+2*nfreq] = np.dot(self.m2psrs[ii].GGr, NGGF)
+            GNGldet[ii] = np.sum(np.log(self.m2psrs[ii].Nvec)) * ng / nobs
+            FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = np.dot(self.m2psrs[ii].GGtF.T, NGGF)
+
+            """
+            temp2 = np.dot(self.m2psrs[ii].GGtF.T, NGGF)
+            print temp0, temp2
+            cf2 = sl.cho_factor(temp2)
+            """
+
+
+        # Loop over all signals, and fill the phi matrix
+        for m2signal in self.m2signals:
+            if m2signal.stype == 'spectrum':
+                if m2signal.corr == 'single':
+                    findex = np.sum(npf[:m2signal.pulsarind])
+                    nfreq = npf[m2signal.pulsarind]/2
+
+                    # Pcdoubled is an array where every element of the parameters
+                    # of this m2signal is repeated once (e.g. [1, 1, 3, 3, 2, 2, 5, 5, ...]
+                    pcdoubled = np.array([parameters[m2signal.nindex:m2signal.nindex+m2signal.npars], parameters[m2signal.nindex:m2signal.nindex+m2signal.npars]]).T.flatten()
+
+                    # Fill the phi matrix
+                    di = np.diag_indices(2*nfreq)
+                    Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += 10**pcdoubled
+                elif m2signal.corr == 'gr':
+                    nfreq = m2signal.npars
+
+                    pcdoubled = np.array([parameters[m2signal.nindex:m2signal.nindex+m2signal.npars], parameters[m2signal.nindex:m2signal.nindex+m2signal.npars]]).T.flatten()
+
+                    indexa = 0
+                    indexb = 0
+                    for aa in range(npsrs):
+                        for bb in range(npsrs):
+                            # Some pulsars may have fewer frequencies than
+                            # others (right?). So only use overlapping ones
+                            nof = np.min([npf[aa], npf[bb], 2*nfreq])
+                            di = np.diag_indices(nof)
+                            Phi[indexa:indexa+nof,indexb:indexb+nof][di] += 10**pcdoubled[:nof] * m2signal.hdmat[aa, bb]
+                            indexb += npf[bb]
+                        indexb = 0
+                        indexa += npf[aa]
+            elif m2signal.stype == 'powerlaw':
+                spd = 24 * 3600.0
+                spy = 365.25 * spd
+                Amp = 10**parameters[m2signal.nindex]
+                Si = parameters[m2signal.nindex+1]
+
+                if m2signal.corr == 'single':
+                    findex = np.sum(npf[:m2signal.pulsarind])
+                    nfreq = npf[m2signal.pulsarind]/2
+                    freqpy = self.m2psrs[m2signal.pulsarind].Ffreqs * spy
+                    pcdoubled = (Amp**2 * spy**3 / (12*np.pi*np.pi * m2signal.Tmax)) * freqpy ** (-Si)
+
+                    # Fill the phi matrix
+                    di = np.diag_indices(2*nfreq)
+                    Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += pcdoubled
+                elif m2signal.corr == 'gr':
+                    freqpy = self.m2psrs[0].Ffreqs * spy
+                    pcdoubled = (Amp**2 * spy**3 / (12*np.pi*np.pi * m2signal.Tmax)) * freqpy ** (-Si)
+                    nfreq = len(freqpy)
+
+                    indexa = 0
+                    indexb = 0
+                    for aa in range(npsrs):
+                        for bb in range(npsrs):
+                            # Some pulsars may have fewer frequencies than
+                            # others (right?). So only use overlapping ones
+                            nof = np.min([npf[aa], npf[bb]])
+                            if nof > nfreq:
+                                raise IOError, "ERROR: nof > nfreq. Adjust GWB freqs"
+
+                            di = np.diag_indices(nof)
+                            Phi[indexa:indexa+nof,indexb:indexb+nof][di] += pcdoubled[:nof] * m2signal.hdmat[aa, bb]
+                            indexb += npf[bb]
+                        indexb = 0
+                        indexa += npf[aa]
+        
+        # Now that all arrays are filled, we can proceed to do some linear
+        # algebra. First we'll invert Phi
+        cf = sl.cho_factor(Phi)
+        PhiLD = 2*np.sum(np.log(np.diag(cf[0])))
+        Phiinv = sl.cho_solve(cf, np.identity(Phi.shape[0]))
+
+        # Construct and decompose Sigma
+        Sigma = FGGNGGF + Phiinv
+        cf = sl.cho_factor(Sigma)
+        SigmaLD = 2*np.sum(np.log(np.diag(cf[0])))
+        rGSigmaGr = np.dot(rGF, sl.cho_solve(cf, rGF))
+
+        # Now we are ready to return the log-likelihood
+        return -0.5*np.sum(rGr) - 0.5*np.sum(GNGldet) + 0.5*rGSigmaGr - 0.5*PhiLD - 0.5*SigmaLD
+
+
+    """
+    mark4 loglikelihood of the mark2 model/likelihood implementation
+
+    Like the mark3 version, but now also implements DM variation correction
+
+    TODO: also fit for a DM quadratic in the design matrix
+    """
+    def m4loglikelihood(self, parameters):
+        # First figure out how large we have to make the arrays
+        npsrs = len(self.m2psrs)
+        npf = np.zeros(npsrs, dtype=np.int)
+        nobs = np.zeros(npsrs, dtype=np.int)
+        ngs = np.zeros(npsrs, dtype=np.int)
+        for ii in range(npsrs):
+            npf[ii] = len(self.m2psrs[ii].Ffreqs)
+            nobs[ii] = len(self.m2psrs[ii].toas)
+            ngs[ii] = self.m2psrs[ii].Gmat.shape[1]
+
+        # Define the total arrays
+        rGr = np.zeros(npsrs)
+        rGF = np.zeros(np.sum(npf))
+        FGGNGGF = np.zeros((np.sum(npf), np.sum(npf)))
+        DGGNGGF = np.zeros((np.sum(npf), np.sum(npf)))
+        DGGNGGD = np.zeros((np.sum(npf), np.sum(npf)))
+        Phi = np.zeros((np.sum(npf), np.sum(npf)))           # Red signals
+        Thetavec = np.zeros(np.sum(npf))                     # <- diagonal mat as vec
+        Sigma = np.zeros((np.sum(npf), np.sum(npf))) 
+        GNGldet = np.zeros(npsrs)
+        NGGF = np.zeros((np.sum(nobs), np.sum(npf)))
+        NGGD = np.zeros((np.sum(nobs), np.sum(npf)))
+
+        DGXr = np.zeros(np.sum(npf))
+
+        # First loop over all signals, and fill the phi and theta matrices
+        for m2signal in self.m2signals:
+            if m2signal.stype == 'spectrum':
+                if m2signal.corr == 'single':
+                    findex = np.sum(npf[:m2signal.pulsarind])
+                    nfreq = npf[m2signal.pulsarind]/2
+
+                    # Pcdoubled is an array where every element of the parameters
+                    # of this m2signal is repeated once (e.g. [1, 1, 3, 3, 2, 2, 5, 5, ...]
+                    pcdoubled = np.array([parameters[m2signal.nindex:m2signal.nindex+m2signal.npars], parameters[m2signal.nindex:m2signal.nindex+m2signal.npars]]).T.flatten()
+
+                    # Fill the phi matrix
+                    di = np.diag_indices(2*nfreq)
+                    Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += 10**pcdoubled
+                elif m2signal.corr == 'gr':
+                    nfreq = m2signal.npars
+
+                    pcdoubled = np.array([parameters[m2signal.nindex:m2signal.nindex+m2signal.npars], parameters[m2signal.nindex:m2signal.nindex+m2signal.npars]]).T.flatten()
+
+                    indexa = 0
+                    indexb = 0
+                    for aa in range(npsrs):
+                        for bb in range(npsrs):
+                            # Some pulsars may have fewer frequencies than
+                            # others (right?). So only use overlapping ones
+                            nof = np.min([npf[aa], npf[bb], 2*nfreq])
+                            di = np.diag_indices(nof)
+                            Phi[indexa:indexa+nof,indexb:indexb+nof][di] += 10**pcdoubled[:nof] * m2signal.hdmat[aa, bb]
+                            indexb += npf[bb]
+                        indexb = 0
+                        indexa += npf[aa]
+            if m2signal.stype == 'dmspectrum':
+                if m2signal.corr == 'single':
+                    findex = np.sum(npf[:m2signal.pulsarind])
+                    nfreq = npf[m2signal.pulsarind]/2
+
+                    pcdoubled = np.array([parameters[m2signal.nindex:m2signal.nindex+m2signal.npars], parameters[m2signal.nindex:m2signal.nindex+m2signal.npars]]).T.flatten()
+
+                    # Fill the phi matrix
+                    #di = np.diag_indices(2*nfreq)
+                    #Theta[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += 10**pcdoubled
+                    Thetavec[findex:findex+2*nfreq] += 10**pcdoubled
+            elif m2signal.stype == 'powerlaw':
+                spd = 24 * 3600.0
+                spy = 365.25 * spd
+                Amp = 10**parameters[m2signal.nindex]
+                Si = parameters[m2signal.nindex+1]
+
+                if m2signal.corr == 'single':
+                    findex = np.sum(npf[:m2signal.pulsarind])
+                    nfreq = npf[m2signal.pulsarind]/2
+                    freqpy = self.m2psrs[m2signal.pulsarind].Ffreqs * spy
+                    pcdoubled = (Amp**2 * spy**3 / (12*np.pi*np.pi * m2signal.Tmax)) * freqpy ** (-Si)
+
+                    # Fill the phi matrix
+                    di = np.diag_indices(2*nfreq)
+                    Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += pcdoubled
+                elif m2signal.corr == 'gr':
+                    freqpy = self.m2psrs[0].Ffreqs * spy
+                    pcdoubled = (Amp**2 * spy**3 / (12*np.pi*np.pi * m2signal.Tmax)) * freqpy ** (-Si)
+                    nfreq = len(freqpy)
+
+                    indexa = 0
+                    indexb = 0
+                    for aa in range(npsrs):
+                        for bb in range(npsrs):
+                            # Some pulsars may have fewer frequencies than
+                            # others (right?). So only use overlapping ones
+                            nof = np.min([npf[aa], npf[bb]])
+                            if nof > nfreq:
+                                raise IOError, "ERROR: nof > nfreq. Adjust GWB freqs"
+
+                            di = np.diag_indices(nof)
+                            Phi[indexa:indexa+nof,indexb:indexb+nof][di] += pcdoubled[:nof] * m2signal.hdmat[aa, bb]
+                            indexb += npf[bb]
+                        indexb = 0
+                        indexa += npf[aa]
+            elif m2signal.stype == 'dmpowerlaw':
+                spd = 24 * 3600.0
+                spy = 365.25 * spd
+                Amp = 10**parameters[m2signal.nindex]
+                Si = parameters[m2signal.nindex+1]
+
+                if m2signal.corr == 'single':
+                    findex = np.sum(npf[:m2signal.pulsarind])
+                    nfreq = npf[m2signal.pulsarind]/2
+                    freqpy = self.m2psrs[m2signal.pulsarind].Ffreqs * spy
+                    # TODO: change the units of the DM signal
+                    pcdoubled = (Amp**2 * spy**3 / (12*np.pi*np.pi * m2signal.Tmax)) * freqpy ** (-Si)
+
+                    # Fill the phi matrix
+                    #di = np.diag_indices(2*nfreq)
+                    #Theta[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += pcdoubled
+                    Thetavec[findex:findex+2*nfreq] += pcdoubled
+
+
+        # For every pulsar, set the noise vector to zero
+        for m2psr in self.m2psrs:
+            m2psr.Nvec = np.zeros(len(m2psr.toas))
+
+        # Loop over all white noise signals, and fill the pulsar Nvec
+        for m2signal in self.m2signals:
+            if m2signal.stype == 'efac':
+                pefac = 1.0
+                if m2signal.npars == 1:
+                    pefac = parameters[m2signal.nindex]
+                self.m2psrs[m2signal.pulsarind].Nvec += m2signal.Nvec * pefac**2
+            elif m2signal.stype == 'equad':
+                pequadsqr = 10**(2*parameters[m2signal.nindex])
+                self.m2psrs[m2signal.pulsarind].Nvec += m2signal.Nvec * pequadsqr
+
+        # Armed with the Noise (and it's inverse), we'll construct the
+        # auxiliaries for all pulsars
+        for ii in range(npsrs):
+            findex = np.sum(npf[:ii])
+            nindex = np.sum(nobs[:ii])
+            ncurobs = nobs[ii]
+            nfreq = npf[ii]/2
+
+            # Large auxiliary quantities
+            NGGF[nindex:nindex+ncurobs, findex,findex+2*nfreq] = np.array([(1.0/self.m2psrs[ii].Nvec) * self.m2psrs[ii].GGtF[:,i] for i in range(self.m2psrs[ii].Fmat.shape[1])]).T
+            NGGD[nindex:nindex+ncurobs, findex,findex+2*nfreq] = np.array([(1.0/self.m2psrs[ii].Nvec) * self.m2psrs[ii].GGtD[:,i] for i in range(self.m2psrs[ii].DF.shape[1])]).T
+
+            # Fill the auxiliaries
+            rGr[ii] = np.sum(self.m2psrs[ii].GGr ** 2 / self.m2psrs[ii].Nvec)
+            rGF[findex:findex+2*nfreq] = np.dot(self.m2psrs[ii].GGr, NGGF[nindex:nindex+ncurobs, findex,findex+2*nfreq])
+            GNGldet[ii] = np.sum(np.log(self.m2psrs[ii].Nvec)) * ngs[ii] / nobs[ii]
+            FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = np.dot(self.m2psrs[ii].GGtF.T, NGGF[nindex:nindex+ncurobs, findex,findex+2*nfreq])
+            DGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = np.dot(self.m2psrs[ii].GGtD.T, NGGF[nindex:nindex+ncurobs, findex,findex+2*nfreq])
+            DGGNGGD[findex:findex+2*nfreq, findex:findex+2*nfreq] = np.dot(self.m2psrs[ii].GGtD.T, NGGD[nindex:nindex+ncurobs, findex,findex+2*nfreq])
+
+        
+        # Now that those arrays are filled, we can proceed to do some linear
+        # algebra. First we'll invert Phi
+        cfPhi = sl.cho_factor(Phi)
+        PhiLD = 2*np.sum(np.log(np.diag(cfPhi[0])))
+        Phiinv = sl.cho_solve(cfPhi, np.identity(Phi.shape[0]))
+
+        # Construct and decompose Sigma
+        Sigma = FGGNGGF + Phiinv
+        cfSigma = sl.cho_factor(Sigma)
+        SigmaLD = 2*np.sum(np.log(np.diag(cfSigma[0])))
+        SigmaGr = sl.cho_solve(cfSigma, rGF)
+        rGSigmaGr = np.dot(rGF, SigmaGr)
+
+        # For the DM spectrum, we'll construct the matrix Y
+        # (Need Sigma for this)
+        di = np.diag_indices(DGGNGGD.shape[0])
+        Ymat = DGGNGGD - np.dot(DGGNGGF, sl.cho_solve(cfSigma, DGGNGGF.T))
+        Ymat[di] += np.diag(1.0/Thetavec)
+        cfY = sl.cho_factor(Ymat)
+        YLD = 2*.np.sum(np.log(np.diag(cfY[0])))
+        ThetaLD = np.sum(np.log(Thetavec))
+
+        for ii in range(npsrs):
+            findex = np.sum(npf[:ii])
+            nindex = np.sum(nobs[:ii])
+            ncurobs = nobs[ii]
+            nfreq = npf[ii]/2
+            DGXr[findex:findex+2*nfreq] = np.dot(self.m2psrs[ii].GGtD.T,\
+                    self.m2psrs[ii].GGr / self.m2psrs[ii].Nvec) - \
+                    np.dot(self.m2psrs[ii].GGtD.T, np.dot(NGGF[nindex:nindex+ncurobs, \
+                    findex,findex+2*nfreq], sl.cho_solve(cfSigma, \
+                    rGF[findex,findex+2*nfreq])))
+
+        # Finally, the last inner product
+        rDGYGDr = np.dot(DGXr, np.cho_solve(cfY, DGXr))
+
+        # Now we are ready to return the log-likelihood
+        return -0.5*np.sum(rGr) + 0.5*rGSigmaGr + 0.5*rDGYGDr \
+               -0.5*np.sum(GNGldet) - 0.5*PhiLD - 0.5*SigmaLD \
+               -0.5*ThetaLD - 0.5*YLD
+
+
+
     def loglikelihood(self, parameters):
         ll = 0.0
 
         if(np.all(self.pmin <= parameters) and np.all(parameters <= self.pmax)):
-            ll = self.m2loglikelihood(parameters)
+            if self.likfunc == 'mark2':
+                ll = self.m2loglikelihood(parameters)
+            elif self.likfunc == 'mark3':
+                ll = self.m3loglikelihood(parameters)
         else:
             ll = -1e99
 
@@ -2573,7 +1986,7 @@ def makespectrumplot(chainfilename, parstart=1, parstop=10, freqs=None):
     spd = 24 * 3600.0
     spy = 365.25 * spd
     pfreqs = 10 ** ufreqs
-    Aing = 5.0e-14
+    Aing = 1.0e-15
     yinj = (Aing**2 * spy**3 / (12*np.pi*np.pi * (5*spy))) * ((pfreqs * spy) ** (-13.0/3.0))
     #print pfreqs * spy
     #print np.log10(yinj)
