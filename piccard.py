@@ -25,6 +25,8 @@ import sys
 import libstempo as t2
 import pytwalk
 import emcee
+import pymultinest
+import pydnest
 import statsmodels.api as sm
 
 # For DM calculations, use this constant
@@ -1024,6 +1026,11 @@ class mark2Pulsar(object):
         self.GtD = np.dot(self.Gmat.T, self.DF)
         self.GGtD = np.dot(self.Gmat, self.GtD)
 
+        # DM + Red noise stuff (mark6 needs this)
+        self.Emat = np.append(self.Fmat, self.DF, axis=1)
+        self.GtE = np.dot(self.Gmat.T, self.Emat)
+        self.GGtE = np.dot(self.Gmat, self.GtE)
+
         # Need the psuedo-inverse of Fmat (so not Fmat.T)
         # (Fmat.T * Fmat)^{-1} Fmat.T
         Sig = np.dot(self.Fmat.T, self.Fmat)
@@ -1040,9 +1047,7 @@ class mark2Pulsar(object):
             if not np.all(s > 0):
                 raise ValueError("ERROR: F^{T}F singular according to SVD")
 
-            self.pseudoFmatT = np.dot(U, np.dot(np.diag(1.0/s), np.dot(Vh, self.Fmat.T)))
-
-        # print "Inversion: ", np.dot(self.Fmat, self.pseudoFmatT)
+            self.pseudoFmatT = np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, self.Fmat.T)))
 
         self.FtD = np.dot(self.pseudoFmatT, self.DF)
 
@@ -1331,7 +1336,7 @@ class mark2Likelihood(object):
                 index += m2signal.npars
             elif m2signal.stype == 'powerlaw':
                 self.pmin[index:index+2] = [-17.0, 1.02]
-                self.pmax[index:index+2] = [-5.0, 8.98]
+                self.pmax[index:index+2] = [-5.0, 6.98]
                 self.pstart[index:index+2] = [-14.0, 2.01]
                 self.pwidth[index:index+2] = [0.1, 0.1]
                 index += m2signal.npars
@@ -1367,7 +1372,7 @@ class mark2Likelihood(object):
                     if not np.all(s > 0):
                         raise ValueError("ERROR: F^{T}F singular according to SVD")
 
-                    fest = np.dot(U, np.dot(np.diag(1.0/s), np.dot(Vh, rGGNGGF)))
+                    fest = np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, rGGNGGF)))
 
                 self.pmin[index:index+npars] = -1.0e4*np.abs(fest)
                 self.pmax[index:index+npars] = 1.0e4*np.abs(fest)
@@ -1717,7 +1722,7 @@ class mark2Likelihood(object):
             if not np.all(s > 0):
                 raise ValueError("ERROR: Phi singular according to SVD")
             PhiLD = np.sum(np.log(s))
-            Phiinv = np.dot(U, np.dot(np.diag(1.0/s), Vh))
+            Phiinv = np.dot(Vh.T, np.dot(np.diag(1.0/s), U.T))
 
         # Construct and decompose Sigma
         Sigma = FGGNGGF + Phiinv
@@ -1730,7 +1735,7 @@ class mark2Likelihood(object):
             if not np.all(s > 0):
                 raise ValueError("ERROR: Sigma singular according to SVD")
             SigmaLD = np.sum(np.log(s))
-            rGSigmaGr = np.dot(rGF, np.dot(U, np.dot(np.diag(1.0/s), np.dot(Vh, rGF))))
+            rGSigmaGr = np.dot(rGF, np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, rGF))))
 
         # Now we are ready to return the log-likelihood
         return -0.5*np.sum(rGr) - 0.5*np.sum(GNGldet) + 0.5*rGSigmaGr - 0.5*PhiLD - 0.5*SigmaLD
@@ -1921,7 +1926,7 @@ class mark2Likelihood(object):
             if not np.all(s > 0):
                 raise ValueError("ERROR: Sigma singular according to SVD")
             SigmaLD = np.sum(np.log(s))
-            SigmaGr = np.dot(U, np.dot(np.diag(1.0/s), np.dot(Vh, rGF)))
+            SigmaGr = np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, rGF)))
             rGSigmaGr = np.dot(rGF, SigmaGr)
 
             SigDGGNGGF = np.dot(U, np.dot(np.diag(1.0/s), np.dot(Vh, DGGNGGF.T)))
@@ -1953,40 +1958,12 @@ class mark2Likelihood(object):
             YLD = np.sum(np.log(s))
 
             # Finally, the last inner product
-            rDGYGDr = np.dot(DGXr, np.dot(U, np.dot(np.diag(1.0/s), np.dot(Vh,
-                DGXr))))
+            rDGYGDr = np.dot(DGXr, np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, DGXr))))
 
         # Now we are ready to return the log-likelihood
         return -0.5*np.sum(rGr) + 0.5*rGSigmaGr + 0.5*rDGYGDr \
                -0.5*np.sum(GNGldet) - 0.5*PhiLD - 0.5*SigmaLD \
                -0.5*ThetaLD - 0.5*YLD
-
-
-
-    def loglikelihood(self, parameters):
-        ll = 0.0
-
-        if(np.all(self.pmin <= parameters) and np.all(parameters <= self.pmax)):
-            if self.likfunc == 'mark1':
-                ll = self.m1loglikelihood(parameters)
-            elif self.likfunc == 'mark3':
-                ll = self.m3loglikelihood(parameters)
-            elif self.likfunc == 'mark4':
-                ll = self.m4loglikelihood(parameters)
-            elif self.likfunc == 'mark5':
-                ll = self.m5loglikelihood(parameters)
-        else:
-            ll = -1e99
-
-        return ll
-
-    def logposterior(self, parameters):
-        return self.loglikelihood(parameters)
-
-    def nlogposterior(self, parameters):
-        return - self.loglikelihood(parameters)
-
-
 
     """
     mark5 loglikelihood of the mark2 model/likelihood implementation
@@ -2178,6 +2155,236 @@ class mark2Likelihood(object):
         return -0.5*np.sum(rGr) - 0.5*np.sum(aFGFa) + np.sum(rGFa) \
                -0.5*np.sum(GNGldet) - 0.5*aPhia - 0.5*PhiLD
 
+    """
+    mark6 loglikelihood of the mark2 model/likelihood implementation
+
+    This likelihood uses an approximation for the noise matrices: in general GNG
+    is not diagonal for the noise. Use that the projection of the inverse is
+    roughly equal to the inverse of the projection (not true for red noise).
+    Rationale is that white noise is not covariant with the timing model
+    
+    DM variation spectrum is included 
+    """
+    def m6loglikelihood(self, parameters):
+        # Calculating the log-likelihood happens in several steps.
+
+        # For all pulsars, we will need the quantities:
+        # rGGNGGr, rGGNGGF, FGGNGGF and Phi
+
+        # For the total, we will construct the full matrix Sigma from these.
+        # After that, the log-likelihood can be calculated
+
+        # First figure out how large we have to make the arrays
+        npsrs = len(self.m2psrs)
+        npf = np.zeros(npsrs, dtype=np.int)
+        for ii in range(npsrs):
+            npf[ii] = len(self.m2psrs[ii].Ffreqs)
+
+        # Define the total arrays
+        rGr = np.zeros(npsrs)
+        rGE = np.zeros(2 * np.sum(npf))
+        EGGNGGE = np.zeros((2*np.sum(npf), 2*np.sum(npf)))
+        Phi = np.zeros((np.sum(npf), np.sum(npf)))
+        #Theta = np.zeros((np.sum(npf), np.sum(npf)))
+        Thetavec = np.zeros(np.sum(npf))
+        Sigma = np.zeros((2*np.sum(npf), 2*np.sum(npf))) 
+        GNGldet = np.zeros(npsrs)
+
+        # For every pulsar, set the noise vector to zero
+        for m2psr in self.m2psrs:
+            m2psr.Nvec = np.zeros(len(m2psr.toas))
+
+        # Loop over all white noise signals, and fill the pulsar Nvec
+        for m2signal in self.m2signals:
+            if m2signal.stype == 'efac':
+                pefac = 1.0
+                if m2signal.npars == 1:
+                    pefac = parameters[m2signal.nindex]
+                self.m2psrs[m2signal.pulsarind].Nvec += m2signal.Nvec * pefac**2
+            elif m2signal.stype == 'equad':
+                pequadsqr = 10**(2*parameters[m2signal.nindex])
+                self.m2psrs[m2signal.pulsarind].Nvec += m2signal.Nvec * pequadsqr
+
+        # Armed with the Noise (and it's inverse), we'll construct the
+        # auxiliaries for all pulsars
+        for ii in range(npsrs):
+            findex = np.sum(npf[:ii])
+            nfreq = npf[ii]/2
+
+            # One temporary quantity
+            NGGE = np.array([(1.0/self.m2psrs[ii].Nvec) * self.m2psrs[ii].GGtE[:,i] for i in range(self.m2psrs[ii].Emat.shape[1])]).T
+
+            # Fill the auxiliaries
+            nobs = len(self.m2psrs[ii].toas)
+            ng = self.m2psrs[ii].Gmat.shape[1]
+            rGr[ii] = np.sum(self.m2psrs[ii].GGr ** 2 / self.m2psrs[ii].Nvec)
+            rGE[2*findex:2*findex+4*nfreq] = np.dot(self.m2psrs[ii].GGr, NGGE)
+            GNGldet[ii] = np.sum(np.log(self.m2psrs[ii].Nvec)) * ng / nobs
+            EGGNGGE[2*findex:2*findex+4*nfreq, 2*findex:2*findex+4*nfreq] = np.dot(self.m2psrs[ii].GGtE.T, NGGE)
+
+
+        # Loop over all signals, and fill the phi matrix
+        for m2signal in self.m2signals:
+            if m2signal.stype == 'spectrum':
+                if m2signal.corr == 'single':
+                    findex = np.sum(npf[:m2signal.pulsarind])
+                    nfreq = npf[m2signal.pulsarind]/2
+
+                    # Pcdoubled is an array where every element of the parameters
+                    # of this m2signal is repeated once (e.g. [1, 1, 3, 3, 2, 2, 5, 5, ...]
+                    pcdoubled = np.array([parameters[m2signal.nindex:m2signal.nindex+m2signal.npars], parameters[m2signal.nindex:m2signal.nindex+m2signal.npars]]).T.flatten()
+
+                    # Fill the phi matrix
+                    di = np.diag_indices(2*nfreq)
+                    Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += 10**pcdoubled
+                elif m2signal.corr == 'gr':
+                    nfreq = m2signal.npars
+
+                    pcdoubled = np.array([parameters[m2signal.nindex:m2signal.nindex+m2signal.npars], parameters[m2signal.nindex:m2signal.nindex+m2signal.npars]]).T.flatten()
+
+                    indexa = 0
+                    indexb = 0
+                    for aa in range(npsrs):
+                        for bb in range(npsrs):
+                            # Some pulsars may have fewer frequencies than
+                            # others (right?). So only use overlapping ones
+                            nof = np.min([npf[aa], npf[bb], 2*nfreq])
+                            di = np.diag_indices(nof)
+                            Phi[indexa:indexa+nof,indexb:indexb+nof][di] += 10**pcdoubled[:nof] * m2signal.hdmat[aa, bb]
+                            indexb += npf[bb]
+                        indexb = 0
+                        indexa += npf[aa]
+            if m2signal.stype == 'dmspectrum':
+                findex = np.sum(npf[:m2signal.pulsarind])
+                nfreq = npf[m2signal.pulsarind]/2
+
+                # Pcdoubled is an array where every element of the parameters
+                # of this m2signal is repeated once (e.g. [1, 1, 3, 3, 2, 2, 5, 5, ...]
+                pcdoubled = np.array([parameters[m2signal.nindex:m2signal.nindex+m2signal.npars], parameters[m2signal.nindex:m2signal.nindex+m2signal.npars]]).T.flatten()
+
+                # Fill the phi matrix: transformed DM power spectrum
+                #Theta[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += 10**pcdoubled
+                Thetavec[findex:findex+2*nfreq] += 10**pcdoubled
+            elif m2signal.stype == 'powerlaw':
+                spd = 24 * 3600.0
+                spy = 365.25 * spd
+                Amp = 10**parameters[m2signal.nindex]
+                Si = parameters[m2signal.nindex+1]
+
+                if m2signal.corr == 'single':
+                    findex = np.sum(npf[:m2signal.pulsarind])
+                    nfreq = npf[m2signal.pulsarind]/2
+                    freqpy = self.m2psrs[m2signal.pulsarind].Ffreqs * spy
+                    pcdoubled = (Amp**2 * spy**3 / (12*np.pi*np.pi * m2signal.Tmax)) * freqpy ** (-Si)
+
+                    # Fill the phi matrix
+                    di = np.diag_indices(2*nfreq)
+                    Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += pcdoubled
+                elif m2signal.corr == 'gr':
+                    freqpy = self.m2psrs[0].Ffreqs * spy
+                    pcdoubled = (Amp**2 * spy**3 / (12*np.pi*np.pi * m2signal.Tmax)) * freqpy ** (-Si)
+                    nfreq = len(freqpy)
+
+                    indexa = 0
+                    indexb = 0
+                    for aa in range(npsrs):
+                        for bb in range(npsrs):
+                            # Some pulsars may have fewer frequencies than
+                            # others (right?). So only use overlapping ones
+                            nof = np.min([npf[aa], npf[bb]])
+                            if nof > nfreq:
+                                raise IOError, "ERROR: nof > nfreq. Adjust GWB freqs"
+
+                            di = np.diag_indices(nof)
+                            Phi[indexa:indexa+nof,indexb:indexb+nof][di] += pcdoubled[:nof] * m2signal.hdmat[aa, bb]
+                            indexb += npf[bb]
+                        indexb = 0
+                        indexa += npf[aa]
+            elif m2signal.stype == 'dmpowerlaw':
+                spd = 24 * 3600.0
+                spy = 365.25 * spd
+                Amp = 10**parameters[m2signal.nindex]
+                Si = parameters[m2signal.nindex+1]
+
+                findex = np.sum(npf[:m2signal.pulsarind])
+                nfreq = npf[m2signal.pulsarind]/2
+                freqpy = self.m2psrs[m2signal.pulsarind].Ffreqs * spy
+                pcdoubled = (Amp**2 * spy**3 / (12*np.pi*np.pi * m2signal.Tmax)) * freqpy ** (-Si)
+
+                # Fill the phi matrix: transformed DM power spectrum
+                #di = np.diag_indices(2*nfreq)
+                #Theta[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += pcdoubled
+                Thetavec[findex:findex+2*nfreq] += pcdoubled
+                # Cont here
+        
+        # Now that all arrays are filled, we can proceed to do some linear
+        # algebra. First we'll invert Phi
+        try:
+            cf = sl.cho_factor(Phi)
+            PhiLD = 2*np.sum(np.log(np.diag(cf[0])))
+            Phiinv = sl.cho_solve(cf, np.identity(Phi.shape[0]))
+        except np.linalg.LinAlgError:
+            U, s, Vh = sl.svd(Phi)
+            if not np.all(s > 0):
+                raise ValueError("ERROR: Phi singular according to SVD")
+            PhiLD = np.sum(np.log(s))
+            Phiinv = np.dot(Vh.T, np.dot(np.diag(1.0/s), U.T))
+
+        ThetaLD = np.sum(np.log(Thetavec))
+
+        # Construct and decompose Sigma
+        di = np.diag_indices(np.sum(npf))
+        Sigma = EGGNGGE
+        Sigma[0:np.sum(npf), 0:np.sum(npf)] += Phiinv
+        Sigma[np.sum(npf):, np.sum(npf):][di] += 1.0 / Thetavec
+        try:
+            cf = sl.cho_factor(Sigma)
+            SigmaLD = 2*np.sum(np.log(np.diag(cf[0])))
+            rGSigmaGr = np.dot(rGE, sl.cho_solve(cf, rGE))
+        except np.linalg.LinAlgError:
+            U, s, Vh = sl.svd(Sigma)
+            if not np.all(s > 0):
+                raise ValueError("ERROR: Sigma singular according to SVD")
+            SigmaLD = np.sum(np.log(s))
+            rGSigmaGr = np.dot(rGE, np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, rGE))))
+
+        # Now we are ready to return the log-likelihood
+        return -0.5*np.sum(rGr) - 0.5*np.sum(GNGldet) + 0.5*rGSigmaGr - 0.5*PhiLD - 0.5*SigmaLD - 0.5*ThetaLD
+
+
+
+
+
+
+    def loglikelihood(self, parameters):
+        ll = 0.0
+
+        if(np.all(self.pmin <= parameters) and np.all(parameters <= self.pmax)):
+            if self.likfunc == 'mark1':
+                ll = self.m1loglikelihood(parameters)
+            elif self.likfunc == 'mark3':
+                ll = self.m3loglikelihood(parameters)
+            elif self.likfunc == 'mark4':
+                ll = self.m4loglikelihood(parameters)
+            elif self.likfunc == 'mark5':
+                ll = self.m5loglikelihood(parameters)
+            elif self.likfunc == 'mark6':
+                ll = self.m6loglikelihood(parameters)
+        else:
+            ll = -1e99
+
+        return ll
+
+    def logposterior(self, parameters):
+        return self.loglikelihood(parameters)
+
+    def nlogposterior(self, parameters):
+        return - self.loglikelihood(parameters)
+
+    def samplefromprior(self):
+        return self.pmin + np.random.rand(self.dimensions) * (self.pmax - self.pmin)
+
+
 
 
 
@@ -2198,7 +2405,7 @@ class mark2Likelihood(object):
             ngs[ii] = self.m2psrs[ii].Gmat.shape[1]
 
         Phi = np.zeros((np.sum(npf), np.sum(npf)))
-        #PhiDM = np.zeros((np.sum(npf), np.sum(npf)))
+        Theta = np.zeros((np.sum(npf), np.sum(npf)))
 
         # For every pulsar, set the noise vector to zero
         for m2psr in self.m2psrs:
@@ -2257,15 +2464,8 @@ class mark2Likelihood(object):
                 pcdoubled = np.array([parameters[m2signal.nindex:m2signal.nindex+m2signal.npars], parameters[m2signal.nindex:m2signal.nindex+m2signal.npars]]).T.flatten()
 
                 # Fill the phi matrix: transformed DM power spectrum
-                Theta = np.dot(self.m2psrs[m2signal.pulsarind].FtD, \
-                        np.dot(np.diag(10**pcdoubled), \
-                        self.m2psrs[m2signal.pulsarind].FtD.T))
-                
-                Phi[findex:findex+2*nfreq, findex:findex+2*nfreq] += Theta
+                Theta[findex:findex+2*nfreq, findex:findex+2*nfreq] += np.diag(10**pcdoubled)
 
-                # Fill the phi matrix
-                #di = np.diag_indices(2*nfreq)
-                #PhiDM[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += 10**pcdoubled
             elif m2signal.stype == 'powerlaw':
                 spd = 24 * 3600.0
                 spy = 365.25 * spd
@@ -2311,35 +2511,13 @@ class mark2Likelihood(object):
                 nfreq = npf[m2signal.pulsarind]/2
                 freqpy = self.m2psrs[m2signal.pulsarind].Ffreqs * spy
                 pcdoubled = (Amp**2 * spy**3 / (12*np.pi*np.pi * m2signal.Tmax)) * freqpy ** (-Si)
-
-                # Fill the phi matrix: transformed DM power spectrum
-                Theta = np.dot(self.m2psrs[m2signal.pulsarind].FtD, \
-                        np.dot(np.diag(pcdoubled), \
-                        self.m2psrs[m2signal.pulsarind].FtD.T))
                 
-                #print "Phi: ", 1.0e10*Phi[findex:findex+2*nfreq, findex:findex+2*nfreq]
-                #print "Theta: ", 1.0e10*Theta
-                Phi[findex:findex+2*nfreq, findex:findex+2*nfreq] += Theta
+                Theta[findex:findex+2*nfreq, findex:findex+2*nfreq] += np.diag(pcdoubled)
 
-                PhiDM = np.diag(pcdoubled)
-                TestTheta1 = np.dot(self.m2psrs[m2signal.pulsarind].Fmat, \
-                        np.dot(Theta,
-                        self.m2psrs[m2signal.pulsarind].Fmat.T))
-                TestTheta2 = np.dot(self.m2psrs[m2signal.pulsarind].DF, \
-                        np.dot(PhiDM,
-                        self.m2psrs[m2signal.pulsarind].DF.T))
-
-                print "TestTheta1:", 1.0e10*TestTheta1
-                print "TestTheta:2", 1.0e10*TestTheta2
-
-                # Fill the phi matrix
-                #di = np.diag_indices(2*nfreq)
-                #PhiDM[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += pcdoubled
 
         # We have both the white noise, and the red noise. Construct the total
         # time-domain covariance matrix. Use a pseudo-inverse of Fmat
         Cov = np.zeros((np.sum(nobs), np.sum(nobs)))
-        #pseudoFmatT = np.zeros((np.sum(npf), np.sum(nobs)))
         totFmat = np.zeros((np.sum(nobs), np.sum(npf)))
         totDFmat = np.zeros((np.sum(nobs), np.sum(npf)))
         totG = np.zeros((np.sum(nobs), np.sum(ngs)))
@@ -2361,7 +2539,7 @@ class mark2Likelihood(object):
             tottoaerrs[nindex:nindex+npobs] = self.m2psrs[ii].toaerrs
 
         Cov += np.dot(totFmat, np.dot(Phi, totFmat.T))
-        #Cov += np.dot(totDFmat, np.dot(PhiDM, totDFmat.T))
+        Cov += np.dot(totDFmat, np.dot(Theta, totDFmat.T))
 
         GCG = np.dot(totG.T, np.dot(Cov, totG))
         #GCG = Cov
@@ -2375,6 +2553,13 @@ class mark2Likelihood(object):
         plt.errorbar(tottoas, ygen, yerr=tottoaerrs, fmt='.', c='blue')
         plt.grid(True)
         plt.show()
+
+        # Save the data
+        tindex = 0
+        for ii in range(len(self.m2psrs)):
+            nobs = len(self.m2psrs[ii].residuals)
+            self.m2psrs[ii].residuals = ygen[tindex:tindex+nobs]
+            tindex += nobs
 
 
 
@@ -2576,6 +2761,67 @@ def makechainplot2d(chainfilename, par1=72, par2=73, xmin=None, xmax=None, ymin=
   make2dplot(emceechain[:,par1+2], emceechain[:,par2+2], title=title, \
 	  xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax)
 
+
+"""
+Given a MultiNest file, plot the important credible regions
+
+"""
+def makemnplots(mnchainfilename, par1=72, par2=73, minmaxfile=None, xmin=0, xmax=70, ymin=1, ymax=7, title='MultiNest credible regions'):
+  mnchain = np.loadtxt(mnchainfilename)
+
+  if minmaxfile is not None:
+    minmax = np.loadtxt(minmaxfile)
+
+  nDimensions = mnchain.shape[1]-2
+
+  # Rescale the hypercube parameters
+  if minmaxfile is not None:
+    for i in range(nDimensions):
+      mnchain[:,i+2] = minmax[i,0] + mnchain[:,i+2] * (minmax[i,1] - minmax[i,0])
+
+
+  # The list of 1D parameters we'd like to check:
+#  list1d = np.array([0, 4, 5, nDimensions-2, nDimensions-1])
+  list1d = np.array([par1, par2])
+
+  # Create 1d histograms
+  for i in list1d:
+#    plt.figure()
+#    plt.hist(mnchain[:,i+2], 100, color="k", histtype="step")
+#    plt.title("Dimension {0:d} (No weight)".format(i))
+    plt.figure()
+    plt.hist(mnchain[:,i+2], 100, weights=mnchain[:,0], color="k", histtype="step")
+    plt.title("Dimension {0:d}".format(i))
+
+  make2dplot(mnchain[:,par1+2], mnchain[:,par2+2], mnchain[:,0], title=title)
+
+
+
+"""
+Given a DNest file, plot the credible regions
+
+"""
+def makednestplots(par1=72, par2=73, xmin=0, xmax=70, ymin=1, ymax=7, title='DNest credible regions'):
+  pydnest.dnestresults()
+
+  samples = np.loadtxt('sample.txt')
+  weights = np.loadtxt('weights.txt')
+
+  maxlen = len(weights)
+
+  list1d = np.array([par1, par2])
+
+  # Create 1d histograms
+  for i in list1d:
+    plt.figure()
+    plt.hist(samples[:maxlen,i], 100, weights=weights, color="k", histtype="step")
+    plt.title("Dimension {0:d}".format(i))
+
+  make2dplot(samples[:maxlen,par1], samples[:maxlen,par2], w=weights, title=title)
+
+
+
+
 """
 Given an mcmc chain file, plot the log-spectrum
 
@@ -2590,7 +2836,9 @@ def makespectrumplot(chainfilename, parstart=1, parstop=10, freqs=None):
     spy = 365.25 * spd
     pfreqs = 10 ** ufreqs
     Aing = 5.0e-14
+    #Aing = 10**(-13.04)
     yinj = (Aing**2 * spy**3 / (12*np.pi*np.pi * (5*spy))) * ((pfreqs * spy) ** (-13.0/3.0))
+    #yinj = (Aing**2 * spy**3 / (12*np.pi*np.pi * (5*spy))) * ((pfreqs * spy) ** (-2.08))
     #print pfreqs * spy
     #print np.log10(yinj)
 
@@ -2926,4 +3174,295 @@ def Runemcee(likob, steps, chainfilename, initfile=None, savechain=False, a=2.0)
 	print("Install acor from github or pip: http://github.com/dfm/acor")
 
   print "Finish wrapper"
+
+
+
+
+"""
+Run a MultiNest algorithm on the likelihood
+Implementation from "pyMultinest"
+
+"""
+def RunMultiNest(likob, chainroot):
+    ndim = likob.dimensions
+
+    """
+    A very simple wrapper for MultiNest for the hypercube likelhood
+    """
+    def mn_lnprob(cube, ndim):
+        parameters = likob.pmin + cube * (likob.pmax - likob.pmin)
+        return likob.logposterior(parameters)
+
+    mmodal = True       # search for multiple modes
+    ceff = 0            # SMBH tuning
+    nlive = 500        # number of "live" points
+    tol = 0.5           # final tolerance in computing evidence
+    efr = 0.80          # sampling efficiency (0.8 and 0.3 are recommended for parameter estimation & evidence evaluation)
+    ndims = ndim        # number of search parameters
+    nPar = ndims        # number of reported parameters (see above)
+    nClsPar = 1         # number of parameters on which to attempt mode separation (first nClsPar parameters used)
+    maxModes = 40       # maximum number of modes
+    updInt = 100        # interval of updates
+    Ztol = -1.e90       # threshold for reporting evidence about modes
+    root = chainroot    # prefix for output files
+    seed = 16           # seed for random numbers
+    periodic = np.ones(ndims)    # period conditions
+    fb = True           # output status updates?
+    resume = False      # resume from previous run?
+
+    # Save the min and max values for the hypercube transform
+    cols = np.array([likob.pmin, likob.pmax]).T
+    np.savetxt(root+"minmax.txt", cols)
+
+    pymultinest.nested.nestRun(mmodal, ceff, nlive, tol, efr, ndims, nPar, nClsPar, maxModes, updInt, Ztol, root, seed, periodic, fb, resume, mn_lnprob, 0)
+
+    sys.stdout.flush()
+
+
+"""
+Run a DNest algorithm on the likelihood
+Implementation from "pyDnest"
+
+"""
+def RunDNest(likob, mcmcFile=None, numParticles=1, newLevelInterval=500,\
+        saveInterval=100, maxNumLevels=110, lamb=10.0, beta=10.0,\
+        deleteParticles=True, maxNumSaves=np.inf):
+    ndim = likob.dimensions
+
+    options = pydnest.Options(numParticles=numParticles,\
+            newLevelInterval=newLevelInterval, saveInterval=saveInterval,\
+            maxNumLevels=maxNumLevels, lamb=lamb, beta=beta,\
+            deleteParticles=deleteParticles, maxNumSaves=maxNumSaves)
+
+    sampler = pydnest.Sampler(pydnest.LikModel, options=options,\
+            mcmcFile=mcmcFile, arg=likob)
+
+    sampler.run()
+
+    pydnest.dnestresults()
+
+
+
+
+
+"""
+Run a twalk algorithm on the likelihood wrapper.
+Implementation from "pytwalk".
+
+This algorithm used two points. First starts at pstart. Second starts at pstart
++ pwidth
+
+Only every (i % thin) step is saved. So with thin=1 all will be saved
+
+pmin - minimum boundary of the prior domain
+pmax - maximum boundary of the prior domain
+pstart - starting position in parameter space
+pwidth - offset of starting position for second walker
+steps - number of MCMC walks to take
+"""
+def Runtwalk(pmin, pmax, pstart, pwidth, steps, chainfilename, thin=1):
+  ndim = len(pstart)
+
+  pminlog = lp_transform(pmin, pmin, pmax)
+  pmaxlog = lp_transform(pmax, pmin, pmax)
+  pwidthlog = lp_widthtransform(pwidth, pmin, pmax)
+  pstartlog = lp_transform(pstart, pmin, pmax)
+
+  # Define the support function (in or outside of domain)
+  def PtaSupp(x, xmin=pmin, xmax=pmax):
+    return np.all(xmin < x) and np.all(x < xmax)
+
+  def PtaLogSupp(x, xmin=pminlog, xmax=pmaxlog):
+    return np.all(xmin < x) and np.all(x < xmax)
+
+#  p0 = pstart
+#  p1 = pstart + pwidth 
+  p0 = pstartlog.copy()
+  p1 = pstartlog + pwidthlog
+
+  # Initialise the twalk sampler
+#  sampler = pytwalk.pytwalk(n=ndim, U=np_ns_WrapLL, Supp=PtaSupp)
+  sampler = pytwalk.pytwalk(n=ndim, U=sample_ns_lp, Supp=PtaLogSupp)
+
+  # Run the twalk sampler
+  sampler.Run(T=steps, x0=p0, xp0=p1)
+  sampler.Ana()
+
+  indices = range(0, steps, thin)
+
+  savechain = np.zeros((len(indices), sampler.Output.shape[1]+1))
+  savechain[:,1] = -sampler.Output[indices, ndim]
+  savechain[:,2:] = sampler.Output[indices, :-1]
+
+  np.savetxt(chainfilename, savechain)
+
+
+
+
+"""
+Run an ensemble sampler on the likelihood wrapper.
+Implementation from "emcee".
+"""
+def Runemcee(pmin, pmax, pstart, pwidth, steps, chainfilename,
+    initfile=None, savechain=False, a=2.0):
+  ndim = len(pstart)
+  nwalkers = 5 * ndim
+  mcmcsteps = steps / nwalkers
+
+  # Define the support function (in or outside of domain)
+  def PtaSupp(x, xmin=pmin, xmax=pmax):
+    return np.all(xmin < x) and np.all(x < xmax)
+
+  if initfile is not None:
+    # Read the starting position of the random walkers from a file
+    print "Obtaining initial positions from '" + initfile + "'"
+    burnindata = np.loadtxt(initfile)
+    burnindata = burnindata[:,2:]
+    nsteps = burnindata.shape[0]
+    dim = burnindata.shape[1]
+    if(ndim is not dim):
+      print "ERROR: burnin file not same dimensions!"
+      exit()
+    indices = np.random.randint(0, nsteps, nwalkers)
+    p0 = [g_transform(burnindata[i], pmin, pmax) for i in indices]
+  else:
+    # Set the starting position of the random walkers
+    print "Set random initial positions"
+    p0 = [g_transform(np.random.rand(ndim)*pwidth+pstart,
+      pmin, pmax) for i in range(nwalkers)]
+
+  print "Initialising sampler"
+  sampler = emcee.EnsembleSampler(nwalkers, ndim, sample_ll,
+      args=[pmin, pmax], a = a)
+  pos, prob, state = sampler.run_mcmc(p0, 1)
+  sampler.reset()
+
+
+  print "Running emcee sampler"
+  fil = open(chainfilename, "w")
+  fil.close()
+  for i in range(mcmcsteps):
+      for result in sampler.sample(pos, iterations=1, storechain=False, rstate0=state):
+	  pos = result[0]
+	  lnprob = result[1]
+	  state = result[2]
+	  fil = open(chainfilename, "a")
+	  for k in range(pos.shape[0]):
+	      fil.write("{0:4f} \t{1:s} \t{2:s}\n".format(k, \
+		  str(lnprob[k]), \
+		  "\t".join([str(x) for x in g_invtransform(pos[k], pmin, pmax)])))
+	  fil.close()
+      percent = i * 100.0 / mcmcsteps
+      sys.stdout.write("\rSample: {0:d} = {1:4.1f}%   acc. fr. = {2:f}   pos = {3:e} {4:e}  lnprob = {5:e}  ".format( \
+	      i, percent, \
+	      np.mean(sampler.acceptance_fraction), \
+	      g_invtransform(pos[0,ndim-2], pmin[ndim-2], \
+		pmax[ndim-2]), \
+	      g_invtransform(pos[0,ndim-1], pmin[ndim-1], \
+		pmax[ndim-1]), \
+	      lnprob[0]))
+      sys.stdout.flush()
+  sys.stdout.write("\n")
+
+  print("Mean acceptance fraction:", np.mean(sampler.acceptance_fraction))
+
+  if savechain:
+    try:
+	print("Autocorrelation time:", sampler.acor)
+    except ImportError:
+	print("Install acor from github or pip: http://github.com/dfm/acor")
+
+  print "Finish wrapper"
+
+
+
+"""
+Optimise the log-likelihood with a downhill-simplex method
+Implementation: pylab (Nelder-Mead)
+
+"""
+def Optimise(pmin, pmax, pstart):
+  ndim = len(pstart)
+
+  # Define the function we'll minimise
+  func = lambda par, parmin, parmax: -np_WrapLL(par, parmin, parmax)
+
+  # Run the downhill simplex method
+  #arr_opt = minimize(func, arr_start_np, method='nelder-mead',\
+      #argx=(arr_min_np, arr_max_np),\
+      #options={'xtol': 1e-8, 'disp': True})
+  popt = fmin(func, pstart, args=(pmin, pmax),\
+      maxiter=1000000, maxfun=1000000, xtol=1e-6)
+
+  print "Optimal parameters: ", popt
+  print "Start parameters: ", pstart
+
+
+
+"""
+Perform a simple scan for two parameters. Fix all parameters to their "true"
+values, vary two parameters within their domain
+
+"""
+def ScanParameters(par1, par2, pmin, pmax, pval, scanfilename):
+  ndim = len(pmin)
+
+  p1 = np.linspace(pmin[par1], pmax[par1], 50)
+  p2 = np.linspace(pmin[par2], pmax[par2], 50)
+
+  lp1 = np.zeros(shape=(50,50))
+  lp2 = np.zeros(shape=(50,50))
+  llik = np.zeros(shape=(50,50))
+  for i in range(50):
+      for j in range(50):
+	  lp1[i,j] = p1[i]
+	  lp2[i,j] = p2[j]
+	  pval[par1] = p1[i]
+	  pval[par2] = p2[j]
+	  llik[i,j] = np_WrapLL(pval, pmin, pmax)
+	  percent = (i*50+j) * 100.0 / (50*50)
+	  sys.stdout.write("\rScan: %d%%" %percent)
+	  sys.stdout.flush()
+  sys.stdout.write("\n")
+
+  if (par1 % 2) == 1:
+    lp1 = lp1 + 2.0
+
+  if (par2 % 2) == 1:
+    lp2 = lp2 + 2.0
+
+  col1 = lp1.reshape(50*50)
+  col2 = lp2.reshape(50*50)
+  lcol3 = llik.reshape(50*50)
+  col3 = np.exp(lcol3 - np.max(lcol3))
+
+  np.savetxt(scanfilename, np.array([col1, col2, col3]).T)
+
+
+"""
+Perform a simple scan for one parameters. Fix all parameters to their "true"
+values, vary one parameters within its domain
+
+"""
+def ScanParameter(par1, pmin, pmax, pval, scanfilename):
+  ndim = len(pmin)
+
+  p1 = np.linspace(pmin[par1], pmax[par1], 50)
+
+  lp1 = np.zeros(shape=(50))
+  llik = np.zeros(shape=(50))
+  for i in range(50):
+      lp1[i] = p1[i]
+      pval[par1] = p1[i]
+      llik[i] = np_WrapLL(pval, pmin, pmax)
+      percent = (i) * 100.0 / (50)
+      sys.stdout.write("\rScan: %d%%" %percent)
+      sys.stdout.flush()
+  sys.stdout.write("\n")
+
+  col1 = lp1
+  lcol3 = llik
+  col3 = np.exp(lcol3 - np.max(lcol3))
+
+  np.savetxt(scanfilename, np.array([col1, col3]).T)
 
