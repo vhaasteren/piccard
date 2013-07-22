@@ -116,6 +116,8 @@ class DataFile(object):
             self.h5file = None
             raise IOError, "%s already exists in %s!" % (t2pulsar.name, self.filename)
 
+        # TODO: pulsarsgroup is re-defined here. Name it pulsargroup or
+        # something like that. This is soooo unclear
         pulsarsgroup = pulsarsgroup.create_group(t2pulsar.name)
 
         # Create the datasets, with reference time pepoch = 53000
@@ -631,92 +633,6 @@ class mark1Likelihood(object):
             index += pclength
 
 
-            """
-            A = np.dot(m1psr.Gmat.T, m1psr.Fmat)
-            B = np.dot(m1psr.Fmat.T, m1psr.Fmat)
-            E = np.dot(A.T, A)
-            Ei = np.array(np.mat(E).I)
-            P = np.dot(m1psr.Gmat, m1psr.Gmat.T)
-            P4 = np.dot(m1psr.Gmat, m1psr.Gmat.T)
-            B4 = np.dot(m1psr.Fmat.T, np.dot(P4, m1psr.Fmat))
-            fest2 = np.dot(Ei, np.dot(A.T, np.dot(m1psr.Gmat.T, m1psr.residuals)))
-            fest3 = np.dot(np.array(np.mat(B).I), np.dot(m1psr.Fmat.T, m1psr.residuals))
-            fest4 = np.dot(np.array(np.mat(B4).I), np.dot(m1psr.Fmat.T, np.dot(P4, m1psr.residuals)))
-            """
-
-            """
-            F, Ffreqs = fourierdesignmatrix(m1psr.toas, 2*int(len(m1psr.toas)/2))
-            FF = np.dot(F.T, F)
-            model = (m1psr.toas, m1psr.residuals, m1psr.toaerrs, m1psr.Mmat, m1psr.Gmat, np.array([[1]]), [len(m1psr.toas)], [m1psr.Mmat.shape[1]], [m1psr.Gmat.shape[1]], None, None, None)
-            alpha = -2.0/3.0
-            Cgw = Cgw_sec(model, alpha=alpha)
-            GCG = np.dot(m1psr.Gmat.T, np.dot(Cgw, m1psr.Gmat))
-            ratio = -2.51183978438e+89
-            pcs = Ffreqs ** (3 - 2*alpha) * ratio
-            Cf = np.dot(F, np.dot(np.diag(pcs), F.T))
-            GCfG = np.dot(m1psr.Gmat.T, np.dot(Cf, m1psr.Gmat))
-            print "Traces:", np.trace(GCG), np.trace(GCfG)
-            print "Ratio:", np.trace(GCG) / np.trace(GCfG)
-            """
-
-            """
-            fig = plt.figure()
-            ufreqs = np.log(np.array(list(sets.Set(m1psr.Ffreqs))))
-            plt.errorbar(ufreqs, psest, fmt='o', c='blue')
-            #plt.errorbar(m1psr.Ffreqs, fest**2, fmt='o', c='blue')
-            #plt.errorbar(m1psr.Ffreqs, fest2**2, fmt='.', c='red')
-            #plt.errorbar(m1psr.Ffreqs, fest3**2, fmt='.', c='green')
-            #plt.errorbar(m1psr.Ffreqs, fest4**2, fmt='.', c='black')
-            plt.title("Periodogram")
-            plt.xlabel("Frequency [log(f)]")
-            plt.ylabel("Power [log(r)]")
-            plt.grid(True)
-            plt.show()
-            """
-
-            """
-            # Plot the reconstructed signal
-            recsig = np.dot(m1psr.Gmat, np.dot(m1psr.Gmat.T, np.dot(m1psr.Fmat, fest)))
-            plt.errorbar(m1psr.toas, m1psr.residuals, yerr=m1psr.toaerrs, fmt='.', c='blue')
-            plt.plot(m1psr.toas, recsig, 'r--')
-            plt.grid(True)
-            plt.show()
-            """
-            
-            """
-            # Plot the Fourier basis functions
-            Proj = np.dot(m1psr.Gmat, m1psr.Gmat.T)
-            Fproj = np.dot(Proj, m1psr.Fmat)
-            plt.plot(m1psr.toas, Fproj[:,0], 'k-')
-            plt.plot(m1psr.toas, m1psr.Fmat[:,0], 'k--')
-            plt.plot(m1psr.toas, Fproj[:,1], 'r-')
-            plt.plot(m1psr.toas, m1psr.Fmat[:,1], 'r--')
-            plt.plot(m1psr.toas, Fproj[:,2], 'b-')
-            plt.plot(m1psr.toas, m1psr.Fmat[:,2], 'b--')
-            plt.plot(m1psr.toas, Fproj[:,3], 'g-')
-            plt.plot(m1psr.toas, m1psr.Fmat[:,3], 'g--')
-            plt.grid(True)
-            plt.show()
-            """
-
-            """
-            # Plot the basis functions of the compression
-            psc = m1psr.Ffreqs ** (-13.0/3.0)
-            GF = np.dot(m1psr.Gmat.T, m1psr.Fmat)
-            GCps = np.dot(GF, np.dot(np.diag(psc), GF.T))
-            U, s, Vh = sl.svd(GCps)
-            bfuncs = np.dot(m1psr.Gmat, U)
-
-            Proj = np.dot(m1psr.Gmat, m1psr.Gmat.T)
-            Fproj = np.dot(Proj, m1psr.Fmat)
-            plt.plot(m1psr.toas, bfuncs[:,0], 'k-')
-            plt.plot(m1psr.toas, bfuncs[:,1], 'k--')
-            plt.plot(m1psr.toas, bfuncs[:,2], 'k.')
-            plt.grid(True)
-            plt.show()
-            """
-
-
 
     """
     Parameters are: efac, coefficients (for now)
@@ -1003,14 +919,18 @@ class mark2Pulsar(object):
         # TODO: Check whether the DM quadratic (and the DM) are already present
         #       in the design matrix
         M = np.zeros((self.Mmat.shape[0], self.Mmat.shape[1]+2))
-        Dmatdiag = DMk / self.freqs**2
-        d = np.array([Dmatdiag*self.toas, Dmatdiag*self.toas**2]).T
+        #M = np.zeros((self.Mmat.shape[0], self.Mmat.shape[1]+3))
+        Dmatdiag = DMk / (self.freqs**2)
+        d = np.array([Dmatdiag*self.toas, Dmatdiag*(self.toas**2)]).T
+        #d = np.array([Dmatdiag, Dmatdiag*self.toas, Dmatdiag*(self.toas**2)]).T
 
         M[:,:-2] = self.Mmat
         M[:,-2:] = d
+        #M[:,:-3] = self.Mmat
+        #M[:,-3:] = d
         self.Mmat = M
         U, s, Vh = sl.svd(self.Mmat)
-        self.Gmat = U[:, self.Mmat.shape[1]:].copy()
+        self.Gmat = U[:, (self.Mmat.shape[1]):].copy()
 
     # The number of frequencies is not the number of modes: model = 2*freqs
     def createAuxiliaries(self, nfreqs, Tmax):
@@ -2387,11 +2307,10 @@ class mark2Likelihood(object):
 
 
 
-
     """
     Test signal generation
     """
-    def testgensig(self, parameters=None):
+    def testgensig(self, parameters=None, filename=None):
         if parameters == None:
             parameters = self.pstart
 
@@ -2561,7 +2480,38 @@ class mark2Likelihood(object):
             self.m2psrs[ii].residuals = ygen[tindex:tindex+nobs]
             tindex += nobs
 
+        if filename != None:
+            h5file = h5.File(filename, 'a')
 
+            if not "Data" in h5file:
+                h5file.close()
+                h5file = None
+                raise IOError, "no Data group in hdf5 file"
+
+            datagroup = h5file["Data"]
+
+            # Retrieve the pulsars group
+            if not "Pulsars" in datagroup:
+                h5file.close()
+                h5file = None
+                raise IOError, "no Pulsars group in hdf5 file"
+
+            pulsarsgroup = datagroup["Pulsars"]
+
+            for ii in range(len(self.m2psrs)):
+                psrname = self.m2psrs[ii].name
+
+                #print pulsarsgroup[psrname]['prefitRes'][:]
+                #print pulsarsgroup[psrname]['postfitRes'][:]
+
+                pulsarsgroup[psrname]['prefitRes'][:] = self.m2psrs[ii].residuals
+                pulsarsgroup[psrname]['postfitRes'][:] = self.m2psrs[ii].residuals
+
+                #pulsarsgroup[psrname].create_dataset('prefitRes', data=np.double(self.m2psrs[ii].residuals))
+                #pulsarsgroup[psrname].create_dataset('postfitRes', data=np.double(self.m2psrs[ii].residuals))
+
+            h5file.close()
+            h5file = None
 
 
 
@@ -3241,228 +3191,4 @@ def RunDNest(likob, mcmcFile=None, numParticles=1, newLevelInterval=500,\
 
     pydnest.dnestresults()
 
-
-
-
-
-"""
-Run a twalk algorithm on the likelihood wrapper.
-Implementation from "pytwalk".
-
-This algorithm used two points. First starts at pstart. Second starts at pstart
-+ pwidth
-
-Only every (i % thin) step is saved. So with thin=1 all will be saved
-
-pmin - minimum boundary of the prior domain
-pmax - maximum boundary of the prior domain
-pstart - starting position in parameter space
-pwidth - offset of starting position for second walker
-steps - number of MCMC walks to take
-"""
-def Runtwalk(pmin, pmax, pstart, pwidth, steps, chainfilename, thin=1):
-  ndim = len(pstart)
-
-  pminlog = lp_transform(pmin, pmin, pmax)
-  pmaxlog = lp_transform(pmax, pmin, pmax)
-  pwidthlog = lp_widthtransform(pwidth, pmin, pmax)
-  pstartlog = lp_transform(pstart, pmin, pmax)
-
-  # Define the support function (in or outside of domain)
-  def PtaSupp(x, xmin=pmin, xmax=pmax):
-    return np.all(xmin < x) and np.all(x < xmax)
-
-  def PtaLogSupp(x, xmin=pminlog, xmax=pmaxlog):
-    return np.all(xmin < x) and np.all(x < xmax)
-
-#  p0 = pstart
-#  p1 = pstart + pwidth 
-  p0 = pstartlog.copy()
-  p1 = pstartlog + pwidthlog
-
-  # Initialise the twalk sampler
-#  sampler = pytwalk.pytwalk(n=ndim, U=np_ns_WrapLL, Supp=PtaSupp)
-  sampler = pytwalk.pytwalk(n=ndim, U=sample_ns_lp, Supp=PtaLogSupp)
-
-  # Run the twalk sampler
-  sampler.Run(T=steps, x0=p0, xp0=p1)
-  sampler.Ana()
-
-  indices = range(0, steps, thin)
-
-  savechain = np.zeros((len(indices), sampler.Output.shape[1]+1))
-  savechain[:,1] = -sampler.Output[indices, ndim]
-  savechain[:,2:] = sampler.Output[indices, :-1]
-
-  np.savetxt(chainfilename, savechain)
-
-
-
-
-"""
-Run an ensemble sampler on the likelihood wrapper.
-Implementation from "emcee".
-"""
-def Runemcee(pmin, pmax, pstart, pwidth, steps, chainfilename,
-    initfile=None, savechain=False, a=2.0):
-  ndim = len(pstart)
-  nwalkers = 5 * ndim
-  mcmcsteps = steps / nwalkers
-
-  # Define the support function (in or outside of domain)
-  def PtaSupp(x, xmin=pmin, xmax=pmax):
-    return np.all(xmin < x) and np.all(x < xmax)
-
-  if initfile is not None:
-    # Read the starting position of the random walkers from a file
-    print "Obtaining initial positions from '" + initfile + "'"
-    burnindata = np.loadtxt(initfile)
-    burnindata = burnindata[:,2:]
-    nsteps = burnindata.shape[0]
-    dim = burnindata.shape[1]
-    if(ndim is not dim):
-      print "ERROR: burnin file not same dimensions!"
-      exit()
-    indices = np.random.randint(0, nsteps, nwalkers)
-    p0 = [g_transform(burnindata[i], pmin, pmax) for i in indices]
-  else:
-    # Set the starting position of the random walkers
-    print "Set random initial positions"
-    p0 = [g_transform(np.random.rand(ndim)*pwidth+pstart,
-      pmin, pmax) for i in range(nwalkers)]
-
-  print "Initialising sampler"
-  sampler = emcee.EnsembleSampler(nwalkers, ndim, sample_ll,
-      args=[pmin, pmax], a = a)
-  pos, prob, state = sampler.run_mcmc(p0, 1)
-  sampler.reset()
-
-
-  print "Running emcee sampler"
-  fil = open(chainfilename, "w")
-  fil.close()
-  for i in range(mcmcsteps):
-      for result in sampler.sample(pos, iterations=1, storechain=False, rstate0=state):
-	  pos = result[0]
-	  lnprob = result[1]
-	  state = result[2]
-	  fil = open(chainfilename, "a")
-	  for k in range(pos.shape[0]):
-	      fil.write("{0:4f} \t{1:s} \t{2:s}\n".format(k, \
-		  str(lnprob[k]), \
-		  "\t".join([str(x) for x in g_invtransform(pos[k], pmin, pmax)])))
-	  fil.close()
-      percent = i * 100.0 / mcmcsteps
-      sys.stdout.write("\rSample: {0:d} = {1:4.1f}%   acc. fr. = {2:f}   pos = {3:e} {4:e}  lnprob = {5:e}  ".format( \
-	      i, percent, \
-	      np.mean(sampler.acceptance_fraction), \
-	      g_invtransform(pos[0,ndim-2], pmin[ndim-2], \
-		pmax[ndim-2]), \
-	      g_invtransform(pos[0,ndim-1], pmin[ndim-1], \
-		pmax[ndim-1]), \
-	      lnprob[0]))
-      sys.stdout.flush()
-  sys.stdout.write("\n")
-
-  print("Mean acceptance fraction:", np.mean(sampler.acceptance_fraction))
-
-  if savechain:
-    try:
-	print("Autocorrelation time:", sampler.acor)
-    except ImportError:
-	print("Install acor from github or pip: http://github.com/dfm/acor")
-
-  print "Finish wrapper"
-
-
-
-"""
-Optimise the log-likelihood with a downhill-simplex method
-Implementation: pylab (Nelder-Mead)
-
-"""
-def Optimise(pmin, pmax, pstart):
-  ndim = len(pstart)
-
-  # Define the function we'll minimise
-  func = lambda par, parmin, parmax: -np_WrapLL(par, parmin, parmax)
-
-  # Run the downhill simplex method
-  #arr_opt = minimize(func, arr_start_np, method='nelder-mead',\
-      #argx=(arr_min_np, arr_max_np),\
-      #options={'xtol': 1e-8, 'disp': True})
-  popt = fmin(func, pstart, args=(pmin, pmax),\
-      maxiter=1000000, maxfun=1000000, xtol=1e-6)
-
-  print "Optimal parameters: ", popt
-  print "Start parameters: ", pstart
-
-
-
-"""
-Perform a simple scan for two parameters. Fix all parameters to their "true"
-values, vary two parameters within their domain
-
-"""
-def ScanParameters(par1, par2, pmin, pmax, pval, scanfilename):
-  ndim = len(pmin)
-
-  p1 = np.linspace(pmin[par1], pmax[par1], 50)
-  p2 = np.linspace(pmin[par2], pmax[par2], 50)
-
-  lp1 = np.zeros(shape=(50,50))
-  lp2 = np.zeros(shape=(50,50))
-  llik = np.zeros(shape=(50,50))
-  for i in range(50):
-      for j in range(50):
-	  lp1[i,j] = p1[i]
-	  lp2[i,j] = p2[j]
-	  pval[par1] = p1[i]
-	  pval[par2] = p2[j]
-	  llik[i,j] = np_WrapLL(pval, pmin, pmax)
-	  percent = (i*50+j) * 100.0 / (50*50)
-	  sys.stdout.write("\rScan: %d%%" %percent)
-	  sys.stdout.flush()
-  sys.stdout.write("\n")
-
-  if (par1 % 2) == 1:
-    lp1 = lp1 + 2.0
-
-  if (par2 % 2) == 1:
-    lp2 = lp2 + 2.0
-
-  col1 = lp1.reshape(50*50)
-  col2 = lp2.reshape(50*50)
-  lcol3 = llik.reshape(50*50)
-  col3 = np.exp(lcol3 - np.max(lcol3))
-
-  np.savetxt(scanfilename, np.array([col1, col2, col3]).T)
-
-
-"""
-Perform a simple scan for one parameters. Fix all parameters to their "true"
-values, vary one parameters within its domain
-
-"""
-def ScanParameter(par1, pmin, pmax, pval, scanfilename):
-  ndim = len(pmin)
-
-  p1 = np.linspace(pmin[par1], pmax[par1], 50)
-
-  lp1 = np.zeros(shape=(50))
-  llik = np.zeros(shape=(50))
-  for i in range(50):
-      lp1[i] = p1[i]
-      pval[par1] = p1[i]
-      llik[i] = np_WrapLL(pval, pmin, pmax)
-      percent = (i) * 100.0 / (50)
-      sys.stdout.write("\rScan: %d%%" %percent)
-      sys.stdout.flush()
-  sys.stdout.write("\n")
-
-  col1 = lp1
-  lcol3 = llik
-  col3 = np.exp(lcol3 - np.max(lcol3))
-
-  np.savetxt(scanfilename, np.array([col1, col3]).T)
 
