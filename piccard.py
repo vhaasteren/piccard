@@ -581,9 +581,6 @@ class dipoleCorrelations(object):
             y1 = np.real(ss.sph_harm(0, 1, self.priorphi[ii], self.priortheta[ii]))
             y2 = np.real(ss.sph_harm(1, 1, self.priorphi[ii], self.priortheta[ii]))
             if 1.0+(clm[0] * y0 + clm[1] * y1 + clm[2] * y2) <= 0:
-                print "clm = ", clm
-                print "y = ", [y0, y1, y2]
-                print "Sum = ", 1.0+(clm[0] * y0 + clm[1] * y1 + clm[2] * y2)
                 posdef = False
 
         return posdef
