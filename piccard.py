@@ -403,6 +403,84 @@ def hdcorrmat(m2psrs):
     return hdmat
 
 
+# Calculate the covariance matrix for a red signal
+# (for a GWB with unitless amplitude h_c(1yr^{-1}) = 1)
+def Cred_sec(toas, alpha=-2.0/3.0, fL=1.0/20, approx_ksum=False):
+    day    = 86400.0
+    year   = 3.15581498e7
+    EulerGamma = 0.5772156649015329
+
+    psrobs = [len(toas)]
+    alphaab = np.array([[1.0]])
+    times_f = toas / day
+    
+    npsrs = alphaab.shape[0]
+
+    t1, t2 = np.meshgrid(times_f,times_f)
+
+    # t1, t2 are in units of days; fL in units of 1/year (sidereal for both?)
+    # so typical values here are 10^-6 to 10^-3
+    x = 2 * np.pi * (day/year) * fL * np.abs(t1 - t2)
+
+    del t1
+    del t2
+
+    # note that the gamma is singular for all half-integer alpha < 1.5
+    #
+    # for -1 < alpha < 0, the x exponent ranges from 4 to 2 (it's 3.33 for alpha = -2/3)
+    # so for the lower alpha values it will be comparable in value to the x**2 term of ksum
+    #
+    # possible alpha limits for a search could be [-0.95,-0.55] in which case the sign of `power`
+    # is always positive, and the x exponent ranges from ~ 3 to 4... no problem with cancellation
+
+    # The tolerance for which to use the Gamma function expansion
+    tol = 1e-5
+
+    # the exact solutions for alpha = 0, -1 should be acceptable in a small interval around them...
+    if abs(alpha) < 1e-7:
+        cosx, sinx = np.cos(x), np.sin(x)
+
+        power = cosx - x * sinx
+        sinint, cosint = sl.sici(x)
+
+        corr = (year**2 * fL**-2) / (24 * math.pi**2) * (power + x**2 * cosint)
+    elif abs(alpha + 1) < 1e-7:
+        cosx, sinx = np.cos(x), np.sin(x)
+
+        power = 6 * cosx - 2 * x * sinx - x**2 * cosx + x**3 * sinx
+        sinint, cosint = ss.sici(x)
+
+        corr = (year**2 * fL**-4) / (288 * np.pi**2) * (power - x**4 * cosint)
+    else:
+        # leading-order expansion of Gamma[-2+2*alpha]*Cos[Pi*alpha] around -0.5 and 0.5
+        if   abs(alpha - 0.5) < tol:
+            cf =  np.pi/2   + (np.pi - np.pi*EulerGamma)              * (alpha - 0.5)
+        elif abs(alpha + 0.5) < tol:
+            cf = -np.pi/12  + (-11*np.pi/36 + EulerGamma*math.pi/6)     * (alpha + 0.5)
+        elif abs(alpha + 1.5) < tol:
+            cf =  np.pi/240 + (137*np.pi/7200 - EulerGamma*np.pi/120) * (alpha + 1.5)
+        else:
+            cf = ss.gamma(-2+2*alpha) * np.cos(np.pi*alpha)
+
+        power = cf * x**(2-2*alpha)
+
+        # Mathematica solves Sum[(-1)^n x^(2 n)/((2 n)! (2 n + 2 alpha - 2)), {n, 0, Infinity}]
+        # as HypergeometricPFQ[{-1+alpha}, {1/2,alpha}, -(x^2/4)]/(2 alpha - 2)
+        # the corresponding scipy.special function is hyp1f2 (which returns value and error)
+        # TO DO, for speed: could replace with the first few terms of the sum!
+        if approx_ksum:
+            ksum = 1.0 / (2*alpha - 2) - x**2 / (4*alpha) + x**4 / (24 * (2 + 2*alpha))
+        else:
+            ksum = ss.hyp1f2(alpha-1,0.5,alpha,-0.25*x**2)[0]/(2*alpha-2)
+
+        del x
+
+        # this form follows from Eq. (A31) of Lee, Jenet, and Price ApJ 684:1304 (2008)
+        corr = -(year**2 * fL**(-2+2*alpha)) / (12 * np.pi**2) * (power + ksum)
+        
+    return corr
+
+
 
 
 """
@@ -2305,12 +2383,13 @@ class mark2Likelihood(object):
         return self.pmin + np.random.rand(self.dimensions) * (self.pmax - self.pmin)
 
 
-
-
     """
-    Test signal generation
+    Simple signal generation, use frequency domain for power-law signals by
+    default
+
+    TODO: add correlations for the time-domain signals
     """
-    def testgensig(self, parameters=None, filename=None):
+    def gensig(self, parameters=None, filename=None, timedomain=False):
         if parameters == None:
             parameters = self.pstart
 
@@ -2323,8 +2402,10 @@ class mark2Likelihood(object):
             nobs[ii] = len(self.m2psrs[ii].toas)
             ngs[ii] = self.m2psrs[ii].Gmat.shape[1]
 
-        Phi = np.zeros((np.sum(npf), np.sum(npf)))
-        Theta = np.zeros((np.sum(npf), np.sum(npf)))
+        Phi = np.zeros((np.sum(npf), np.sum(npf)))      # Freq. domain red signals
+        Theta = np.zeros((np.sum(npf), np.sum(npf)))    # Freq. domain DM signals
+        Cr = np.zeros((np.sum(nobs), np.sum(nobs)))     # Time domain red signals
+        Cdm = np.zeros((np.sum(nobs), np.sum(nobs)))     # Time domain red signals
 
         # For every pulsar, set the noise vector to zero
         for m2psr in self.m2psrs:
@@ -2392,14 +2473,23 @@ class mark2Likelihood(object):
                 Si = parameters[m2signal.nindex+1]
 
                 if m2signal.corr == 'single':
+                    nindex = np.sum(nobs[:m2signal.pulsarind])
+                    npobs = nobs[m2signal.pulsarind]
                     findex = np.sum(npf[:m2signal.pulsarind])
                     nfreq = npf[m2signal.pulsarind]/2
-                    freqpy = self.m2psrs[m2signal.pulsarind].Ffreqs * spy
-                    pcdoubled = (Amp**2 * spy**3 / (12*np.pi*np.pi * m2signal.Tmax)) * freqpy ** (-Si)
 
-                    # Fill the phi matrix
-                    di = np.diag_indices(2*nfreq)
-                    Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += pcdoubled
+                    if timedomain:
+                        Cr[nindex:nindex+npobs,nindex:nindex+npobs] +=\
+                                Cred_sec(self.m2psrs[m2signal.pulsarind].toas,\
+                                alpha=0.5*(3-Si),\
+                                fL=1.0/40) * (Amp**2)
+                    else:
+                        freqpy = self.m2psrs[m2signal.pulsarind].Ffreqs * spy
+                        pcdoubled = (Amp**2 * spy**3 / (12*np.pi*np.pi * m2signal.Tmax)) * freqpy ** (-Si)
+
+                        # Fill the phi matrix
+                        di = np.diag_indices(2*nfreq)
+                        Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += pcdoubled
                 elif m2signal.corr == 'gr':
                     freqpy = self.m2psrs[0].Ffreqs * spy
                     pcdoubled = (Amp**2 * spy**3 / (12*np.pi*np.pi * m2signal.Tmax)) * freqpy ** (-Si)
@@ -2426,12 +2516,21 @@ class mark2Likelihood(object):
                 Amp = 10**parameters[m2signal.nindex]
                 Si = parameters[m2signal.nindex+1]
 
+                nindex = np.sum(nobs[:m2signal.pulsarind])
+                npobs = nobs[m2signal.pulsarind]
                 findex = np.sum(npf[:m2signal.pulsarind])
                 nfreq = npf[m2signal.pulsarind]/2
-                freqpy = self.m2psrs[m2signal.pulsarind].Ffreqs * spy
-                pcdoubled = (Amp**2 * spy**3 / (12*np.pi*np.pi * m2signal.Tmax)) * freqpy ** (-Si)
-                
-                Theta[findex:findex+2*nfreq, findex:findex+2*nfreq] += np.diag(pcdoubled)
+
+                if timedomain:
+                    Cdm[nindex:nindex+npobs,nindex:nindex+npobs] +=\
+                            Cred_sec(self.m2psrs[m2signal.pulsarind].toas,\
+                            alpha=0.5*(3-Si),\
+                            fL=1.0/40) * (Amp**2)
+                else:
+                    freqpy = self.m2psrs[m2signal.pulsarind].Ffreqs * spy
+                    pcdoubled = (Amp**2 * spy**3 / (12*np.pi*np.pi * m2signal.Tmax)) * freqpy ** (-Si)
+                    
+                    Theta[findex:findex+2*nfreq, findex:findex+2*nfreq] += np.diag(pcdoubled)
 
 
         # We have both the white noise, and the red noise. Construct the total
@@ -2439,6 +2538,7 @@ class mark2Likelihood(object):
         Cov = np.zeros((np.sum(nobs), np.sum(nobs)))
         totFmat = np.zeros((np.sum(nobs), np.sum(npf)))
         totDFmat = np.zeros((np.sum(nobs), np.sum(npf)))
+        totDmat = np.zeros((np.sum(nobs), np.sum(nobs)))
         totG = np.zeros((np.sum(nobs), np.sum(ngs)))
         tottoas = np.zeros(np.sum(nobs))
         tottoaerrs = np.zeros(np.sum(nobs))
@@ -2452,6 +2552,7 @@ class mark2Likelihood(object):
             Cov[nindex:nindex+npobs, nindex:nindex+npobs] = np.diag(self.m2psrs[ii].Nvec)
             totFmat[nindex:nindex+npobs, findex:findex+nppf] = self.m2psrs[ii].Fmat
             totDFmat[nindex:nindex+npobs, findex:findex+nppf] = self.m2psrs[ii].DF
+            totDmat[nindex:nindex+npobs, nindex:nindex+npobs] = self.m2psrs[ii].Dmat
 
             totG[nindex:nindex+npobs, gindex:gindex+npgs] = self.m2psrs[ii].Gmat
             tottoas[nindex:nindex+npobs] = self.m2psrs[ii].toas
@@ -2459,6 +2560,8 @@ class mark2Likelihood(object):
 
         Cov += np.dot(totFmat, np.dot(Phi, totFmat.T))
         Cov += np.dot(totDFmat, np.dot(Theta, totDFmat.T))
+        Cov += Cr
+        Cov += np.dot(totDmat, np.dot(Cdm, totDmat))
 
         GCG = np.dot(totG.T, np.dot(Cov, totG))
         #GCG = Cov
@@ -2523,16 +2626,27 @@ sigmalevel: either 1, 2, or 3. Which sigma limit must be given
 onesided: Give one-sided limits (useful for setting upper or lower limits)
 
 """
-def confinterval(samples, sigmalevel=2, onesided=False):
+def confinterval(samples, sigmalevel=2, onesided=False, weights=None):
   # The probabilities for different sigmas
   sigma = [0.68268949, 0.95449974, 0.99730024]
 
-  # Create the ecdf function
-  ecdf = sm.distributions.ECDF(samples)
+  bins = 200
+  xmin = min(samples)
+  xmax = max(samples)
 
-  # Create the binning
-  x = np.linspace(min(samples), max(samples), 200)
-  y = ecdf(x)
+  # If we don't have any weighting (MCMC chain), use the statsmodels package
+  if weights == None:
+    # Create the ecdf function
+    ecdf = sm.distributions.ECDF(samples)
+
+    # Create the binning
+    x = np.linspace(xmin, xmax, bins)
+    y = ecdf(x)
+  else:
+    # MultiNest chain with weights
+    hist, xedges = np.histogram(samples[:], bins=bins, range=(xmin,xmax), weights=weights, density=True)
+    x = np.delete(xedges, -1) + 1.5*(xedges[1] - xedges[0])
+    y = np.cumsum(hist) / np.sum(hist)
 
   # Find the intervals
   x2min = y[0]
@@ -2785,10 +2899,10 @@ def makespectrumplot(chainfilename, parstart=1, parstop=10, freqs=None):
     spd = 24 * 3600.0
     spy = 365.25 * spd
     pfreqs = 10 ** ufreqs
-    Aing = 5.0e-14
-    #Aing = 10**(-13.04)
-    yinj = (Aing**2 * spy**3 / (12*np.pi*np.pi * (5*spy))) * ((pfreqs * spy) ** (-13.0/3.0))
-    #yinj = (Aing**2 * spy**3 / (12*np.pi*np.pi * (5*spy))) * ((pfreqs * spy) ** (-2.08))
+    #Aing = 5.0e-14
+    Aing = 10**(-13.00)
+    #yinj = (Aing**2 * spy**3 / (12*np.pi*np.pi * (5*spy))) * ((pfreqs * spy) ** (-13.0/3.0))
+    yinj = (Aing**2 * spy**3 / (12*np.pi*np.pi * (5*spy))) * ((pfreqs * spy) ** (-5.33))
     #print pfreqs * spy
     #print np.log10(yinj)
 
@@ -2799,6 +2913,60 @@ def makespectrumplot(chainfilename, parstart=1, parstop=10, freqs=None):
 
     for ii in range(parstop - parstart):
         fmin, fmax = confinterval(emceechain[:, parstart+2+ii], sigmalevel=1)
+        yval[ii] = (fmax + fmin) * 0.5
+        yerr[ii] = (fmax - fmin) * 0.5
+
+    fig = plt.figure()
+
+    #plt.plot(ufreqs, yval, 'k.-')
+    plt.errorbar(ufreqs, yval, yerr=yerr, fmt='.', c='black')
+    plt.plot(ufreqs, np.log10(yinj), 'k--')
+    plt.title("Periodogram")
+    plt.xlabel("Frequency [log(f)]")
+    plt.ylabel("Power [log(r)]")
+    plt.grid(True)
+
+
+"""
+Given a MultiNest chain file, plot the log-spectrum
+
+"""
+def makemnspectrumplot(mnchainfilename, minmaxfile=None, parstart=1, parstop=10, freqs=None):
+    ufreqs = np.log10(np.sort(np.array(list(sets.Set(freqs)))))
+    #ufreqs = np.array(list(sets.Set(freqs)))
+    yval = np.zeros(parstop-parstart)
+    yerr = np.zeros(parstop-parstart)
+
+    if len(ufreqs) != (parstop - parstart):
+        print "WARNING: parameter range does not correspond to #frequencies"
+
+    spd = 24 * 3600.0
+    spy = 365.25 * spd
+    pfreqs = 10 ** ufreqs
+    #Aing = 5.0e-14
+    Aing = 10**(-13.00)
+    Aing = 10**(-10.00)
+    #yinj = (Aing**2 * spy**3 / (12*np.pi*np.pi * (5*spy))) * ((pfreqs * spy) ** (-13.0/3.0))
+    yinj = (Aing**2 * spy**3 / (12*np.pi*np.pi * (5*spy))) * ((pfreqs * spy) ** (-2.33))
+    #print pfreqs * spy
+    #print np.log10(yinj)
+
+    mnchain = np.loadtxt(mnchainfilename)
+    #emceechain = np.loadtxt(chainfilename)
+
+    if minmaxfile is not None:
+        minmax = np.loadtxt(minmaxfile)
+
+    nDimensions = mnchain.shape[1]-2
+
+    # Rescale the hypercube parameters
+    if minmaxfile is not None:
+        for i in range(nDimensions):
+            mnchain[:,i+2] = minmax[i,0] + mnchain[:,i+2] * (minmax[i,1] - minmax[i,0])
+
+
+    for ii in range(parstop - parstart):
+        fmin, fmax = confinterval(mnchain[:, parstart+2+ii], sigmalevel=1, weights=mnchain[:,0])
         yval[ii] = (fmax + fmin) * 0.5
         yerr[ii] = (fmax - fmin) * 0.5
 
