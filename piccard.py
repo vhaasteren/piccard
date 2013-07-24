@@ -14,6 +14,8 @@ Requirements:
 
 """
 
+from __future__ import division
+
 import numpy as np
 import scipy.linalg as sl, scipy.special as ss
 import h5py as h5
@@ -21,13 +23,35 @@ import sets as sets
 import matplotlib.pyplot as plt
 import os as os
 import sys
-import libstempo as t2
-import pytwalk
-import emcee
-import pymultinest
-import pydnest
-import statsmodels.api as sm
-import anisotropygammas as ang
+import pytwalk                  # Internal module
+import pydnest                  # Internal module
+import anisotropygammas as ang  # Internal module
+
+# Optional packages:
+try:
+    import statsmodels.api as smapi
+    sm = smapi
+except ImportError:
+    sm = None
+
+try:    # If without libstempo, can still read hdf5 files
+    import libstempo
+    t2 = libstempo
+except ImportError:
+    t2 = None
+
+try:    # Fall back to internal emcee implementation
+    import emcee as emceehammer
+    emcee = emceehammer
+except ImportError:
+    import mcmchammer as mcmchammer
+    emcee = mcmchammer
+
+try:    # If MultiNest is not installed, do not use it
+    import pymultinest
+    pymultinest = pymultinest
+except ImportError:
+    pymultinest = None
 
 # For DM calculations, use this constant
 # See You et al. (2007) - http://arxiv.org/abs/astro-ph/0702366
@@ -469,7 +493,8 @@ def Cred_sec(toas, alpha=-2.0/3.0, fL=1.0/20, approx_ksum=False):
 
 
 
-
+# The GWB anisotropic dipole correlations as defined in
+# Mingarelli and Vecchio (submitted); Taylor and Gair (submitted)
 class dipoleCorrelations(object):
     phiarr = None           # The phi pulsar position parameters
     thetaarr = None         # The theta pulsar position parameters
@@ -481,7 +506,7 @@ class dipoleCorrelations(object):
     priortheta = None       # Theta value of the locations for a prior check
 
     # Correlation matrices for the three dipole components
-    corrhd = None    # l = 1, m = -1
+    corrhd = None
     corr0 = None    # l = 1, m = -1
     corr1 = None    # l = 1, m = 0
     corr2 = None    # l = 1, m = 1
@@ -595,6 +620,145 @@ class dipoleCorrelations(object):
         return self.corrhd + clm[0]*self.corr0 + clm[1]*self.corr1 + clm[2]*self.corr2
 
 
+
+# The GWB general anisotropic correlations as defined in
+# Mingarelli and Vecchio (submitted); Taylor and Gair (submitted)
+class aniCorrelations(object):
+    phiarr = None           # The phi pulsar position parameters
+    thetaarr = None         # The theta pulsar position parameters
+    gamma_ml = None         # The gamma_ml (see anisotropygammas.py)
+
+    # The anisotropic search requires a specific type of prior: the combination
+    # c_lm * 
+    priorphi = None         # Phi value of the locations for a prior check
+    priortheta = None       # Theta value of the locations for a prior check
+
+    # Correlation matrices for the anisotropic components
+    corrhd = None   # H&D correlations
+    corr = []
+    l = 1           # The order of the anisotropic correlations (dipole, quadrupole, ...)
+
+    def __init__(self, psrs=None, l=1):
+        # If we have a pulsars object, initialise the angular quantities
+        if psrs != None:
+            self.setmatrices(psrs, l)
+        else:
+            self.phiarr = None           # The phi pulsar position parameters
+            self.thetaarr = None         # The theta pulsar position parameters
+            self.gamma_ml = None         # The gamma_ml (see anisotropygammas.py)
+
+            self.priorphi = None
+            self.thetaphi = None
+
+            self.corrhd = None
+            self.corr = []
+
+    def setmatrices(self, psrs, l):
+        # First set all the pulsar positions
+        self.phiarr = np.zeros(len(psrs))
+        self.thetaarr = np.zeros(len(psrs))
+        self.l = l
+
+        for ii in range(len(psrs)):
+            self.phiarr[ii] = psrs[ii].raj
+            self.thetaarr[ii] = np.pi/2 - psrs[ii].decj
+
+        # Construct a 5x5 grid of phi/theta values for prior checks
+        prphi = np.linspace(0, 2*np.pi, 5, endpoint=False)
+        prtheta = np.linspace(0, np.pi, 5)
+        pprphi, pprtheta = np.meshgrid(prphi, prtheta)
+        self.priorphi = pprphi.flatten()
+        self.priortheta = pprtheta.flatten()
+
+        self.corrhd = hdcorrmat(psrs)
+
+        for ll in range(1, self.l+1):
+            mmodes = 2*ll+1     # Number of modes for this ll
+
+            # Create the correlation matrices for this value of l
+            for mm in range(mmodes):
+                self.corr.append(np.zeros((len(psrs), len(psrs))))
+
+            for aa in range(len(psrs)):
+                for bb in range(aa, len(psrs)):
+                    plus_gamma_ml = []  # gammas for this pulsar pair
+                    neg_gamma_ml = []
+                    gamma_ml = []
+                    for mm in range(ll+1):
+                        intg_gamma = ang.int_Gamma_lm(mm, l, \
+                                self.phiarr[aa], self.phiarr[bb], \
+                                self.thetaarr[aa],self.thetaarr[bb])
+                        neg_intg_gamma= (-1)**(mm) * intg_gamma  # (-1)^m Gamma_ml
+                        plus_gamma_ml.append(intg_gamma)     # all gammas
+                        neg_gamma_ml.append(neg_intg_gamma)  # neg m gammas
+
+                    neg_gamma_ml = neg_gamma_ml[1:]          # Use 0 only once
+                    rev_neg_gamma_ml = neg_gamma_ml[::-1]    # Reverse list direction
+                    gamma_ml = rev_neg_gamma_ml+plus_gamma_ml
+
+                    # Fill the corrcur matrices for all m
+                    mindex = len(self.corr) - mmodes - 1    # Index first m mode
+                    for mm in range(mmodes):
+                        m = mm - ll
+
+                        if aa == bb:
+                            self.corr[mindex+mm][aa, bb] = 1.0
+
+                        if aa != bb:
+                            self.corr[mindex+mm][aa, bb] = \
+                                    ang.real_rotated_Gammas(m, ll, \
+                                    self.phiarr[aa], self.phiarr[bb], \
+                                    self.thetaarr[aa], self.thetaarr[bb], gamma_ml)
+                            self.corr[mindex+mm][bb, aa] = self.corr[mindex+mm][aa, bb]
+
+    def clmlength(self):
+        return (self.l+1)**2-1
+
+
+    def priorIndicator(self, clm):
+        # Check whether sum_lm c_lm * Y_lm > 0 for this combination of clm
+        posdef = True
+
+        if self.priorphi == None or self.priortheta == None:
+            raise ValueError("ERROR: first define the anisotropic prior-check positions")
+
+        if len(self.priorphi) != len(self.priortheta):
+            raise ValueError("ERROR: len(self.priorphi) != len(self.priortheta)")
+
+        # Number of clm is 3 + 5 + 7 + ... (2*self.l+1)
+        if len(clm) != self.clmlength():
+            raise ValueError("ERROR: len(clm) != clmlength")
+
+        for ii in range(len(self.priorphi)):
+            clmsum = 1.0
+            for ll in range(1, self.l+1):
+                for mm in range(-ll, ll+1):
+                    clmsum += np.real(ss.sph_harm(mm, ll, self.priorphi[ii], self.priortheta[ii]))
+
+            if clmsum <= 0:
+                posdef = False
+
+        return posdef
+
+    # Return the full correlation matrix that depends on the clm. This
+    # correlation matrix only needs to be multiplied with the signal amplitude
+    # and the time-correlations
+    def corrmat(self, clm):
+        # Number of clm is 3 + 5 + 7 + ... (2*self.l+1)
+        if len(clm) != self.clmlength():
+            raise ValueError("ERROR: len(clm) != clmlength")
+
+        corrreturn = self.corrhd.copy()
+        index = 0
+        for ll in range(1, self.l+1):
+            for mm in range(-ll, ll+1):
+                corrreturn += clm[index] * self.corr[index]
+                index += 1
+
+        return corrreturn
+
+
+
 """
 A general signal element of the pta model/likelihood.
 
@@ -628,7 +792,7 @@ class ptasignal(object):
     Tmax = None
     corrmat = None
 
-    dipoleCorr = None       # Dipole correlations are described by this class
+    aniCorr = None       # Anisotropic correlations are described by this class
 
 
 
@@ -924,10 +1088,10 @@ class ptaLikelihood(object):
     # Initialise the model
     def initModel(self, nfreqmodes=20, modelIndependentNoise=False, \
             modelIndependentGWB=False, modelIndependentDM=False, \
-            modelIndependentClock=False, modelIndependentDipole=False, \
+            modelIndependentClock=False, modelIndependentAniGWB=False, \
             varyEfac=False, incRedNoise=False, incEquad=False, \
             separateEfacs=False, incGWB=False, incDM=False, \
-            incClock=False, incDipole=False, \
+            incClock=False, incAniGWB=False, lAniGWB=1, \
             accelNoise=False, likfunc='mark1'):
         # For every pulsar, construct the auxiliary quantities like the Fourier
         # design matrix etc
@@ -1099,20 +1263,21 @@ class ptaLikelihood(object):
             self.ptasignals.append(newsignal)
             index += newsignal.npars
 
-        if incDipole:
+        if incAniGWB:
             # Now include a GWB with dipolar anisotropies
             newsignal = ptasignal()
+            newsignal.aniCorr = aniCorrelations(self.ptapsrs, lAniGWB)
+            nclm = newsignal.aniCorr.clmlength()
             newsignal.pulsarind = -1
-            if modelIndependentDipole:
+            if modelIndependentAniGWB:
                 newsignal.stype = 'spectrum'
-                newsignal.npars = 3+int(len(self.ptapsrs[0].Ffreqs)/2) # Check how many
+                newsignal.npars = nclm+int(len(self.ptapsrs[0].Ffreqs)/2) # Check how many
             else:
                 newsignal.stype = 'powerlaw'
-                newsignal.npars = 3+2
-            newsignal.corr = 'dipolegr'
+                newsignal.npars = nclm+2
+            newsignal.corr = 'anisotropicgwb'
             newsignal.nindex = index
             newsignal.Tmax = Tmax
-            newsignal.dipoleCorr = dipoleCorrelations(self.ptapsrs)
             # newsignal.corrmat = hdcorrmat(self.ptapsrs)           # The H&D matrix
             self.ptasignals.append(newsignal)
             index += newsignal.npars
@@ -1166,22 +1331,24 @@ class ptaLikelihood(object):
                 self.pmax[index:index+npars] = 10.0
                 self.pstart[index:index+npars] = -10.0
                 self.pwidth[index:index+npars] = 0.1
-                if m2signal.corr == 'dipolegr':
-                    self.pmin[index+m2signal.npars-3:index+m2signal.npars] = 0
-                    self.pmax[index+m2signal.npars-3:index+m2signal.npars] = 1
-                    self.pstart[index+m2signal.npars-3:index+m2signal.npars] = 0.0
-                    self.pwidth[index+m2signal.npars-3:index+m2signal.npars] = 0.1
+                if m2signal.corr == 'anisotropicgwb':
+                    nclm = m2signal.aniCorr.clmlength()
+                    self.pmin[index+m2signal.npars-nclm:index+m2signal.npars] = 0
+                    self.pmax[index+m2signal.npars-nclm:index+m2signal.npars] = 1
+                    self.pstart[index+m2signal.npars-nclm:index+m2signal.npars] = 0.0
+                    self.pwidth[index+m2signal.npars-nclm:index+m2signal.npars] = 0.1
                 index += m2signal.npars
             elif m2signal.stype == 'powerlaw':
                 self.pmin[index:index+2] = [-17.0, 1.02]
                 self.pmax[index:index+2] = [-5.0, 6.98]
                 self.pstart[index:index+2] = [-14.0, 2.01]
                 self.pwidth[index:index+2] = [0.1, 0.1]
-                if m2signal.corr == 'dipolegr':
-                    self.pmin[index+m2signal.npars-3:index+m2signal.npars] = 0
-                    self.pmax[index+m2signal.npars-3:index+m2signal.npars] = 1
-                    self.pstart[index+m2signal.npars-3:index+m2signal.npars] = 0.0
-                    self.pwidth[index+m2signal.npars-3:index+m2signal.npars] = 0.1
+                if m2signal.corr == 'anisotropicgwb':
+                    nclm = m2signal.aniCorr.clmlength()
+                    self.pmin[index+m2signal.npars-nclm:index+m2signal.npars] = -5.0
+                    self.pmax[index+m2signal.npars-nclm:index+m2signal.npars] = 5.0
+                    self.pstart[index+m2signal.npars-nclm:index+m2signal.npars] = 0.0
+                    self.pwidth[index+m2signal.npars-nclm:index+m2signal.npars] = 0.2
                 index += m2signal.npars
             elif m2signal.stype == 'dmspectrum':
                 npars = m2signal.npars
@@ -1319,18 +1486,19 @@ class ptaLikelihood(object):
                     # Fill the phi matrix
                     di = np.diag_indices(2*nfreq)
                     Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += 10**pcdoubled
-                elif m2signal.corr in ['gr', 'uniform', 'dipolegr']:
+                elif m2signal.corr in ['gr', 'uniform', 'anisotropicgwb']:
                     nfreq = m2signal.npars
 
                     if m2signal.corr in ['gr', 'uniform']:
                         pcdoubled = np.array([parameters[m2signal.nindex:m2signal.nindex+m2signal.npars], parameters[m2signal.nindex:m2signal.nindex+m2signal.npars]]).T.flatten()
                         corrmat = m2signal.corrmat
-                    elif m2signal.corr == 'dipolegr':
+                    elif m2signal.corr == 'anisotropicgwb':
+                        nclm = m2signal.aniCorr.clmlength()
                         pcdoubled = np.array([\
-                            parameters[m2signal.nindex:m2signal.nindex+m2signal.npars-3],\
-                            parameters[m2signal.nindex:m2signal.nindex+m2signal.npars-3]]).T.flatten()
-                        clm = parameters[m2signal.nindex+m2signal.npars-3:m2signal.nindex+m2signal.npars]
-                        corrmat = m2signal.dipoleCorr.corrmat(clm)
+                            parameters[m2signal.nindex:m2signal.nindex+m2signal.npars-nclm],\
+                            parameters[m2signal.nindex:m2signal.nindex+m2signal.npars-nclm]]).T.flatten()
+                        clm = parameters[m2signal.nindex+m2signal.npars-nclm:m2signal.nindex+m2signal.npars]
+                        corrmat = m2signal.aniCorr.corrmat(clm)
 
                     indexa = 0
                     indexb = 0
@@ -1359,16 +1527,17 @@ class ptaLikelihood(object):
                     # Fill the phi matrix
                     di = np.diag_indices(2*nfreq)
                     Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += pcdoubled
-                elif m2signal.corr in ['gr', 'uniform', 'dipolegr']:
+                elif m2signal.corr in ['gr', 'uniform', 'anisotropicgwb']:
                     freqpy = self.ptapsrs[0].Ffreqs * spy
                     pcdoubled = (Amp**2 * spy**3 / (12*np.pi*np.pi * m2signal.Tmax)) * freqpy ** (-Si)
                     nfreq = len(freqpy)
 
                     if m2signal.corr in ['gr', 'uniform']:
                         corrmat = m2signal.corrmat
-                    elif m2signal.corr == 'dipolegr':
-                        clm = parameters[m2signal.nindex+m2signal.npars-3:m2signal.nindex+m2signal.npars]
-                        corrmat = m2signal.dipoleCorr.corrmat(clm)
+                    elif m2signal.corr == 'anisotropicgwb':
+                        nclm = m2signal.aniCorr.clmlength()
+                        clm = parameters[m2signal.nindex+m2signal.npars-nclm:m2signal.nindex+m2signal.npars]
+                        corrmat = m2signal.aniCorr.corrmat(clm)
 
                     indexa = 0
                     indexb = 0
@@ -1485,18 +1654,19 @@ class ptaLikelihood(object):
                     # Fill the phi matrix
                     di = np.diag_indices(2*nfreq)
                     Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += 10**pcdoubled
-                elif m2signal.corr in ['gr', 'uniform', 'dipolegr']:
+                elif m2signal.corr in ['gr', 'uniform', 'anisotropicgwb']:
                     nfreq = m2signal.npars
 
                     if m2signal.corr in ['gr', 'uniform']:
                         pcdoubled = np.array([parameters[m2signal.nindex:m2signal.nindex+m2signal.npars], parameters[m2signal.nindex:m2signal.nindex+m2signal.npars]]).T.flatten()
                         corrmat = m2signal.corrmat
-                    elif m2signal.corr == 'dipolegr':
+                    elif m2signal.corr == 'anisotropicgwb':
+                        nclm = m2signal.aniCorr.clmlength()
                         pcdoubled = np.array([\
-                            parameters[m2signal.nindex:m2signal.nindex+m2signal.npars-3],\
-                            parameters[m2signal.nindex:m2signal.nindex+m2signal.npars-3]]).T.flatten()
-                        clm = parameters[m2signal.nindex+m2signal.npars-3:m2signal.nindex+m2signal.npars]
-                        corrmat = m2signal.dipoleCorr.corrmat(clm)
+                            parameters[m2signal.nindex:m2signal.nindex+m2signal.npars-nclm],\
+                            parameters[m2signal.nindex:m2signal.nindex+m2signal.npars-nclm]]).T.flatten()
+                        clm = parameters[m2signal.nindex+m2signal.npars-nclm:m2signal.nindex+m2signal.npars]
+                        corrmat = m2signal.aniCorr.corrmat(clm)
 
                     indexa = 0
                     indexb = 0
@@ -1539,16 +1709,17 @@ class ptaLikelihood(object):
                     # Fill the phi matrix
                     di = np.diag_indices(2*nfreq)
                     Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += pcdoubled
-                elif m2signal.corr in ['gr', 'uniform', 'dipolegr']:
+                elif m2signal.corr in ['gr', 'uniform', 'anisotropicgwb']:
                     freqpy = self.ptapsrs[0].Ffreqs * spy
                     pcdoubled = (Amp**2 * spy**3 / (12*np.pi*np.pi * m2signal.Tmax)) * freqpy ** (-Si)
                     nfreq = len(freqpy)
 
                     if m2signal.corr in ['gr', 'uniform']:
                         corrmat = m2signal.corrmat
-                    elif m2signal.corr == 'dipolegr':
-                        clm = parameters[m2signal.nindex+m2signal.npars-3:m2signal.nindex+m2signal.npars]
-                        corrmat = m2signal.dipoleCorr.corrmat(clm)
+                    elif m2signal.corr == 'anisotropicgwb':
+                        nclm = m2signal.aniCorr.clmlength()
+                        clm = parameters[m2signal.nindex+m2signal.npars-nclm:m2signal.nindex+m2signal.npars]
+                        corrmat = m2signal.aniCorr.corrmat(clm)
 
                     indexa = 0
                     indexb = 0
@@ -1663,18 +1834,19 @@ class ptaLikelihood(object):
                     # Fill the phi matrix
                     di = np.diag_indices(2*nfreq)
                     Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += 10**pcdoubled
-                elif m2signal.corr in ['gr', 'uniform', 'dipolegr']:
+                elif m2signal.corr in ['gr', 'uniform', 'anisotropicgwb']:
                     nfreq = m2signal.npars
 
                     if m2signal.corr in ['gr', 'uniform']:
                         pcdoubled = np.array([parameters[m2signal.nindex:m2signal.nindex+m2signal.npars], parameters[m2signal.nindex:m2signal.nindex+m2signal.npars]]).T.flatten()
                         corrmat = m2signal.corrmat
-                    elif m2signal.corr == 'dipolegr':
+                    elif m2signal.corr == 'anisotropicgwb':
+                        nclm = m2signal.aniCorr.clmlength()
                         pcdoubled = np.array([\
-                            parameters[m2signal.nindex:m2signal.nindex+m2signal.npars-3],\
-                            parameters[m2signal.nindex:m2signal.nindex+m2signal.npars-3]]).T.flatten()
-                        clm = parameters[m2signal.nindex+m2signal.npars-3:m2signal.nindex+m2signal.npars]
-                        corrmat = m2signal.dipoleCorr.corrmat(clm)
+                            parameters[m2signal.nindex:m2signal.nindex+m2signal.npars-nclm],\
+                            parameters[m2signal.nindex:m2signal.nindex+m2signal.npars-nclm]]).T.flatten()
+                        clm = parameters[m2signal.nindex+m2signal.npars-nclm:m2signal.nindex+m2signal.npars]
+                        corrmat = m2signal.aniCorr.corrmat(clm)
 
                     indexa = 0
                     indexb = 0
@@ -1712,16 +1884,17 @@ class ptaLikelihood(object):
                     # Fill the phi matrix
                     di = np.diag_indices(2*nfreq)
                     Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += pcdoubled
-                elif m2signal.corr in ['gr', 'uniform', 'dipolegr']:
+                elif m2signal.corr in ['gr', 'uniform', 'anisotropicgwb']:
                     freqpy = self.ptapsrs[0].Ffreqs * spy
                     pcdoubled = (Amp**2 * spy**3 / (12*np.pi*np.pi * m2signal.Tmax)) * freqpy ** (-Si)
                     nfreq = len(freqpy)
 
                     if m2signal.corr in ['gr', 'uniform']:
                         corrmat = m2signal.corrmat
-                    elif m2signal.corr == 'dipolegr':
-                        clm = parameters[m2signal.nindex+m2signal.npars-3:m2signal.nindex+m2signal.npars]
-                        corrmat = m2signal.dipoleCorr.corrmat(clm)
+                    elif m2signal.corr == 'anisotropicgwb':
+                        nclm = m2signal.aniCorr.clmlength()
+                        clm = parameters[m2signal.nindex+m2signal.npars-nclm:m2signal.nindex+m2signal.npars]
+                        corrmat = m2signal.aniCorr.corrmat(clm)
 
                     indexa = 0
                     indexb = 0
@@ -1941,18 +2114,19 @@ class ptaLikelihood(object):
                     # Fill the phi matrix
                     di = np.diag_indices(2*nfreq)
                     Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += 10**pcdoubled
-                elif m2signal.corr in ['gr', 'uniform', 'dipolegr']:
+                elif m2signal.corr in ['gr', 'uniform', 'anisotropicgwb']:
                     nfreq = m2signal.npars
 
                     if m2signal.corr in ['gr', 'uniform']:
                         pcdoubled = np.array([parameters[m2signal.nindex:m2signal.nindex+m2signal.npars], parameters[m2signal.nindex:m2signal.nindex+m2signal.npars]]).T.flatten()
                         corrmat = m2signal.corrmat
-                    elif m2signal.corr == 'dipolegr':
+                    elif m2signal.corr == 'anisotropicgwb':
+                        nclm = m2signal.aniCorr.clmlength()
                         pcdoubled = np.array([\
-                            parameters[m2signal.nindex:m2signal.nindex+m2signal.npars-3],\
-                            parameters[m2signal.nindex:m2signal.nindex+m2signal.npars-3]]).T.flatten()
-                        clm = parameters[m2signal.nindex+m2signal.npars-3:m2signal.nindex+m2signal.npars]
-                        corrmat = m2signal.dipoleCorr.corrmat(clm)
+                            parameters[m2signal.nindex:m2signal.nindex+m2signal.npars-clm],\
+                            parameters[m2signal.nindex:m2signal.nindex+m2signal.npars-clm]]).T.flatten()
+                        clm = parameters[m2signal.nindex+m2signal.npars-clm:m2signal.nindex+m2signal.npars]
+                        corrmat = m2signal.aniCorr.corrmat(clm)
 
                     indexa = 0
                     indexb = 0
@@ -1995,16 +2169,17 @@ class ptaLikelihood(object):
                     # Fill the phi matrix
                     di = np.diag_indices(2*nfreq)
                     Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += pcdoubled
-                elif m2signal.corr in ['gr', 'uniform', 'dipolegr']:
+                elif m2signal.corr in ['gr', 'uniform', 'anisotropicgwb']:
                     freqpy = self.ptapsrs[0].Ffreqs * spy
                     pcdoubled = (Amp**2 * spy**3 / (12*np.pi*np.pi * m2signal.Tmax)) * freqpy ** (-Si)
                     nfreq = len(freqpy)
 
                     if m2signal.corr in ['gr', 'uniform']:
                         corrmat = m2signal.corrmat
-                    elif m2signal.corr == 'dipolegr':
-                        clm = parameters[m2signal.nindex+m2signal.npars-3:m2signal.nindex+m2signal.npars]
-                        corrmat = m2signal.dipoleCorr.corrmat(clm)
+                    elif m2signal.corr == 'anisotropicgwb':
+                        nclm = m2signal.aniCorr.clmlength()
+                        clm = parameters[m2signal.nindex+m2signal.npars-nclm:m2signal.nindex+m2signal.npars]
+                        corrmat = m2signal.aniCorr.corrmat(clm)
 
                     indexa = 0
                     indexb = 0
@@ -2137,18 +2312,19 @@ class ptaLikelihood(object):
                     # Fill the phi matrix
                     di = np.diag_indices(2*nfreq)
                     Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += 10**pcdoubled
-                elif m2signal.corr in ['gr', 'uniform', 'dipolegr']:
+                elif m2signal.corr in ['gr', 'uniform', 'anisotropicgwb']:
                     nfreq = m2signal.npars
 
                     if m2signal.corr in ['gr', 'uniform']:
                         pcdoubled = np.array([parameters[m2signal.nindex:m2signal.nindex+m2signal.npars], parameters[m2signal.nindex:m2signal.nindex+m2signal.npars]]).T.flatten()
                         corrmat = m2signal.corrmat
-                    elif m2signal.corr == 'dipolegr':
+                    elif m2signal.corr == 'anisotropicgwb':
+                        nclm = m2signal.aniCorr.clmlength()
                         pcdoubled = np.array([\
-                            parameters[m2signal.nindex:m2signal.nindex+m2signal.npars-3],\
-                            parameters[m2signal.nindex:m2signal.nindex+m2signal.npars-3]]).T.flatten()
-                        clm = parameters[m2signal.nindex+m2signal.npars-3:m2signal.nindex+m2signal.npars]
-                        corrmat = m2signal.dipoleCorr.corrmat(clm)
+                            parameters[m2signal.nindex:m2signal.nindex+m2signal.npars-clm],\
+                            parameters[m2signal.nindex:m2signal.nindex+m2signal.npars-clm]]).T.flatten()
+                        clm = parameters[m2signal.nindex+m2signal.npars-clm:m2signal.nindex+m2signal.npars]
+                        corrmat = m2signal.aniCorr.corrmat(clm)
 
                     indexa = 0
                     indexb = 0
@@ -2188,16 +2364,17 @@ class ptaLikelihood(object):
                     # Fill the phi matrix
                     di = np.diag_indices(2*nfreq)
                     Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += pcdoubled
-                elif m2signal.corr in ['gr', 'uniform', 'dipolegr']:
+                elif m2signal.corr in ['gr', 'uniform', 'anisotropicgwb']:
                     freqpy = self.ptapsrs[0].Ffreqs * spy
                     pcdoubled = (Amp**2 * spy**3 / (12*np.pi*np.pi * m2signal.Tmax)) * freqpy ** (-Si)
                     nfreq = len(freqpy)
 
                     if m2signal.corr in ['gr', 'uniform']:
                         corrmat = m2signal.corrmat
-                    elif m2signal.corr == 'dipolegr':
-                        clm = parameters[m2signal.nindex+m2signal.npars-3:m2signal.nindex+m2signal.npars]
-                        corrmat = m2signal.dipoleCorr.corrmat(clm)
+                    elif m2signal.corr == 'anisotropicgwb':
+                        nclm = m2signal.aniCorr.clmlength()
+                        clm = parameters[m2signal.nindex+m2signal.npars-clm:m2signal.nindex+m2signal.npars]
+                        corrmat = m2signal.aniCorr.corrmat(clm)
 
                     indexa = 0
                     indexb = 0
@@ -2292,31 +2469,33 @@ class ptaLikelihood(object):
 
         # Loop over all signals
         for m2signal in self.ptasignals:
-            if m2signal.stype == 'powerlaw' and m2signal.corr == 'gr':
+            if m2signal.stype == 'powerlaw' and m2signal.corr == 'anisotropicgwb':
+                nclm = m2signal.aniCorr.clmlength()
                 lp += parameters[m2signal.nindex]
-            elif m2signal.stype == 'powerlaw' and m2signal.corr == 'uniform':
-                lp += parameters[m2signal.nindex]
-            elif m2signal.stype == 'powerlaw' and m2signal.corr == 'dipolegr':
-                lp += parameters[m2signal.nindex]
-                clm = parameters[m2signal.nindex+m2signal.npars-3:m2signal.nindex+m2signal.npars]
-                if m2signal.dipoleCorr.priorIndicator(clm) == False:
+                clm = parameters[m2signal.nindex+m2signal.npars-nclm:m2signal.nindex+m2signal.npars]
+                if m2signal.aniCorr.priorIndicator(clm) == False:
                     lp -= 1e99
-            elif m2signal.stype == 'spectrum' and m2signal.corr == 'gr':
+            elif m2signal.stype == 'powerlaw': # and m2signal.corr == 'gr': # 'uniform'
+                lp += parameters[m2signal.nindex]
+            elif m2signal.stype == 'spectrum' and m2signal.corr == 'anisotropicgwb':
+                nclm = m2signal.aniCorr.clmlength()
                 lp += np.sum(parameters[m2signal.nindex:m2signal.nindex+m2signal.npars])
-            elif m2signal.stype == 'spectrum' and m2signal.corr == 'uniform':
-                lp += np.sum(parameters[m2signal.nindex:m2signal.nindex+m2signal.npars])
-            elif m2signal.stype == 'spectrum' and m2signal.corr == 'dipolegr':
-                lp += np.sum(parameters[m2signal.nindex:m2signal.nindex+m2signal.npars])
-                clm = parameters[m2signal.nindex+m2signal.npars-3:m2signal.nindex+m2signal.npars]
-                if m2signal.dipoleCorr.priorIndicator(clm) == False:
+                clm = parameters[m2signal.nindex+m2signal.npars-nclm:m2signal.nindex+m2signal.npars]
+                if m2signal.aniCorr.priorIndicator(clm) == False:
                     lp -= 1e99
+            elif m2signal.stype == 'spectrum': # and m2signal.corr == 'gr': # 'uniform'
+                lp += np.sum(parameters[m2signal.nindex:m2signal.nindex+m2signal.npars])
         return lp
 
     def logposterior(self, parameters):
         return self.logprior(parameters) + self.loglikelihood(parameters)
 
     def nlogposterior(self, parameters):
-        return -self.logprior(parameters) - self.loglikelihood(parameters)
+        return -self.logposterior(parameters)
+
+    def logposteriorhc(self, cube):
+        parameters = self.pmin + cube * (self.pmax - self.pmin)
+        return self.logposterior(parameters)
 
     def samplefromprior(self):
         return self.pmin + np.random.rand(self.dimensions) * (self.pmax - self.pmin)
@@ -2377,18 +2556,19 @@ class ptaLikelihood(object):
                     # Fill the phi matrix
                     di = np.diag_indices(2*nfreq)
                     Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += 10**pcdoubled
-                elif m2signal.corr in ['gr', 'uniform', 'dipolegr']:
+                elif m2signal.corr in ['gr', 'uniform', 'anisotropicgwb']:
                     nfreq = m2signal.npars
 
                     if m2signal.corr in ['gr', 'uniform']:
                         pcdoubled = np.array([parameters[m2signal.nindex:m2signal.nindex+m2signal.npars], parameters[m2signal.nindex:m2signal.nindex+m2signal.npars]]).T.flatten()
                         corrmat = m2signal.corrmat
-                    elif m2signal.corr == 'dipolegr':
+                    elif m2signal.corr == 'anisotropicgwb':
+                        nclm = m2signal.aniCorr.clmlength()
                         pcdoubled = np.array([\
-                            parameters[m2signal.nindex:m2signal.nindex+m2signal.npars-3],\
-                            parameters[m2signal.nindex:m2signal.nindex+m2signal.npars-3]]).T.flatten()
-                        clm = parameters[m2signal.nindex+m2signal.npars-3:m2signal.nindex+m2signal.npars]
-                        corrmat = m2signal.dipoleCorr.corrmat(clm)
+                            parameters[m2signal.nindex:m2signal.nindex+m2signal.npars-nclm],\
+                            parameters[m2signal.nindex:m2signal.nindex+m2signal.npars-nclm]]).T.flatten()
+                        clm = parameters[m2signal.nindex+m2signal.npars-nclm:m2signal.nindex+m2signal.npars]
+                        corrmat = m2signal.aniCorr.corrmat(clm)
 
                     indexa = 0
                     indexb = 0
@@ -2437,16 +2617,17 @@ class ptaLikelihood(object):
                         # Fill the phi matrix
                         di = np.diag_indices(2*nfreq)
                         Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += pcdoubled
-                elif m2signal.corr in ['gr', 'uniform', 'dipolegr']:
+                elif m2signal.corr in ['gr', 'uniform', 'anisotropicgwb']:
                     freqpy = self.ptapsrs[0].Ffreqs * spy
                     pcdoubled = (Amp**2 * spy**3 / (12*np.pi*np.pi * m2signal.Tmax)) * freqpy ** (-Si)
                     nfreq = len(freqpy)
 
                     if m2signal.corr in ['gr', 'uniform']:
                         corrmat = m2signal.corrmat
-                    elif m2signal.corr == 'dipolegr':
-                        clm = parameters[m2signal.nindex+m2signal.npars-3:m2signal.nindex+m2signal.npars]
-                        corrmat = m2signal.dipoleCorr.corrmat(clm)
+                    elif m2signal.corr == 'anisotropicgwb':
+                        nclm = m2signal.aniCorr.clmlength()
+                        clm = parameters[m2signal.nindex+m2signal.npars-nclm:m2signal.nindex+m2signal.npars]
+                        corrmat = m2signal.aniCorr.corrmat(clm)
 
                     indexa = 0
                     indexb = 0
@@ -2588,7 +2769,7 @@ def confinterval(samples, sigmalevel=2, onesided=False, weights=None):
   xmax = max(samples)
 
   # If we don't have any weighting (MCMC chain), use the statsmodels package
-  if weights == None:
+  if weights is None or sm is None:
     # Create the ecdf function
     ecdf = sm.distributions.ECDF(samples)
 
@@ -2596,7 +2777,7 @@ def confinterval(samples, sigmalevel=2, onesided=False, weights=None):
     x = np.linspace(xmin, xmax, bins)
     y = ecdf(x)
   else:
-    # MultiNest chain with weights
+    # MultiNest chain with weights or no statsmodel.api package
     hist, xedges = np.histogram(samples[:], bins=bins, range=(xmin,xmax), weights=weights, density=True)
     x = np.delete(xedges, -1) + 1.5*(xedges[1] - xedges[0])
     y = np.cumsum(hist) / np.sum(hist)
@@ -3130,6 +3311,7 @@ def RunMetropolis(likob, steps, chainfilename, initfile=None, resize=0.088):
     # get away from a possible zero)
     #    p0 = np.random.rand(ndim)*pwidth+pstart
     p0 = likob.pstart + likob.pwidth
+    pwidth *= resize
 
   # Set the covariances
   cov = np.zeros((ndim, ndim))
@@ -3257,12 +3439,8 @@ Implementation from "pyMultinest"
 def RunMultiNest(likob, chainroot):
     ndim = likob.dimensions
 
-    """
-    A very simple wrapper for MultiNest for the hypercube likelhood
-    """
-    def mn_lnprob(cube, ndim):
-        parameters = likob.pmin + cube * (likob.pmax - likob.pmin)
-        return likob.logposterior(parameters)
+    if pymultinest is None:
+        raise ImportError("pymultinest")
 
     mmodal = True       # search for multiple modes
     ceff = 0            # SMBH tuning
@@ -3285,7 +3463,7 @@ def RunMultiNest(likob, chainroot):
     cols = np.array([likob.pmin, likob.pmax]).T
     np.savetxt(root+"minmax.txt", cols)
 
-    pymultinest.nested.nestRun(mmodal, ceff, nlive, tol, efr, ndims, nPar, nClsPar, maxModes, updInt, Ztol, root, seed, periodic, fb, resume, mn_lnprob, 0)
+    pymultinest.nested.nestRun(mmodal, ceff, nlive, tol, efr, ndims, nPar, nClsPar, maxModes, updInt, Ztol, root, seed, periodic, fb, resume, likob.logposteriorhc, 0)
 
     sys.stdout.flush()
 
