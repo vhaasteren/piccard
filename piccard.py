@@ -630,6 +630,7 @@ class aniCorrelations(object):
 
     # The anisotropic search requires a specific type of prior: the combination
     # c_lm * 
+    priorgridbins = 5
     priorphi = None         # Phi value of the locations for a prior check
     priortheta = None       # Theta value of the locations for a prior check
 
@@ -647,6 +648,7 @@ class aniCorrelations(object):
             self.thetaarr = None         # The theta pulsar position parameters
             self.gamma_ml = None         # The gamma_ml (see anisotropygammas.py)
 
+            self.priorgridbins = 50
             self.priorphi = None
             self.thetaphi = None
 
@@ -664,8 +666,8 @@ class aniCorrelations(object):
             self.thetaarr[ii] = np.pi/2 - psrs[ii].decj
 
         # Construct a 5x5 grid of phi/theta values for prior checks
-        prphi = np.linspace(0, 2*np.pi, 5, endpoint=False)
-        prtheta = np.linspace(0, np.pi, 5)
+        prphi = np.linspace(0, 2*np.pi, self.priorgridbins, endpoint=False)
+        prtheta = np.linspace(0, np.pi, self.priorgridbins)
         pprphi, pprtheta = np.meshgrid(prphi, prtheta)
         self.priorphi = pprphi.flatten()
         self.priortheta = pprtheta.flatten()
@@ -731,9 +733,11 @@ class aniCorrelations(object):
 
         for ii in range(len(self.priorphi)):
             clmsum = 1.0
+            cindex = 0
             for ll in range(1, self.l+1):
                 for mm in range(-ll, ll+1):
-                    clmsum += np.real(ss.sph_harm(mm, ll, self.priorphi[ii], self.priortheta[ii]))
+                    clmsum += clm[cindex] * np.real(ss.sph_harm(mm, ll, self.priorphi[ii], self.priortheta[ii]))
+                    cindex += 1
 
             if clmsum <= 0:
                 posdef = False
@@ -1333,10 +1337,10 @@ class ptaLikelihood(object):
                 self.pwidth[index:index+npars] = 0.1
                 if m2signal.corr == 'anisotropicgwb':
                     nclm = m2signal.aniCorr.clmlength()
-                    self.pmin[index+m2signal.npars-nclm:index+m2signal.npars] = 0
-                    self.pmax[index+m2signal.npars-nclm:index+m2signal.npars] = 1
+                    self.pmin[index+m2signal.npars-nclm:index+m2signal.npars] = 0.0
+                    self.pmax[index+m2signal.npars-nclm:index+m2signal.npars] = 2.0
                     self.pstart[index+m2signal.npars-nclm:index+m2signal.npars] = 0.0
-                    self.pwidth[index+m2signal.npars-nclm:index+m2signal.npars] = 0.1
+                    self.pwidth[index+m2signal.npars-nclm:index+m2signal.npars] = 0.2
                 index += m2signal.npars
             elif m2signal.stype == 'powerlaw':
                 self.pmin[index:index+2] = [-17.0, 1.02]
@@ -1345,8 +1349,8 @@ class ptaLikelihood(object):
                 self.pwidth[index:index+2] = [0.1, 0.1]
                 if m2signal.corr == 'anisotropicgwb':
                     nclm = m2signal.aniCorr.clmlength()
-                    self.pmin[index+m2signal.npars-nclm:index+m2signal.npars] = -5.0
-                    self.pmax[index+m2signal.npars-nclm:index+m2signal.npars] = 5.0
+                    self.pmin[index+m2signal.npars-nclm:index+m2signal.npars] = 0.0
+                    self.pmax[index+m2signal.npars-nclm:index+m2signal.npars] = 2.0
                     self.pstart[index+m2signal.npars-nclm:index+m2signal.npars] = 0.0
                     self.pwidth[index+m2signal.npars-nclm:index+m2signal.npars] = 0.2
                 index += m2signal.npars
@@ -3332,7 +3336,7 @@ def RunMetropolis(likob, steps, chainfilename, initfile=None, resize=0.088):
   # We don't update the screen every step
   nSkip = 100
   print "Running Metropolis-Hastings sampler"
-  for i in range(steps/nSkip):
+  for i in range(int(steps/nSkip)):
       for result in sampler.sample(pos, iterations=nSkip, storechain=True):
 	  pos = result[0]
 	  lnprob = result[1]
