@@ -512,133 +512,9 @@ def Cred_sec(toas, alpha=-2.0/3.0, fL=1.0/20, approx_ksum=False):
     return corr
 
 
-
-# The GWB anisotropic dipole correlations as defined in
-# Mingarelli and Vecchio (submitted); Taylor and Gair (submitted)
-class dipoleCorrelations(object):
-    phiarr = None           # The phi pulsar position parameters
-    thetaarr = None         # The theta pulsar position parameters
-    gamma_ml = None         # The gamma_ml (see anisotropygammas.py)
-
-    # The anisotropic search requires a specific type of prior: the combination
-    # c_lm * 
-    priorphi = None         # Phi value of the locations for a prior check
-    priortheta = None       # Theta value of the locations for a prior check
-
-    # Correlation matrices for the three dipole components
-    corrhd = None
-    corr0 = None    # l = 1, m = -1
-    corr1 = None    # l = 1, m = 0
-    corr2 = None    # l = 1, m = 1
-
-    def __init__(self, psrs=None):
-        # If we have a pulsars object, initialise the angular quantities
-        if psrs != None:
-            self.setmatrices(psrs)
-        else:
-            self.phiarr = None           # The phi pulsar position parameters
-            self.thetaarr = None         # The theta pulsar position parameters
-            self.gamma_ml = None         # The gamma_ml (see anisotropygammas.py)
-
-            self.priorphi = None
-            self.thetaphi = None
-
-            self.corrhd = None
-            self.corr0 = None
-            self.corr1 = None
-            self.corr2 = None
-
-    def setmatrices(self, psrs):
-        # First set all the pulsar positions
-        self.phiarr = np.zeros(len(psrs))
-        self.thetaarr = np.zeros(len(psrs))
-
-        for ii in range(len(psrs)):
-            self.phiarr[ii] = psrs[ii].raj
-            self.thetaarr[ii] = np.pi/2 - psrs[ii].decj
-
-        # Construct a 5x5 grid of phi/theta values for prior checks
-        prphi = np.linspace(0, 2*np.pi, 5, endpoint=False)
-        prtheta = np.linspace(0, np.pi, 5)
-        pprphi, pprtheta = np.meshgrid(prphi, prtheta)
-        self.priorphi = pprphi.flatten()
-        self.priortheta = pprtheta.flatten()
-
-        self.corrhd = hdcorrmat(psrs)
-        self.corr0 = np.zeros((len(psrs), len(psrs)))
-        self.corr1 = np.zeros((len(psrs), len(psrs)))
-        self.corr2 = np.zeros((len(psrs), len(psrs)))
-
-        l = 1
-        for aa in range(len(psrs)):
-            for bb in range(aa, len(psrs)):
-                plus_gamma_ml = [] #this will hold the list of gammas evaluated at a specific value of phi1,2, and theta1,2.
-                neg_gamma_ml = []
-                gamma_ml = []
-                for ii in range(l+1):
-                    intg_gamma = ang.int_Gamma_lm(ii, l, \
-                            self.phiarr[aa], self.phiarr[bb], \
-                            self.thetaarr[aa],self.thetaarr[bb])
-                    neg_intg_gamma= (-1)**(ii) * intg_gamma  # just (-1)^m Gamma_ml since this is in the computational frame
-                    plus_gamma_ml.append(intg_gamma)     #all of the gammas from Gamma^-m_l --> Gamma ^m_l
-                    neg_gamma_ml.append(neg_intg_gamma)  #get the neg m values via complex conjugates 
-                neg_gamma_ml = neg_gamma_ml[1:]            #this makes sure we don't have 0 twice
-                rev_neg_gamma_ml = neg_gamma_ml[::-1]      #reverse direction of list, now runs from -m .. 0
-                gamma_ml = rev_neg_gamma_ml+plus_gamma_ml
-
-                if aa == bb:
-                    self.corr0[aa, bb] = 1.0
-                    self.corr1[aa, bb] = 1.0
-                    self.corr2[aa, bb] = 1.0
-
-                if aa != bb:
-                    self.corr0[aa, bb] = ang.real_rotated_Gammas(-1, l, \
-                            self.phiarr[aa], self.phiarr[bb], \
-                            self.thetaarr[aa], self.thetaarr[bb], gamma_ml)
-                    self.corr0[bb, aa] = self.corr0[aa, bb]
-
-                    self.corr1[aa, bb] = ang.real_rotated_Gammas(0, l, \
-                            self.phiarr[aa], self.phiarr[bb], \
-                            self.thetaarr[aa], self.thetaarr[bb], gamma_ml)
-                    self.corr1[bb, aa] = self.corr1[aa, bb]
-
-                    self.corr2[aa, bb] = ang.real_rotated_Gammas(1, l, \
-                            self.phiarr[aa], self.phiarr[bb], \
-                            self.thetaarr[aa], self.thetaarr[bb], gamma_ml)
-                    self.corr2[bb, aa] = self.corr2[aa, bb]
-
-
-    def priorIndicator(self, clm):
-        # Check whether sum_lm c_lm * Y_lm > 0 for this combination of clm
-        posdef = True
-
-        if self.priorphi == None or self.priortheta == None:
-            raise ValueError("ERROR: first define the dipoleCorrelations")
-
-        if len(self.priorphi) != len(self.priortheta):
-            raise ValueError("ERROR: len(self.priorphi) != len(self.priortheta)")
-
-        if len(clm) != 3:
-            raise ValueError("ERROR: len(clm) != 3")
-
-        for ii in range(len(self.priorphi)):
-            y0 = np.real(ss.sph_harm(-1, 1, self.priorphi[ii], self.priortheta[ii]))
-            y1 = np.real(ss.sph_harm(0, 1, self.priorphi[ii], self.priortheta[ii]))
-            y2 = np.real(ss.sph_harm(1, 1, self.priorphi[ii], self.priortheta[ii]))
-            if 1.0+(clm[0] * y0 + clm[1] * y1 + clm[2] * y2) <= 0:
-                posdef = False
-
-        return posdef
-
-    # Return the full correlation matrix that depends on the clm. This
-    # correlation matrix only needs to be multiplied with the signal amplitude
-    # and the time-correlations
-    def corrmat(self, clm):
-        if len(clm) != 3:
-            raise ValueError("ERROR: len(clm) != 3")
-
-        return self.corrhd + clm[0]*self.corr0 + clm[1]*self.corr1 + clm[2]*self.corr2
-
+"""
+The real-valued spherical harmonics
+"""
 def real_sph_harm(mm, ll, phi, theta):
     if mm>0:
         ans = (1./math.sqrt(2)) * \
@@ -834,11 +710,29 @@ class ptasignal(object):
 
 
 """
-Mark2: Basic implementation of the model/likelihood, based on the frequency
-models as outlined in Lentati et al. (2013). Can handle multiple EFACs per
-pulsar, an EQUAD, and general red noise spectra.
+Basic implementation of the model/likelihood. Most of the likelihood functions
+use models as outlined in Lentati et al. (2013).
 
-DM Spectra are also implemented (but still buggy...)
+mark1loglikelihood: (deprecated) uses a simple acceleration formalism, using 1 efac
+
+mark3loglikelihood: analytically integrated over the red noise Fourier modes. DM
+variations are projected on these modes, which is very suboptimal. Do not use
+with DM variations. The Phi matrix inversion is not optimised per frequency. At
+least one red signal must be included for each pulsar
+
+mark4loglikelihood: analytically integrated over the red noise Fourier modes,
+and the DM variation Fourier modes. The integration done separately (red noise
+first). At least one red signal must be included for each pulsar, and one DM
+signal must be included for each pulsar
+
+mark6loglikelihood: As mark4loglikelihood, but now the DM and red noise Fourier
+modes are integrated over simultaneously. Makes for a larger Phi matrix, but
+less computational hassle. About as fast as mark4.
+
+mark5loglikelihood: The red noise Fourier modes are included numerically. Larger
+dimensional space, but quicker evaluation. At his point, the Phi matrix is
+assumed to be diagonal. No correlated signals can be detected, and no DM
+variation is included. Computational bottleneck is not the inversion.
 """
 class ptaPulsar(object):
     raj = 0
