@@ -1,8 +1,5 @@
 #!/usr/bin/env python
-# Chiara M. F. Mingarelli, mingarelli@gmail.com
-# First section presents the various Gammas up to quadrupole (i.e. l=2) in the "computational frame".
-# The second part gives the Gammas in the cosmic frame, i.e. after rotation, for dipole and qudrupole gammas.
-# The final function reports the real values of the rotated gammas.
+
 
 import math
 import matplotlib.pyplot as plt
@@ -14,24 +11,42 @@ from scipy.integrate import quad, dblquad
 from scipy import special as sp
 import random
 
+norm = 3./(8*pi)
+c00=sqrt(4*pi)
+
+def calczeta(phi1, phi2, theta1, theta2):
+    """
+    Calculate the angular separation between position (phi1, theta1) and
+    (phi2, theta2)
+    """
+    zeta = 0.0
+    if phi1 == phi2 and theta1 == theta2:
+        zeta = 0.0
+    else:
+        argument =sin(theta1)*sin(theta2)*cos(phi1-phi2) + cos(theta1)*cos(theta2)
+        if argument < -1:
+            zeta = np.pi
+        elif argument > 1:
+            zeta = 0.0
+        else:
+            zeta=acos(argument)
+
+    return zeta
 
 def Gamma00(zeta):
     """
     l=0, m=0. Isotropic solution.
     Pulsar term doubling at zero.
-    Normalised so that Gamma00=1 when zeta=0.
+    Normalised so that c00*Gamma00=1 when zeta=0.
     """
     b=(1.-cos(zeta))
-    norm = 3./(4*pi)
-    c00=sqrt(4*pi)
     if zeta==0: return 2*norm*c00*0.25*sqrt(pi*4)*(1+(cos(zeta)/3.))
-    newans= 0.25*c00*norm*sqrt(pi*4)*(1+(cos(zeta)/3.)+4*b*log(sin(zeta/2)))
+    newans= 0.25*c00*norm*sqrt(pi*4)*(1+(cos(zeta)/3.)+4*b*log(sin(zeta/2))) 
     return newans
 
 def dipole_Gammas(m,zeta):
     a=1.+cos(zeta)
     b=1.-cos(zeta)
-    norm = 3./(4*pi)
     if m==0:
         if zeta==0: return -2*0.5*norm*(sqrt(pi/3.))*a
         ans01=-0.5*norm*(sqrt(pi/3.))*(a+3*b*(a+4*log(sin(zeta/2.))))
@@ -48,7 +63,6 @@ def dipole_Gammas(m,zeta):
         return ans11_m
         
 def quadrupole_Gammas(m,zeta):
-    norm = 3./(4*pi)
     a=1.+cos(zeta)
     b=1.-cos(zeta)
     if zeta == 0 and m!=0: return 0.
@@ -71,8 +85,10 @@ def quadrupole_Gammas(m,zeta):
 # Part2: rotation functions (from T. Sidery's Ylm.py file, corrected)
     
 def dlmk(l,m,k,theta1):
-    """returns value of d^l_mk as defined in allen, ottewill 97.
-    Called by Dlmk"""
+    """
+    returns value of d^l_mk as defined in allen, ottewill 97.
+    Called by Dlmk
+    """
     if m>=k:
         factor = sqrt(factorial(l-k)*factorial(l+m)/factorial(l+k)/factorial(l-m))
         part2 = (cos(theta1/2))**(2*l+k-m)*(-sin(theta1/2))**(m-k)/factorial(m-k)
@@ -82,15 +98,22 @@ def dlmk(l,m,k,theta1):
         return (-1)**(m-k)*dlmk(l,k,m,theta1)
 
 def Dlmk(l,m,k,phi1,phi2,theta1,theta2):
-    """returns value of D^l_mk as defined in allen, ottewill 97."""
+    """
+    returns value of D^l_mk as defined in allen, ottewill 97.
+    """
     return exp(complex(0.,-m*phi1))*dlmk(l,m,k,theta1)*exp(complex(0.,-k*gamma(phi1,phi2,theta1,theta2)))
 
 def gamma(phi1,phi2,theta1,theta2):
-    """calculate third rotation angle
+    """
+    calculate third rotation angle
     inputs are angles from 2 pulsars
     returns the angle.
     """
-    gamma = atan( sin(theta2)*sin(phi2-phi1)/(cos(theta1)*sin(theta2)*cos(phi1-phi2) - sin(theta1)*cos(theta2)))
+    if phi1 == phi2 and theta1 == theta2:
+        gamma = 0   # TODO: Find another expression here
+    else:
+        gamma = atan( sin(theta2)*sin(phi2-phi1)/(cos(theta1)*sin(theta2)*cos(phi1-phi2) - sin(theta1)*cos(theta2)))
+
     if (cos(gamma)*cos(theta1)*sin(theta2)*cos(phi1-phi2) + sin(gamma)*sin(theta2)*sin(phi2-phi1) - cos(gamma)*sin(theta1)*cos(theta2)) >= 0:
         return gamma
     else:
@@ -99,8 +122,12 @@ def gamma(phi1,phi2,theta1,theta2):
 # Part 3: Rotated Gammas: Dipole
 
 def rotated_dipole(m,phi1,phi2,theta1,theta2):
+    """
+    Rotates dipole, i.e. l=1 overlap reduction functions, into the cosmic rest-frame
+    """
     l=1
-    zeta=acos(sin(theta1)*sin(theta2)*cos(phi1-phi2) + cos(theta1)*cos(theta2))
+    zeta = calczeta(phi1, phi2, theta1, theta2)
+
     dipole_gammas=[dipole_Gammas(-1,zeta),dipole_Gammas(0,zeta),dipole_Gammas(1,zeta)]
     rotated_gamma=0
     for i in range(2*l+1):
@@ -108,8 +135,12 @@ def rotated_dipole(m,phi1,phi2,theta1,theta2):
     return rotated_gamma
 
 def rotated_quadrupole(m,phi1,phi2,theta1,theta2):
+    """
+    Rotates qudrupole, i.e. l=2 overlap reduction functions, into the cosmic rest-frame
+    """
     l=2
-    zeta=acos(sin(theta1)*sin(theta2)*cos(phi1-phi2) + cos(theta1)*cos(theta2))
+    zeta = calczeta(phi1, phi2, theta1, theta2)
+
     quad_gammas=[quadrupole_Gammas(-2,zeta),quadrupole_Gammas(-1,zeta),quadrupole_Gammas(0,zeta),quadrupole_Gammas(1,zeta),quadrupole_Gammas(2,zeta)]
     rotated_gamma=0
     for i in range(2*l+1):
@@ -123,20 +154,22 @@ def any_Gamma_comp(phi,theta,m,l,phi1,phi2,theta1,theta2):
     whereas phi1,phi2,theta1,theta2 are the coordinates of the pulsar pairs and are just used to
     compute zeta. Normalisation such that c00*\Gamma00=1 at zeta=0.
     """
-    zeta=acos(sin(theta1)*sin(theta2)*cos(phi1-phi2) + cos(theta1)*cos(theta2)) #angular separation
+    zeta = calczeta(phi1, phi2, theta1, theta2)
+
     ylm=sp.sph_harm(m,l,phi,theta) #anisotropy
-    norm = 3./(4*pi) #to be consistent with previous gammas
     numerator=-0.25*sin(theta)*(1.-cos(theta))*(sin(zeta)*sin(zeta)*sin(phi)*sin(phi)-sin(zeta)*sin(zeta)*cos(theta)*cos(theta)*cos(phi)*cos(phi)-cos(zeta)*cos(zeta)*sin(theta)*sin(theta)+2*sin(zeta)*cos(zeta)*sin(theta)*cos(theta)*cos(phi))
     deno=1.+sin(zeta)*sin(theta)*cos(phi)+cos(zeta)*cos(theta)
     integrand=norm*numerator*ylm/deno
-    return integrand.real #this answer is necessarily real-valued, as it is calculated in comp. frame.
+    if zeta==0: return 2*integrand.real
+    return integrand.real #this answer is necessarily real-valued, as it is calculated in comp. frame. with no pulsar term
 
 def int_Gamma_lm(m,l,phi1,phi2,theta1,theta2):
     """
     Integrates any_Gamma_comp function from 0..pi and 0..2pi. Special cases with analytical solutions
     (l=0,1,2) are handled separately to not waste computing time.
     """
-    zeta=acos(sin(theta1)*sin(theta2)*cos(phi1-phi2) + cos(theta1)*cos(theta2)) #angular separation
+    zeta = calczeta(phi1, phi2, theta1, theta2)
+
     if l==0:
         return Gamma00(zeta)
     if l==1:
@@ -158,6 +191,10 @@ def rotated_Gamma_ml(m,l,phi1,phi2,theta1,theta2,gamma_ml):
     return rotated_gamma
 
 def real_rotated_Gammas(m,l,phi1,phi2,theta1,theta2,gamma_ml):
+    """
+    This function returns the real-valued form of the Overlap Reduction Functions,
+    see Eqs 47 in Mingarelli et al, 2013.
+    """
     if m>0:
         ans=(1./sqrt(2))*(rotated_Gamma_ml(m,l,phi1,phi2,theta1,theta2,gamma_ml)+(-1)**m*rotated_Gamma_ml(-m,l,phi1,phi2,theta1,theta2,gamma_ml))
         return ans.real
@@ -182,7 +219,6 @@ if __name__ == "__main__":
     p1 = np.array([sin(theta1)*cos(phi1), sin(theta1)*sin(phi1),cos(theta1)])
     p2 = np.array([sin(theta2)*cos(phi2), sin(theta2)*sin(phi2),cos(theta2)])
     rot_Gs=[]
-    cosmic_Gs=[]
     plus_gamma_ml = [] #this will hold the list of gammas evaluated at a specific value of phi1,2, and theta1,2.
     neg_gamma_ml = []
     gamma_ml = []
@@ -201,7 +237,7 @@ if __name__ == "__main__":
     
     for m in range(-l,l+1):
         rot_Gs.append(real_rotated_Gammas(m,l,phi1,phi2,theta1,theta2,gamma_ml))
-        result_file = open("testForCPPcodeLis"+str(l)+".txt", "a") # the a+ allows you to create the file and write to it.
+        result_file = open("myFile"+str(l)+".txt", "a") # the a+ allows you to create the file and write to it.
         result_file.write('{0} {1} {2}  \n'.format(m, l, rot_Gs[m+l])) #writes data to 0th, 1st and 2nd column, resp.
         result_file.close()
 
