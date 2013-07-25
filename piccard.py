@@ -153,14 +153,6 @@ class DataFile(object):
         #t2data = np.double(t2pulsar.data(pepoch=53000))
         #designmatrix = np.double(t2pulsar.designmatrix(pepoch=53000))
 
-        ## Write the TOAs, residuals, and uncertainties.
-        #spd = 24.0*3600     # seconds per day
-        #pulsarsgroup.create_dataset('TOAs', data=t2data[:,0]*spd)       # days (MJD) * sec per day
-        #pulsarsgroup.create_dataset('prefitRes', data=t2data[:,3])      # seconds
-        #pulsarsgroup.create_dataset('postfitRes', data=t2data[:,1])     # seconds
-        #pulsarsgroup.create_dataset('toaErr', data=t2data[:,2])         # seconds
-        #pulsarsgroup.create_dataset('freq', data=t2data[:,4])           # MHz
-
         # Write the full design matrix
         # TODO: this should be done irrespective of fitting flag
         desmat = t2pulsar.designmatrix()
@@ -182,24 +174,6 @@ class DataFile(object):
             tmpvalpost[i+1] = t2pulsar.prefit[tmpname[i+1]].val
             tmperrpre[i+1] = t2pulsar.prefit[tmpname[i+1]].err
             tmperrpost[i+1] = t2pulsar.prefit[tmpname[i+1]].err
-
-        # Obtain the timing model parameters
-        #tmparameters = t2pulsar.numpypars()
-
-        # Calculate the maximum string length of the TMP name
-        #maxlen = max(len(parname) for parname in tmparameters['name'])
-        #maxlen = max(maxlen, len('OFFSET'))
-        #offsetname = np.array(['OFFSET'], dtype='a'+str(maxlen))
-
-        # Add the offset that is always fit for to the list of timing model parameters
-        # TODO: Do not down-convert quad precision to double precision here
-        # TODO: Scale with the value of jumps etc. Is there something useful
-        #       that can be done here?
-        #tmpname = np.append(offsetname, tmparameters['name'])
-        #tmpvalpre = np.double(np.append(np.array([0.0]), tmparameters['val']))
-        #tmpvalpost = np.double(np.append(np.array([0.0]), tmparameters['pval']))
-        #tmperrpre = np.double(np.append(np.array([0.0]), tmparameters['err']))
-        #tmperrpost = np.double(np.append(np.array([0.0]), tmparameters['perr']))
 
         # Write the timing model parameter (TMP) descriptions
         pulsarsgroup.create_dataset('tmp_name', data=tmpname)       # TMP name
@@ -548,6 +522,9 @@ class aniCorrelations(object):
     corr = []
     l = 1           # The order of the anisotropic correlations (dipole, quadrupole, ...)
 
+    # Pre-compute the spherical harmonics for all sky positions
+    SpHmat = None
+
     def __init__(self, psrs=None, l=1):
         # If we have a pulsars object, initialise the angular quantities
         if psrs != None:
@@ -559,10 +536,14 @@ class aniCorrelations(object):
 
             self.priorgridbins = 16
             self.priorphi = None
-            self.thetaphi = None
+            self.priortheta = None
 
             self.corrhd = None
             self.corr = []
+            self.SpHmat = None
+
+    def clmlength(self):
+        return (self.l+1)**2-1
 
     def setmatrices(self, psrs, l):
         # First set all the pulsar positions
@@ -620,14 +601,24 @@ class aniCorrelations(object):
                         if aa != bb:
                             self.corr[mindex+mm][bb, aa] = self.corr[mindex+mm][aa, bb]
 
-    def clmlength(self):
-        return (self.l+1)**2-1
+        self.SpHmat = np.zeros((self.priorgridbins*self.priorgridbins, self.clmlength()))
+        gridindex = 0
+        cindex = 0
+        #for ii in range(self.priorgridbins):
+        #    for jj in range(self.priorgridbins):
+        for ii in range(self.priorgridbins**2):
+                cindex = 0
+                for ll in range(1, self.l+1):
+                    for mm in range(-ll, ll+1):
+                        self.SpHmat[gridindex, cindex] = real_sph_harm(mm, ll, self.priorphi[ii], self.priortheta[ii])
+
+                        cindex += 1
+
+                gridindex += 1
 
 
     def priorIndicator(self, clm):
         # Check whether sum_lm c_lm * Y_lm > 0 for this combination of clm
-        posdef = True
-
         if self.priorphi == None or self.priortheta == None:
             raise ValueError("ERROR: first define the anisotropic prior-check positions")
 
@@ -638,18 +629,10 @@ class aniCorrelations(object):
         if len(clm) != self.clmlength():
             raise ValueError("ERROR: len(clm) != clmlength")
 
-        for ii in range(len(self.priorphi)):
-            clmsum = 1.0
-            cindex = 0
-            for ll in range(1, self.l+1):
-                for mm in range(-ll, ll+1):
-                    clmsum += clm[cindex] * real_sph_harm(mm, ll, self.priorphi[ii], self.priortheta[ii])
-                    cindex += 1
+        clmYlm = clm * self.SpHmat
+        S = np.sum(clmYlm, axis=1) + 1.0
 
-            if clmsum <= 0:
-                posdef = False
-
-        return posdef
+        return np.all(S > 0)
 
     # Return the full correlation matrix that depends on the clm. This
     # correlation matrix only needs to be multiplied with the signal amplitude
@@ -673,10 +656,7 @@ class aniCorrelations(object):
 """
 A general signal element of the pta model/likelihood.
 
-This replaces most auxiliary quantities present in mark1Pulsar, and can be used
-for any type of stochastic signal (efac/equad and spectral noise)
-
-Henceforth, the Fmat fourier design matrices are assumed to be for identical
+For now, the Fmat fourier design matrices are assumed to be for identical
 frequencies for all pulsars.
 """
 class ptasignal(object):
@@ -694,7 +674,6 @@ class ptasignal(object):
     nindex = 0              # index in total parameters array
 
     # Quantities for EFAC/EQUAD
-    GNG = None
     Nvec = None             # For in the mark3 likelihood
 
     # If this pulsar has only one efac/equad parameter, use computational
@@ -712,8 +691,6 @@ class ptasignal(object):
 """
 Basic implementation of the model/likelihood. Most of the likelihood functions
 use models as outlined in Lentati et al. (2013).
-
-mark1loglikelihood: (deprecated) uses a simple acceleration formalism, using 1 efac
 
 mark3loglikelihood: analytically integrated over the red noise Fourier modes. DM
 variations are projected on these modes, which is very suboptimal. Do not use
@@ -750,10 +727,12 @@ class ptaPulsar(object):
 
     # The auxiliary quantities
     Fmat = None
+    Fdmmat = None
     pseudoFmatT = None
     Dmat = None
     DF = None
     Ffreqs = None
+    Fdmfreqs = None
     Gr = None
     GGr = None
     GtF = None
@@ -763,13 +742,6 @@ class ptaPulsar(object):
     FtD = None
 
     # Auxiliaries used in the likelihood
-    GNG = None
-    GNGinv = None
-    GGNGG = None
-    GNGldet = None
-    rGGNGGr = None
-    rGGNGGF = None
-    FGGNGGF = None
     Nvec = None             # For in the mark3 likelihood (projection approx.)
 
     def __init__(self):
@@ -787,10 +759,12 @@ class ptaPulsar(object):
         self.name = "J0000+0000"
 
         self.Fmat = None
+        self.Fdmmat = None
         self.pseudoFmatT = None
         self.Dmat = None
         self.DF = None
         self.Ffreqs = None
+        self.Fdmfreqs = None
         self.Gr = None
         self.GGr = None
         self.GtF = None
@@ -911,6 +885,7 @@ class ptaPulsar(object):
         self.GGtF = np.dot(self.Gmat, self.GtF)
 
         # For the DM stuff
+        #(self.Fdmmat, self.Fdmfreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
         self.Dmat = np.diag(DMk / (self.freqs**2))
         self.DF = np.dot(self.Dmat, self.Fmat)
         self.GtD = np.dot(self.Gmat.T, self.DF)
@@ -942,17 +917,6 @@ class ptaPulsar(object):
         self.FtD = np.dot(self.pseudoFmatT, self.DF)
 
 
-    # Assuming that GNG has been set, create all the acceleration auxiliaries
-    def createAccelAuxiliaries(self):
-        cf = sl.cho_factor(self.GNG)
-        self.GNGldet = 2*np.sum(np.log(np.diag(cf[0])))
-        self.GNGinv = sl.cho_solve(cf, np.identity(self.GNG.shape[0]))
-        self.GGNGG = np.dot(self.Gmat, np.dot(self.GNGinv, self.Gmat.T))
-        self.rGGNGGr = np.dot(self.residuals, np.dot(self.GGNGG, self.residuals))
-        self.rGGNGGF = np.dot(self.Fmat.T, np.dot(self.GGNGG, self.residuals))
-        self.FGGNGGF = np.dot(self.Fmat.T, np.dot(self.GGNGG, self.Fmat))
-
-
 class ptaLikelihood(object):
     # The ptaPulsar objects
     ptapsrs = []
@@ -970,7 +934,13 @@ class ptaLikelihood(object):
     phidiag = False
 
     # What likelihood function to use
-    likfunc = 'mark1'
+    likfunc = 'mark3'
+
+    # Additional informative quantities
+    npf = None      # Number of frequencies per pulsar (red noise/signal)
+    npfdm = None    # Number of frequencies per pulsar (DM)
+    npobs = None    # Number of observations per pulsar
+    npgs = None     # Number of non-projected observations per pulsar (columns Gmat)
 
     def __init__(self):
         self.ptapsrs = []
@@ -983,7 +953,7 @@ class ptaLikelihood(object):
         self.pwidth = None
         self.pamplitudeind = None
         self.initialised = False
-        self.likfunc = 'mark1'
+        self.likfunc = 'mark3'
 
         self.phidiag = False        # If mark5, and no correlations, accelerate phi inversion
 
@@ -1016,6 +986,16 @@ class ptaLikelihood(object):
             #newpsr.readFromImagination(filename, psrname)
             self.ptapsrs.append(newpsr)
 
+    def createAuxiliaries(self):
+        # First figure out how large we have to make the arrays
+        npsrs = len(self.ptapsrs)
+        self.npf = np.zeros(npsrs, dtype=np.int)
+        for ii in range(npsrs):
+            npf[ii] = len(self.ptapsrs[ii].Ffreqs)
+            npfdm = None    # Number of frequencies per pulsar (DM)
+            npobs = None    # Number of observations per pulsar
+            npgs = None     # Number of non-projected observations per pulsar (columns Gmat)
+
     # Initialise the model
     def initModel(self, nfreqmodes=20, \
             modelIndependentNoise=False, incRedNoise=False, \
@@ -1025,7 +1005,7 @@ class ptaLikelihood(object):
             modelIndependentDipole=False, incDipole=False, \
             modelIndependentAniGWB=False, incAniGWB=False, lAniGWB=1, \
             varyEfac=False, incEquad=False, separateEfacs=False, \
-            accelNoise=False, likfunc='mark1'):
+            likfunc='mark3'):
         # For every pulsar, construct the auxiliary quantities like the Fourier
         # design matrix etc
         if len(self.ptapsrs) < 1:
@@ -1045,13 +1025,6 @@ class ptaLikelihood(object):
             if incDM:
                 m2psr.addDMQuadratic()
             m2psr.createAuxiliaries(nfreqmodes, Tmax)
-
-        # Check if we really can use acceleration (deprecated except mark1)
-        if accelNoise and separateEfacs == False and incEquad == False:
-            self.accelNoise = True
-        else:
-            self.accelNoise = False
-
 
         # Initialise the ptasignal objects
         # Currently: one efac per pulsar, and red noise
@@ -1074,9 +1047,6 @@ class ptaLikelihood(object):
                     newsignal.Nvec[ind] = 0.0
                     N = np.diag(newsignal.Nvec)
 
-                    if likfunc=='mark1':
-                        # To not calculate useless quantities
-                        newsignal.GNG = np.dot(self.ptapsrs[ii].Gmat.T, np.dot(N, self.ptapsrs[ii].Gmat))
                     newsignal.npars = 0
                     if varyEfac:
                         newsignal.npars = 1
@@ -1094,20 +1064,11 @@ class ptaLikelihood(object):
                 newsignal.flagvalue = self.ptapsrs[ii].name
                 newsignal.Nvec = self.ptapsrs[ii].toaerrs**2
                 N = np.diag(newsignal.Nvec)
-                if likfunc=='mark1':
-                    # To not calculate useless quantities
-                    newsignal.GNG = np.dot(self.ptapsrs[ii].Gmat.T, np.dot(N, self.ptapsrs[ii].Gmat))
                 newsignal.npars = 0
                 if varyEfac:
                     newsignal.npars = 1
                 newsignal.nindex = index
                 index += newsignal.npars
-
-                # Create the computational-shortcut stuff
-                if self.accelNoise:
-                    newsignal.accelNoise = True
-                    self.ptapsrs[ii].GNG = newsignal.GNG
-                    self.ptapsrs[ii].createAccelAuxiliaries()
 
                 self.ptasignals.append(newsignal)
 
@@ -1121,9 +1082,6 @@ class ptaLikelihood(object):
                 newsignal.flagvalue = self.ptapsrs[ii].name
                 newsignal.Nvec = np.ones(len(self.ptapsrs[ii].toaerrs))
                 N = np.diag(newsignal.Nvec)
-                if likfunc=='mark1':
-                    # To not calculate useless quantities
-                    newsignal.GNG = np.dot(self.ptapsrs[ii].Gmat.T, np.dot(N, self.ptapsrs[ii].Gmat))
                 newsignal.npars = 1
                 newsignal.nindex = index
                 index += newsignal.npars
@@ -1250,6 +1208,9 @@ class ptaLikelihood(object):
                 # In this case, accelerate the inversion of Phi
                 self.phidiag = True
 
+    """
+    Before being able to run the likelihood, we need to initialise the prior
+    """
     def initPrior(self):
         self.dimensions = 0
         for m2signal in self.ptasignals:
@@ -1283,8 +1244,8 @@ class ptaLikelihood(object):
                 self.pwidth[index:index+npars] = 0.1
                 if m2signal.corr == 'anisotropicgwb':
                     nclm = m2signal.aniCorr.clmlength()
-                    self.pmin[index+m2signal.npars-nclm:index+m2signal.npars] = -4.0
-                    self.pmax[index+m2signal.npars-nclm:index+m2signal.npars] = 4.0
+                    self.pmin[index+m2signal.npars-nclm:index+m2signal.npars] = -5.0
+                    self.pmax[index+m2signal.npars-nclm:index+m2signal.npars] = 5.0
                     self.pstart[index+m2signal.npars-nclm:index+m2signal.npars] = 0.0
                     self.pwidth[index+m2signal.npars-nclm:index+m2signal.npars] = 0.2
                 index += m2signal.npars
@@ -1295,8 +1256,8 @@ class ptaLikelihood(object):
                 self.pwidth[index:index+2] = [0.1, 0.1]
                 if m2signal.corr == 'anisotropicgwb':
                     nclm = m2signal.aniCorr.clmlength()
-                    self.pmin[index+m2signal.npars-nclm:index+m2signal.npars] = -4.0
-                    self.pmax[index+m2signal.npars-nclm:index+m2signal.npars] = 4.0
+                    self.pmin[index+m2signal.npars-nclm:index+m2signal.npars] = -5.0
+                    self.pmax[index+m2signal.npars-nclm:index+m2signal.npars] = 5.0
                     self.pstart[index+m2signal.npars-nclm:index+m2signal.npars] = 0.0
                     self.pwidth[index+m2signal.npars-nclm:index+m2signal.npars] = 0.2
                 index += m2signal.npars
@@ -1340,185 +1301,6 @@ class ptaLikelihood(object):
                 self.pstart[index:index+npars] = fest
                 self.pwidth[index:index+npars] = 1.0e-1*np.abs(fest)
                 index += npars
-
-
-    """
-    # For every pulsar, we assume that the power spectrum frequencies are
-    # the same (if included)
-    """
-    def mark1loglikelihood(self, parameters):
-        # Calculating the log-likelihood happens in several steps.
-        # Single-pulsar spectra could be added
-
-        # For all pulsars, we will need the quantities:
-        # rGGNGGr, rGGNGGF, FGGNGGF and Phi
-
-        # For the total, we will construct the full matrix Sigma from these.
-        # After that, the log-likelihood can be calculated
-
-        # First figure out how large we have to make the arrays
-        npsrs = len(self.ptapsrs)
-        npf = np.zeros(npsrs, dtype=np.int)
-        for ii in range(npsrs):
-            npf[ii] = len(self.ptapsrs[ii].Ffreqs)
-
-        # Define the total arrays
-        rGr = np.zeros(npsrs)
-        rGF = np.zeros(np.sum(npf))
-        FGGNGGF = np.zeros((np.sum(npf), np.sum(npf)))
-        Phi = np.zeros((np.sum(npf), np.sum(npf)))
-        Sigma = np.zeros((np.sum(npf), np.sum(npf))) 
-        GNGldet = np.zeros(npsrs)
-
-        # Check for which pulsar we can avoid re-calculating the inverse of GNG
-        pAccel = np.array([True]*npsrs, dtype=np.bool)  # Which pulsars accelerate
-        for ii in range(len(self.ptasignals)):
-            if self.ptasignals[ii].stype == 'efac' or self.ptasignals[ii].stype == 'equad':
-                if self.ptasignals[ii].accelNoise == False:
-                    pAccel[self.ptasignals[ii].pulsarind] = False
-                    self.ptapsrs[self.ptasignals[ii].pulsarind].GNG = np.zeros(self.ptasignals[ii].GNG.shape)
-
-        # Add up all the GNG combinations for all pulsars
-        for m2signal in self.ptasignals:
-            if m2signal.pulsarind >= 0:
-                if m2signal.stype == 'efac' and pAccel[m2signal.pulsarind] == False:
-                    # Non-accelerated, create GNG
-                    pefac = 1.0
-                    if m2signal.npars == 1:
-                        pefac = parameters[m2signal.nindex]
-                        
-                    self.ptapsrs[m2signal.pulsarind].GNG += m2signal.GNG * (pefac**2)
-                elif m2signal.stype == 'equad' and pAccel[m2signal.pulsarind] == False:
-                    # Non-accelerated, create GNG
-                    pequadsqr = 10**(2*parameters[m2signal.nindex])
-                    self.ptapsrs[m2signal.pulsarind].GNG += m2signal.GNG * pequadsqr
-
-        # For the now-created GNGs, create the auxiliaries
-        for ii in range(npsrs):
-            if pAccel[ii] == False:
-                self.ptapsrs[ii].createAccelAuxiliaries()
-
-                findex = np.sum(npf[:ii])
-                nfreq = int(npf[ii]/2)
-
-                rGr[ii] = self.ptapsrs[ii].rGGNGGr
-                rGF[findex:findex+2*nfreq] = self.ptapsrs[ii].rGGNGGF
-                GNGldet[ii] = self.ptapsrs[ii].GNGldet
-                FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = self.ptapsrs[ii].FGGNGGF
-
-        # Loop over all accelerated signals, and create other noise auxiliaries
-        for m2signal in self.ptasignals:
-            if m2signal.pulsarind >= 0:
-                findex = np.sum(npf[:m2signal.pulsarind])
-                nfreq = int(npf[m2signal.pulsarind]/2)
-                if m2signal.stype == 'efac' and pAccel[m2signal.pulsarind]:
-                    # Accelerated
-                    pefacsqr = 1.0
-                    if m2signal.npars == 1:
-                        pefacsqr = parameters[m2signal.nindex]**2
-
-                    rGr[m2signal.pulsarind] = self.ptapsrs[m2signal.pulsarind].rGGNGGr / pefacsqr
-                    rGF[findex:findex+2*nfreq] = self.ptapsrs[m2signal.pulsarind].rGGNGGF / pefacsqr
-                    GNGldet[m2signal.pulsarind] = self.ptapsrs[m2signal.pulsarind].GNGldet + np.log(pefacsqr) * self.ptapsrs[m2signal.pulsarind].Gmat.shape[1]
-                    FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = self.ptapsrs[m2signal.pulsarind].FGGNGGF / pefacsqr
-
-        # Loop over all signals, and fill the above arrays
-        for m2signal in self.ptasignals:
-            if m2signal.stype == 'spectrum':
-                if m2signal.corr == 'single':
-                    findex = np.sum(npf[:m2signal.pulsarind])
-                    nfreq = int(npf[m2signal.pulsarind]/2)
-
-                    # Pcdoubled is an array where every element of the parameters
-                    # of this m2signal is repeated once (e.g. [1, 1, 3, 3, 2, 2, 5, 5, ...]
-                    pcdoubled = np.array([parameters[m2signal.nindex:m2signal.nindex+m2signal.npars], parameters[m2signal.nindex:m2signal.nindex+m2signal.npars]]).T.flatten()
-
-                    # Fill the phi matrix
-                    di = np.diag_indices(2*nfreq)
-                    Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += 10**pcdoubled
-                elif m2signal.corr in ['gr', 'uniform', 'dipole', 'anisotropicgwb']:
-                    nfreq = m2signal.npars
-
-                    if m2signal.corr in ['gr', 'uniform', 'dipole']:
-                        pcdoubled = np.array([parameters[m2signal.nindex:m2signal.nindex+m2signal.npars], parameters[m2signal.nindex:m2signal.nindex+m2signal.npars]]).T.flatten()
-                        corrmat = m2signal.corrmat
-                    elif m2signal.corr == 'anisotropicgwb':
-                        nclm = m2signal.aniCorr.clmlength()
-                        pcdoubled = np.array([\
-                            parameters[m2signal.nindex:m2signal.nindex+m2signal.npars-nclm],\
-                            parameters[m2signal.nindex:m2signal.nindex+m2signal.npars-nclm]]).T.flatten()
-                        clm = parameters[m2signal.nindex+m2signal.npars-nclm:m2signal.nindex+m2signal.npars]
-                        corrmat = m2signal.aniCorr.corrmat(clm)
-
-                    indexa = 0
-                    indexb = 0
-                    for aa in range(npsrs):
-                        for bb in range(npsrs):
-                            # Some pulsars may have fewer frequencies than
-                            # others (right?). So only use overlapping ones
-                            nof = np.min([npf[aa], npf[bb], 2*nfreq])
-                            di = np.diag_indices(nof)
-                            Phi[indexa:indexa+nof,indexb:indexb+nof][di] += 10**pcdoubled[:nof] * corrmat[aa, bb]
-                            indexb += npf[bb]
-                        indexb = 0
-                        indexa += npf[aa]
-            elif m2signal.stype == 'powerlaw':
-                spd = 24 * 3600.0
-                spy = 365.25 * spd
-                Amp = 10**parameters[m2signal.nindex]
-                Si = parameters[m2signal.nindex+1]
-
-                if m2signal.corr == 'single':
-                    findex = np.sum(npf[:m2signal.pulsarind])
-                    nfreq = int(npf[m2signal.pulsarind]/2)
-                    freqpy = self.ptapsrs[m2signal.pulsarind].Ffreqs * spy
-                    pcdoubled = (Amp**2 * spy**3 / (12*np.pi*np.pi * m2signal.Tmax)) * freqpy ** (-Si)
-
-                    # Fill the phi matrix
-                    di = np.diag_indices(2*nfreq)
-                    Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += pcdoubled
-                elif m2signal.corr in ['gr', 'uniform', 'dipole', 'anisotropicgwb']:
-                    freqpy = self.ptapsrs[0].Ffreqs * spy
-                    pcdoubled = (Amp**2 * spy**3 / (12*np.pi*np.pi * m2signal.Tmax)) * freqpy ** (-Si)
-                    nfreq = len(freqpy)
-
-                    if m2signal.corr in ['gr', 'uniform', 'dipole']:
-                        corrmat = m2signal.corrmat
-                    elif m2signal.corr == 'anisotropicgwb':
-                        nclm = m2signal.aniCorr.clmlength()
-                        clm = parameters[m2signal.nindex+m2signal.npars-nclm:m2signal.nindex+m2signal.npars]
-                        corrmat = m2signal.aniCorr.corrmat(clm)
-
-                    indexa = 0
-                    indexb = 0
-                    for aa in range(npsrs):
-                        for bb in range(npsrs):
-                            # Some pulsars may have fewer frequencies than
-                            # others (right?). So only use overlapping ones
-                            nof = np.min([npf[aa], npf[bb]])
-                            if nof > nfreq:
-                                raise IOError, "ERROR: nof > nfreq. Adjust GWB freqs"
-
-                            di = np.diag_indices(nof)
-                            Phi[indexa:indexa+nof,indexb:indexb+nof][di] += pcdoubled[:nof] * corrmat[aa, bb]
-                            indexb += npf[bb]
-                        indexb = 0
-                        indexa += npf[aa]
-        
-        # Now that all arrays are filled, we can proceed to do some linear
-        # algebra. First we'll invert Phi
-        cf = sl.cho_factor(Phi)
-        PhiLD = 2*np.sum(np.log(np.diag(cf[0])))
-        Phiinv = sl.cho_solve(cf, np.identity(Phi.shape[0]))
-
-        # Construct and decompose Sigma
-        Sigma = FGGNGGF + Phiinv
-        cf = sl.cho_factor(Sigma)
-        SigmaLD = 2*np.sum(np.log(np.diag(cf[0])))
-        rGSigmaGr = np.dot(rGF, sl.cho_solve(cf, rGF))
-
-        # Now we are ready to return the log-likelihood
-        return -0.5*np.sum(rGr) - 0.5*np.sum(GNGldet) + 0.5*rGSigmaGr - 0.5*PhiLD - 0.5*SigmaLD
 
 
 
@@ -2425,9 +2207,7 @@ class ptaLikelihood(object):
         ll = 0.0
 
         if(np.all(self.pmin <= parameters) and np.all(parameters <= self.pmax)):
-            if self.likfunc == 'mark1':
-                ll = self.mark1loglikelihood(parameters)
-            elif self.likfunc == 'mark3':
+            if self.likfunc == 'mark3':
                 ll = self.mark3loglikelihood(parameters)
             elif self.likfunc == 'mark4':
                 ll = self.mark4loglikelihood(parameters)
@@ -2464,7 +2244,10 @@ class ptaLikelihood(object):
         return lp
 
     def logposterior(self, parameters):
-        return self.logprior(parameters) + self.loglikelihood(parameters)
+        lp = self.logprior(parameters)
+        if lp > -1e98:
+            lp += self.loglikelihood(parameters)
+        return lp
 
     def nlogposterior(self, parameters):
         return -self.logposterior(parameters)
@@ -2934,6 +2717,144 @@ def makechainplot2d(chainfilename, par1=72, par2=73, xmin=None, xmax=None, ymin=
   make2dplot(emceechain[:,par1+2], emceechain[:,par2+2], title=title, \
 	  xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax)
 
+"""
+Given an mcmc chain file, plot the credible region for the GWB
+
+"""
+def makechainplot1d(chainfilename, par=72, xmin=None, xmax=None, title=r"GWB marginalised posterior"):
+  emceechain = np.loadtxt(chainfilename)
+
+  if xmin is None:
+    xmin = 0
+  if xmax is None:
+    xmax = 70
+
+  plt.figure()
+  plt.hist(emceechain[:, par+2], 100, color="k", histtype="step", range=(xmin, xmax))
+  plt.title(title)
+
+
+"""
+Perform a simple scan for two parameters. Fix all parameters to their "start"
+values, vary two parameters within their domain
+
+"""
+def ScanParameters(likob, scanfilename, par1=0, par2=1):
+  ndim = len(likob.pmin)
+
+  p1 = np.linspace(likob.pmin[par1], likob.pmax[par1], 50)
+  p2 = np.linspace(likob.pmin[par2], likob.pmax[par2], 50)
+
+  lp1 = np.zeros(shape=(50,50))
+  lp2 = np.zeros(shape=(50,50))
+  llik = np.zeros(shape=(50,50))
+  parameters = likob.pstart
+  for i in range(50):
+      for j in range(50):
+          lp1[i,j] = p1[i]
+          lp2[i,j] = p2[j]
+          parameters[par1] = p1[i]
+          parameters[par2] = p2[j]
+          llik[i,j] = likob.logposterior(parameters)
+	  percent = (i*50+j) * 100.0 / (50*50)
+	  sys.stdout.write("\rScan: %d%%" %percent)
+	  sys.stdout.flush()
+  sys.stdout.write("\n")
+
+  col1 = lp1.reshape(50*50)
+  col2 = lp2.reshape(50*50)
+  col3 = llik.reshape(50*50)
+  #col3 = np.exp(lcol3 - np.max(lcol3))
+
+  np.savetxt(scanfilename, np.array([col1, col2, col3]).T)
+
+"""
+Perform a simple scan for one parameters. Fix all parameters to their "true"
+values, vary one parameters within its domain
+
+"""
+def ScanParameter(likob, scanfilename, par1=0):
+  ndim = len(likob.pmin)
+
+  p1 = np.linspace(likob.pmin[par1], likob.pmax[par1], 50)
+
+  lp1 = np.zeros(shape=(50))
+  llik = np.zeros(shape=(50))
+  parameters = likob.pstart
+  for i in range(50):
+      lp1[i] = p1[i]
+      parameters[par1] = p1[i]
+      llik[i] = likob.logposterior(parameters)
+      percent = (i) * 100.0 / (50)
+      sys.stdout.write("\rScan: %d%%" %percent)
+      sys.stdout.flush()
+  sys.stdout.write("\n")
+
+  col1 = lp1
+  col3 = llik
+  #col3 = np.exp(lcol3 - np.max(lcol3))
+
+  np.savetxt(scanfilename, np.array([col1, col3]).T)
+
+
+
+"""
+Given a scan file, plot the important credible regions
+
+Todo: use make2dplot
+
+"""
+def makescanplot(scanfilename):
+  likscan = np.loadtxt(scanfilename)
+
+  x = likscan[:,0].reshape(int(np.sqrt(likscan[:,0].size)), \
+      int(np.sqrt(likscan[:,0].size)))
+  y = likscan[:,1].reshape(int(np.sqrt(likscan[:,1].size)), \
+      int(np.sqrt(likscan[:,1].size)))
+  ll = likscan[:,2].reshape(int(np.sqrt(likscan[:,2].size)), \
+      int(np.sqrt(likscan[:,2].size)))
+
+  lik = np.exp(ll - np.max(ll))
+
+  level1, level2, level3 = getsigmalevels(lik)
+
+  xedges = np.linspace(np.min(x), np.max(x), np.sqrt(x.size))
+  yedges = np.linspace(np.min(y), np.max(y), np.sqrt(y.size))
+
+  # Set the attributes for the plot
+  contourlevels = (level1, level2, level3)
+  #contourcolors = ('darkblue', 'darkblue', 'darkblue')
+  contourcolors = ('black', 'black', 'black')
+  contourlinestyles = ('-', '--', ':')
+  contourlinewidths = (3.0, 3.0, 3.0)
+  contourlabels = [r'1 $\sigma$', r'2 $\sigma$',r'3 $\sigma$']
+
+  plt.figure()
+
+  c1 = plt.contour(xedges,yedges,lik.T,contourlevels, \
+      colors=contourcolors, linestyles=contourlinestyles, \
+      linewidths=contourlinewidths, \
+      zorder=2)
+
+  line1 = plt.Line2D(range(10), range(10), linewidth=contourlinewidths[0], \
+      linestyle=contourlinestyles[0], color=contourcolors[0])
+  line2 = plt.Line2D(range(10), range(10), linewidth=contourlinewidths[1], \
+      linestyle=contourlinestyles[1], color=contourcolors[1])
+  line3 = plt.Line2D(range(10), range(10), linewidth=contourlinewidths[2], \
+      linestyle=contourlinestyles[2], color=contourcolors[2])
+
+  contall = (line1, line2, line3)
+  contlabels = (contourlabels[0], contourlabels[1], contourlabels[2])
+  plt.legend(contall, contlabels, loc='upper right',\
+      fancybox=True, shadow=True, scatterpoints=1)
+
+  plt.grid(True)
+
+  plt.title("GWB noise credible regions")
+  plt.xlabel(r'Amplitude [$10^{-15}$]')
+  plt.ylabel(r'Spectral index $\gamma$ []')
+  plt.legend()
+
 
 """
 Given a MultiNest file, plot the important credible regions
@@ -3262,7 +3183,7 @@ covest=True, this file will be used to estimate the stepsize for the mcmc
 """
 def RunMetropolis(likob, steps, chainfilename, initfile=None, resize=0.088):
   ndim = likob.dimensions
-  pwidth = likob.pwidth
+  pwidth = likob.pwidth.copy()
 
   if initfile is not None:
     # Read the starting position of the random walkers from a file

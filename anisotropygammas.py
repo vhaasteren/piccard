@@ -110,7 +110,7 @@ def gamma(phi1,phi2,theta1,theta2):
     returns the angle.
     """
     if phi1 == phi2 and theta1 == theta2:
-        gamma = 0   # TODO: Find another expression here
+        gamma = 0   # psrA=psrB. Skipping this rotation is same as (gamma=0)
     else:
         gamma = atan( sin(theta2)*sin(phi2-phi1)/(cos(theta1)*sin(theta2)*cos(phi1-phi2) - sin(theta1)*cos(theta2)))
 
