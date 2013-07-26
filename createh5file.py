@@ -4,7 +4,7 @@
 
 """
 Usage:
-python createanalysis.py directory hdf5file
+python createh5file.py directory hdf5file
 
 directory: a directory that contains a bunch of par/tim files, with matching par
 and tim files (no included files, unless with proper path, since tempo2 will not

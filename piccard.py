@@ -379,13 +379,6 @@ def hdcorrmat(ptapsrs):
     np.seterr(**old_settings)
     hdmat = logxp - 0.25 * xp + 0.5 + 0.5 * np.diag(np.ones(npsrs))
 
-    if False: # Plot the H&D curve
-        angle = np.arccos(cosp)
-        x = np.array(angle.flat)
-        y = np.array(hdmat.flat)
-        ind = np.argsort(x)
-        plt.plot(x[ind], y[ind], c='b', marker='.')
-
     return hdmat
 
 
@@ -877,7 +870,7 @@ class ptaPulsar(object):
         self.Gmat = U[:, (self.Mmat.shape[1]):].copy()
 
     # The number of frequencies is not the number of modes: model = 2*freqs
-    def createAuxiliaries(self, nfreqs, Tmax):
+    def createAuxiliaries(self, Tmax, nfreqs, ndmfreqs):
         (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
         self.Gr = np.dot(self.Gmat.T, self.residuals)
         self.GGr = np.dot(self.Gmat, self.Gr)
@@ -885,9 +878,9 @@ class ptaPulsar(object):
         self.GGtF = np.dot(self.Gmat, self.GtF)
 
         # For the DM stuff
-        #(self.Fdmmat, self.Fdmfreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
+        (self.Fdmmat, self.Fdmfreqs) = fourierdesignmatrix(self.toas, 2*ndmfreqs, Tmax)
         self.Dmat = np.diag(DMk / (self.freqs**2))
-        self.DF = np.dot(self.Dmat, self.Fmat)
+        self.DF = np.dot(self.Dmat, self.Fdmmat)
         self.GtD = np.dot(self.Gmat.T, self.DF)
         self.GGtD = np.dot(self.Gmat, self.GtD)
 
@@ -986,18 +979,24 @@ class ptaLikelihood(object):
             #newpsr.readFromImagination(filename, psrname)
             self.ptapsrs.append(newpsr)
 
+    # This function is not run yet... see if we can implement the RJMCMC for the
+    # Fourier modes
     def createAuxiliaries(self):
         # First figure out how large we have to make the arrays
         npsrs = len(self.ptapsrs)
         self.npf = np.zeros(npsrs, dtype=np.int)
+        self.npfdm = np.zeros(npsrs, dtype=np.int)
+        self.npobs = np.zeros(npsrs, dtype=np.int)
+        self.npgs = np.zeros(npsrs, dtype=np.int)
         for ii in range(npsrs):
-            npf[ii] = len(self.ptapsrs[ii].Ffreqs)
-            npfdm = None    # Number of frequencies per pulsar (DM)
-            npobs = None    # Number of observations per pulsar
-            npgs = None     # Number of non-projected observations per pulsar (columns Gmat)
+            self.npf[ii] = len(self.ptapsrs[ii].Ffreqs)
+            self.npfdm[ii] = len(self.ptapsrs[ii].Ffreqs)
+            self.npobs[ii] = len(self.ptapsrs[ii].Ffreqs)
+            self.npgs[ii] = len(self.ptapsrs[ii].Ffreqs)
+
 
     # Initialise the model
-    def initModel(self, nfreqmodes=20, \
+    def initModel(self, nfreqmodes=20, ndmfreqmodes=None, \
             modelIndependentNoise=False, incRedNoise=False, \
             modelIndependentGWB=False, incGWB=False, \
             modelIndependentDM=False, incDM=False, \
@@ -1024,7 +1023,11 @@ class ptaLikelihood(object):
         for m2psr in self.ptapsrs:
             if incDM:
                 m2psr.addDMQuadratic()
-            m2psr.createAuxiliaries(nfreqmodes, Tmax)
+
+            if ndmfreqmodes is None:
+                ndmfreqmodes = nfreqmodes
+
+            m2psr.createAuxiliaries(Tmax, nfreqmodes, ndmfreqmodes)
 
         # Initialise the ptasignal objects
         # Currently: one efac per pulsar, and red noise
