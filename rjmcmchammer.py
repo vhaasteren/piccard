@@ -39,33 +39,41 @@ class RJMHSampler(emcee.MHSampler):
 
     The model parameters are assumed to stay the same. In the likelihood some
     parameters will therefore just be ignored (always receives the maximum). The
-    user will have to deal with that. The
+    user will have to deal with that when reading the chain
 
     This sampler expects a function that returns a new set of parameters, based
     on a transdimensional jump, and a probability that a transdimensional jump
     is carried out
 
     """
-    def __init__(self, jprob, jumpparsfn, *args, **kwargs):
+    def __init__(self, jprob, jumpparsfn, propdjumpfn, *args, **kwargs):
         super(RJMHSampler, self).__init__(*args, **kwargs)
-        self.jprob = jprob
-        self.jumpparsfn = jumpparsfn
+        self.jprob = jprob                  # Jump probability
+        self.jumpparsfn = jumpparsfn        # After jump, draw parameters function
+        self.propdjumpfn = propdjumpfn      # Propose a new trans-dim jump
 
     def reset(self):
         super(RJMHSampler, self).reset()
         self._nmod1 = np.empty(0, dtype=np.int)     # Red noise model
         self._nmod2 = np.empty(0, dtype=np.int)     # DM model
 
-    def get_lnprob(self, p):
-        pass
+    def get_lnprob(self, p, nmod1, nmod2):
+        """Return the log-probability at the given position and model """
+        return self.lnprobfn(p, psrnfinc=[nmod1], psrnfdminc=[nmod2])
 
-    def sample(self, p0, lnprob=None, randomstate=None, thin=1,
+    def sample(self, p0, mod1, mod2, lnprob=None, randomstate=None, thin=1,
             storechain=True, iterations=1):
         """
         Advances the chain ``iterations`` steps as an iterator
 
         :param p0:
             The initial position vector.
+
+        :param mod1:
+            The initial number of frequencies (RN)
+
+        :param mod2:
+            The initial number of frequencies (DM)
 
         :param lnprob0: (optional)
             The log posterior probability at position ``p0``. If ``lnprob``
@@ -104,7 +112,7 @@ class RJMHSampler(emcee.MHSampler):
 
         p = np.array(p0)
         if lnprob is None:
-            lnprob = self.get_lnprob(p)
+            lnprob = self.get_lnprob(p, mod1, mod2)
 
         # Resize the chain in advance.
         if storechain:
@@ -112,6 +120,8 @@ class RJMHSampler(emcee.MHSampler):
             self._chain = np.concatenate((self._chain,
                     np.zeros((N, self.dim))), axis=0)
             self._lnprob = np.append(self._lnprob, np.zeros(N))
+            self._nmod1 = np.append(self._nmod1, np.zeros(N, dtype=np.int))
+            self._nmod2 = np.append(self._nmod2, np.zeros(N, dtype=np.int))
 
         i0 = self.iterations
         # Use range instead of xrange for python 3 compatability
@@ -120,9 +130,17 @@ class RJMHSampler(emcee.MHSampler):
 
             # Calculate the proposal distribution.
             q = self._random.multivariate_normal(p, self.cov)
+            qmod1 = mod1
+            qmod2 = mod2
+
+            # Decide whether we will do a trans-dimensional jump
+            if self._random.rand() < self.jprob:
+                # Trans-dim jump. Adjust the models and parameters
+                qmod1, qmod2 = self.propdjumpfn()
+                q = self.jumpparsfn(q, qmod1, qmod2)
 
 	    # Calculate the new loglikelihood
-            newlnprob = self.get_lnprob(q)
+            newlnprob = self.get_lnprob(q, qmod1, qmod2)
             diff = newlnprob - lnprob
 
             # M-H acceptance ratio
@@ -131,6 +149,8 @@ class RJMHSampler(emcee.MHSampler):
 
             if diff > 0:
                 p = q
+                mod1 = qmod1
+                mod2 = qmod2
                 lnprob = newlnprob
                 self.naccepted += 1
 
@@ -138,8 +158,43 @@ class RJMHSampler(emcee.MHSampler):
                 ind = i0 + int(i / thin)
                 self._chain[ind, :] = p
                 self._lnprob[ind] = lnprob
+                self._nmod1[ind] = mod1
+                self._nmod2[ind] = mod2
 
             # Heavy duty iterator action going on right here...
-            yield p, lnprob, self.random_state
+            yield p, mod1, mod2, lnprob, self.random_state
 
+
+    def run_mcmc(self, pos0, mod01, mod02, N, rstate0=None, lnprob0=None, **kwargs):
+        """
+        Iterate :func:`sample` for ``N`` iterations and return the result.
+
+        :param p0:
+            The initial position vector.
+
+        :param mod01:
+            The initial frequency model
+
+        :param mod02:
+            The initial DM model
+
+        :param N:
+            The number of steps to run.
+
+        :param lnprob0: (optional)
+            The log posterior probability at position ``p0``. If ``lnprob``
+            is not provided, the initial value is calculated.
+
+        :param rstate0: (optional)
+            The state of the random number generator. See the
+            :func:`random_state` property for details.
+
+        :param **kwargs: (optional)
+            Other parameters that are directly passed to :func:`sample`.
+
+        """
+        for results in self.sample(pos0, mod01, mod02, lnprob0, rstate0, iterations=N,
+                **kwargs):
+            pass
+        return results
 

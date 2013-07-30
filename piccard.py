@@ -27,6 +27,7 @@ import sys
 import pytwalk                  # Internal module
 import pydnest                  # Internal module
 import anisotropygammas as ang  # Internal module
+import rjmcmchammer as rjemcee  # Internal module
 
 # Optional packages:
 try:
@@ -1147,8 +1148,8 @@ class ptaLikelihood(object):
             newsignal.ntotpars = int(len(self.ptapsrs[psrind].Ffreqs)/2)
             newsignal.bvary = np.array([1]*newsignal.ntotpars, dtype=np.bool)
 
-            newsignal.pmin = np.ones(newsignal.ntotpars) * -25.0
-            newsignal.pmax = np.ones(newsignal.ntotpars) * -1.0
+            newsignal.pmin = np.ones(newsignal.ntotpars) * -17.0
+            newsignal.pmax = np.ones(newsignal.ntotpars) * 10.0
             newsignal.pstart = np.ones(newsignal.ntotpars) * -14.0
             newsignal.pwidth = np.ones(newsignal.ntotpars) * 0.1
         else:
@@ -1157,9 +1158,9 @@ class ptaLikelihood(object):
             newsignal.ntotpars = 3
             newsignal.bvary = np.array([1, 1, 0], dtype=np.bool)
 
-            newsignal.pmin = np.array([-20.0, 1.02, 1.0e-11])
-            newsignal.pmax = np.array([-5.0, 6.98, 3.0e-9])
-            newsignal.pstart = np.array([-15.0, 2.01, 1.0e-10])
+            newsignal.pmin = np.array([-15.0, 1.02, 1.0e-11])
+            newsignal.pmax = np.array([5.0, 6.98, 3.0e-9])
+            newsignal.pstart = np.array([-13.0, 2.01, 1.0e-10])
             newsignal.pwidth = np.array([0.1, 0.1, 5.0e-11])
 
         newsignal.corr = 'single'
@@ -1708,6 +1709,12 @@ class ptaLikelihood(object):
                     # Fill the Theta matrix
                     self.Thetavec[findex:findex+2*nfreq] += pcdoubled
 
+    """
+    Set the Auxiliary quantities for mark7loglikelihood in all the pulsars,
+    based on the psrbfinc boolean arrays. It returns a boolean array for both
+    phi and theta, indicating which elements of the covariance matrix to use in
+    the likelihood
+    """
     def prepareLimFreqIndicators(self, psrbfinc=None, psrbfdminc=None):
         # Because it's mark7, also set the number of frequency modes
         # Also set the 'global' index selector that we'll use for the Phi and
@@ -1744,8 +1751,15 @@ class ptaLikelihood(object):
             bfind[find:find+flen] = self.ptapsrs[ii].bfinc
             bfdmind[dmfind:dmfind+fdmlen] = self.ptapsrs[ii].bfdminc
 
+            find += flen
+            dmfind += fdmlen
+
         return bfind, bfdmind
 
+    """
+    Convert a number of frequencies for RN and DMV to a boolean array that
+    indicates which frequencies to use
+    """
     def getPsrLimFreqFromNumbers(self, psrnfinc, psrnfdminc):
         npsrs = len(self.ptapsrs)
         find = 0
@@ -1769,6 +1783,95 @@ class ptaLikelihood(object):
             dmfind += fdmlen
 
         return psrbfinc, psrbfdminc
+
+    """
+    When doing an RJMCMC, this function proposed the next possible jump in both
+    RN and DM spaces. This only works for a model with a single pulsar. Zero
+    modes for RN or DM are not allowed.
+    """
+    def proposeNextDimJump(self):
+        if len(self.ptapsrs) > 1:
+            raise ValueError("ERROR: modelNrToArray can only work on single psr")
+
+        # The maximum model numbers
+        maxmod1 = int(self.ptapsrs[0].Fmat.shape[1]/2)
+        maxmod2 = int(self.ptapsrs[0].DF.shape[1]/2)
+
+        if maxmod1 == 0 or maxmod2 == 0:
+            raise ValueError("ERROR: RN or DMV dimension == 0")
+
+        # The current model numbers
+        curmod1 = np.sum(self.ptapsrs[0].bfinc)
+        curmod2 = np.sum(self.ptapsrs[0].bfdminc)
+
+        # The proposed model numbers
+        propmod1 = curmod1
+        propmod2 = curmod2
+
+        # Either jump in one dimension, or the other. Not both
+        if np.random.rand() < 0.5:
+            if maxmod1 == 1:
+                propmod1 = curmod1
+            elif curmod1 == 1 and curmod1 < maxmod1:
+                propmod1 = curmod1 + 1
+            elif curmod1 == maxmod1 and curmod1 > 1:
+                propmod1 = curmod1 - 1
+            elif curmod1 > 1 and curmod1 < maxmod1:
+                propmod1 = curmod1 - 1 + 2*np.random.randint(2)
+        else:
+            if maxmod2 == 1:
+                propmod2 = curmod2
+            elif curmod2 == 1 and curmod2 < maxmod2:
+                propmod2 = curmod2 + 1
+            elif curmod2 == maxmod2 and curmod2 > 1:
+                propmod2 = curmod2 - 1
+            elif curmod2 > 1 and curmod1 < maxmod2:
+                propmod2 = curmod2 - 1 + 2*np.random.randint(2)
+
+        return propmod1, propmod2
+
+    """
+    When doing an RJMCMC, sometimes the sampler will jump to a space with more
+    dimensions than we are currently in. In that case, the new parameters must
+    be drawn from the prior. This function will draw valid new parameters if
+    required
+    """
+    def afterJumpPars(self, parameters, npropmod1, npropmod2):
+        if len(self.ptapsrs) > 1:
+            raise ValueError("ERROR: modelNrToArray can only work on single psr")
+
+        # The maximum model numbers
+        maxmod1 = int(self.ptapsrs[0].Fmat.shape[1]/2)
+        maxmod2 = int(self.ptapsrs[0].DF.shape[1]/2)
+
+        if maxmod1 == 0 or maxmod2 == 0:
+            raise ValueError("ERROR: RN or DMV dimension == 0")
+
+        # The current model numbers
+        curmod1 = np.sum(self.ptapsrs[0].bfinc)
+        curmod2 = np.sum(self.ptapsrs[0].bfdminc)
+
+        newparameters = parameters.copy()
+
+        # Check if we need to draw new red noise parameters
+        if npropmod1 > curmod1:
+            for m2signal in self.ptasignals:
+                if m2signal.stype == 'spectrum' and m2signal.corr == 'single':
+                    indexfull = m2signal.nindex+npropmod1-1
+                    index = npropmod1-1
+                    newparameters[indexfull] = m2signal.pmin[index] + \
+                            np.random.rand() * (m2signal.pmax[index] - m2signal.pmin[index])
+
+        if npropmod2 > curmod2:
+            for m2signal in self.ptasignals:
+                if m2signal.stype == 'dmspectrum':
+                    indexfull = m2signal.nindex+npropmod2-1
+                    index = npropmod2-1
+                    newparameters[indexfull] = m2signal.pmin[index] + \
+                            np.random.rand() * (m2signal.pmax[index] - m2signal.pmin[index])
+
+        return newparameters
+
 
 
     """
@@ -2255,8 +2358,10 @@ class ptaLikelihood(object):
                 lp -= np.sum(np.log(m2signal.pmax[m2signal.bvary]-m2signal.pmin[m2signal.bvary]))
         return lp
 
+    # Note: the inclusion of a uniform-amplitude part can have a big influence
     def mark7logprior(self, parameters, psrbfinc=None, psrbfdminc=None, \
             psrnfinc=None, psrnfdminc=None):
+        #return self.mark4logprior(parameters)
         lp = 0.0
 
         if psrnfinc != None and psrnfdminc != None:
@@ -2275,7 +2380,7 @@ class ptaLikelihood(object):
 
                 if np.sum(inc) > 0:
                     lp -= np.sum(np.log(m2signal.pmax[inc] - m2signal.pmin[inc]))
-            if m2signal.stype == 'dmspectrum' and m2signal.corr == 'single':
+            elif m2signal.stype == 'dmspectrum' and m2signal.corr == 'single':
                 fdmindex = int(np.sum(self.npfdm[:m2signal.pulsarind])/2)
                 nfreqdm = int(self.npfdm[m2signal.pulsarind]/2)
                 inc = bfdmind[fdmindex:fdmindex+nfreqdm]
@@ -2285,6 +2390,15 @@ class ptaLikelihood(object):
             else:
                 if np.sum(m2signal.bvary) > 0:
                     lp -= np.sum(np.log(m2signal.pmax[m2signal.bvary]-m2signal.pmin[m2signal.bvary]))
+
+        return lp
+
+    def mark7logposterior(self, parameters, psrbfinc=None, psrbfdminc=None, \
+            psrnfinc=None, psrnfdminc=None):
+        lp = self.mark7logprior(parameters, psrbfinc, psrbfdminc, psrnfinc, psrnfdminc)
+
+        if lp > -1e98:
+            lp += self.mark7loglikelihood(parameters, psrbfinc, psrbfdminc, psrnfinc, psrnfdminc)
 
         return lp
 
@@ -2329,8 +2443,6 @@ class ptaLikelihood(object):
     """
     Simple signal generation, use frequency domain for power-law signals by
     default
-
-    TODO: add correlations for the time-domain signals
     """
     def gensig(self, parameters=None, filename=None, timedomain=False):
         if parameters == None:
@@ -3196,6 +3308,41 @@ def makellplot(chainfilename, numfigs=2):
   plt.ylabel("Log-likelihood")
   plt.title("Log-likelihood vs sample number")
 
+"""
+Given a rjmcmc chain file, run with the aim of selecting the number of Fourier
+modes for both DM and Red noise, this function lets you plot the distributinon
+of the number of Fourier coefficients.
+"""
+def makefouriermodenumberplot(chainfilename):
+    rjmcmcchain = np.loadtxt(chainfilename)
+    chainmode1 = rjmcmcchain[:,-2]
+    chainmode2 = rjmcmcchain[:,-1]
+
+    xmin = np.min(chainmode1)
+    xmax = np.max(chainmode1)
+    ymin = np.min(chainmode2)
+    ymax = np.max(chainmode2)
+    totmin = np.min([xmin, ymin])
+    totmax = np.max([xmax, ymax])
+
+    xx = np.arange(totmin-1, totmax+2)
+    xy = np.zeros(len(xx))
+    for ii in range(len(xx)):
+        xy[ii] = np.sum(chainmode1==xx[ii]) / len(chainmode1)
+
+    yx = np.arange(totmin-1, totmax+2)
+    yy = np.zeros(len(yx))
+    for ii in range(len(yx)):
+        yy[ii] = np.sum(chainmode2==yx[ii]) / len(chainmode2)
+
+    plt.figure()
+    # TODO: why does drawstyle 'steps' shift the x-value by '1'?? Makes no sense..
+    plt.plot(xx+0.5, xy, 'r-', drawstyle='steps', linewidth=3.0)
+    plt.plot(yx+0.5, yy, 'b-', drawstyle='steps', linewidth=3.0)
+    plt.grid(True, which='major')
+    plt.legend((r'Red noise', r'DMV',), loc='upper right',\
+            fancybox=True, shadow=True)
+
 
 """
 Run a twalk algorithm on the likelihood wrapper.
@@ -3238,6 +3385,98 @@ def Runtwalk(likob, steps, chainfilename, thin=1):
   np.savetxt(chainfilename, savechain)
 
 
+"""
+Run a simple RJMCMC algorithm on the single-pulsar data to figure out what the
+optimal number of Fourier modes is for both red noise and DM variations
+
+Starting position can be taken from RJMCMC initfile, as can the covariance
+matrix
+
+"""
+def RunRJMCMC(likob, steps, chainfilename, initfile=None, resize=0.088, \
+        jumpprob=0.01, mhinitfile=False):
+  ndim = likob.dimensions
+  pwidth = likob.pwidth.copy()
+
+  if initfile is not None:
+    # Read the starting position of the random walkers from a file
+    print "Obtaining initial positions from '" + initfile + "'"
+    burnindata = np.loadtxt(initfile)
+    if mhinitfile:
+        burnindata = burnindata[:,2:]
+    else:
+        burnindata = burnindata[:,2:-2]
+    nsteps = burnindata.shape[0]
+    dim = burnindata.shape[1]
+    if(ndim != dim):
+        raise ValueError("ERROR: burnin file not same dimensions!")
+
+    # Get starting position
+    indices = np.random.randint(0, nsteps, 1)
+    p0 = burnindata[indices[0]]
+
+    # Estimate covariances as being the standarddeviation
+    pwidth = resize * np.std(burnindata, axis=0)
+  else:
+    # Set the starting position of the random walker (add a small perturbation to
+    # get away from a possible zero)
+    #    p0 = np.random.rand(ndim)*pwidth+pstart
+    p0 = likob.pstart + likob.pwidth
+    pwidth *= resize
+
+  # Set the covariances
+  cov = np.zeros((ndim, ndim))
+  for i in range(ndim):
+    cov[i,i] = pwidth[i]*pwidth[i]
+
+  # Initialise the emcee Reversible-Jump Metropolis-Hastings sampler
+  sampler = rjemcee.RJMHSampler(jumpprob, likob.afterJumpPars, \
+          likob.proposeNextDimJump, cov, ndim, \
+          likob.mark7logposterior, args=[])
+
+  mod1, mod2 = likob.proposeNextDimJump()
+
+  # Run the sampler one sample to start the chain
+  pos, mod1, mod2, lnprob, state = sampler.run_mcmc(p0, mod1, mod2, 1)
+
+  fil = open(chainfilename, "w")
+  fil.close()
+
+  # We don't update the screen every step
+  nSkip = 100
+  print "Running Metropolis-Hastings sampler"
+  for i in range(int(steps/nSkip)):
+      for result in sampler.sample(pos, mod1, mod2, iterations=nSkip, storechain=True):
+          pos = result[0]
+          mod1 = result[1]
+          mod2 = result[2]
+          lnprob = result[3]
+          state = result[4]
+          
+          fil = open(chainfilename, "a")
+          fil.write("{0:4f} \t{1:s} \t{2:s} \t{3:s} \t{4:s}\n".format(0, \
+                  str(lnprob), \
+                  "\t".join([str(x) for x in pos]), \
+                  str(mod1), str(mod2)))
+          fil.close()
+
+      percent = i * nSkip * 100.0 / steps
+      sys.stdout.write("\rSample: {0:d} = {1:4.1f}%   acc. fr. = {2:f}   pos = {3:e} {4:e}  lnprob = {5:e}   ".format(i*nSkip, percent, \
+              np.mean(sampler.acceptance_fraction),\
+              pos[ndim-2], pos[ndim-1],\
+              lnprob))
+      sys.stdout.flush()
+  sys.stdout.write("\n")
+
+  print("Mean acceptance fraction:", np.mean(sampler.acceptance_fraction))
+
+  try:
+      print("Autocorrelation time:", sampler.acor)
+  except ImportError:
+      print("Install acor from github or pip: http://github.com/dfm/acor")
+
+
+
 
 """
 Run a simple Metropolis-Hastings algorithm on the likelihood wrapper.
@@ -3258,8 +3497,9 @@ def RunMetropolis(likob, steps, chainfilename, initfile=None, resize=0.088):
     burnindata = burnindata[:,2:]
     nsteps = burnindata.shape[0]
     dim = burnindata.shape[1]
-    if(ndim is not dim):
+    if(ndim != dim):
       print "ERROR: burnin file not same dimensions!"
+      print "mismatch: ", ndim, dim
       exit()
 
     # Get starting position
@@ -3296,20 +3536,21 @@ def RunMetropolis(likob, steps, chainfilename, initfile=None, resize=0.088):
   print "Running Metropolis-Hastings sampler"
   for i in range(int(steps/nSkip)):
       for result in sampler.sample(pos, iterations=nSkip, storechain=True):
-	  pos = result[0]
-	  lnprob = result[1]
-	  state = result[2]
+          pos = result[0]
+          lnprob = result[1]
+          state = result[2]
+          
+          fil = open(chainfilename, "a")
+          fil.write("{0:4f} \t{1:s} \t{2:s}\n".format(0, \
+                  str(lnprob), \
+                  "\t".join([str(x) for x in pos])))
+          fil.close()
 
-	  fil = open(chainfilename, "a")
-	  fil.write("{0:4f} \t{1:s} \t{2:s}\n".format(0, \
-	      str(lnprob), \
-	      "\t".join([str(x) for x in pos])))
-	  fil.close()
       percent = i * nSkip * 100.0 / steps
       sys.stdout.write("\rSample: {0:d} = {1:4.1f}%   acc. fr. = {2:f}   pos = {3:e} {4:e}  lnprob = {5:e}   ".format(i*nSkip, percent, \
-	      np.mean(sampler.acceptance_fraction),\
-	      pos[ndim-2], pos[ndim-1],\
-	      lnprob))
+              np.mean(sampler.acceptance_fraction),\
+              pos[ndim-2], pos[ndim-1],\
+              lnprob))
       sys.stdout.flush()
   sys.stdout.write("\n")
 
@@ -3339,7 +3580,7 @@ def Runemcee(likob, steps, chainfilename, initfile=None, savechain=False, a=2.0)
     burnindata = burnindata[:,2:]
     nsteps = burnindata.shape[0]
     dim = burnindata.shape[1]
-    if(ndim is not dim):
+    if(ndim != dim):
       print "ERROR: burnin file not same dimensions!"
       exit()
     indices = np.random.randint(0, nsteps, nwalkers)
