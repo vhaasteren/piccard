@@ -729,7 +729,6 @@ class ptaPulsar(object):
     # The auxiliary quantities
     Fmat = None
     Fdmmat = None
-    pseudoFmatT = None
     Dmat = None
     DF = None
     Ffreqs = None
@@ -740,10 +739,13 @@ class ptaPulsar(object):
     GGtF = None
     GtD = None
     GGtD = None
-    FtD = None
 
     # Auxiliaries used in the likelihood
     Nvec = None             # For in the mark3 likelihood (projection approx.)
+
+    # To select the number of Frequency modes
+    bfinc = None
+    bfdminc = None
 
     def __init__(self):
         self.raj = 0
@@ -761,7 +763,6 @@ class ptaPulsar(object):
 
         self.Fmat = None
         self.Fdmmat = None
-        self.pseudoFmatT = None
         self.Dmat = None
         self.DF = None
         self.Ffreqs = None
@@ -772,7 +773,9 @@ class ptaPulsar(object):
         self.GGtF = None
         self.GtD = None
         self.GGtD = None
-        self.FtD = None
+
+        self.bfinc = None
+        self.bfdminc = None
 
     def readFromH5(self, filename, psrname):
         h5file = h5.File(filename, 'r+')
@@ -860,19 +863,17 @@ class ptaPulsar(object):
 
     # Modify the design matrix to include fitting for a quadratic in the DM
     # signal.
+    # TODO: Check if the DM is fit for in the design matrix
     def addDMQuadratic(self):
         # TODO: Check whether the DM quadratic (and the DM) are already present
         #       in the design matrix
         M = np.zeros((self.Mmat.shape[0], self.Mmat.shape[1]+2))
-        #M = np.zeros((self.Mmat.shape[0], self.Mmat.shape[1]+3))
         Dmatdiag = DMk / (self.freqs**2)
         d = np.array([Dmatdiag*self.toas, Dmatdiag*(self.toas**2)]).T
         #d = np.array([Dmatdiag, Dmatdiag*self.toas, Dmatdiag*(self.toas**2)]).T
 
         M[:,:-2] = self.Mmat
         M[:,-2:] = d
-        #M[:,:-3] = self.Mmat
-        #M[:,-3:] = d
         self.Mmat = M
         U, s, Vh = sl.svd(self.Mmat)
         self.Gmat = U[:, (self.Mmat.shape[1]):].copy()
@@ -897,25 +898,34 @@ class ptaPulsar(object):
         self.GtE = np.dot(self.Gmat.T, self.Emat)
         self.GGtE = np.dot(self.Gmat, self.GtE)
 
-        # Need the psuedo-inverse of Fmat (so not Fmat.T)
-        # (Fmat.T * Fmat)^{-1} Fmat.T
-        Sig = np.dot(self.Fmat.T, self.Fmat)
+    # When doing Fourier mode selection, like in mark7, we need an adjusted
+    # version of the E-matrix, which only includes certain columns. Select those
+    # here
+    # bfinc and bfdminc are Boolean arrays indicating which Frequencies to include
+    def setLimitedModeAuxiliaries(self, bfinc, bfdminc):
+        bfincnp = np.array(bfinc, dtype=np.bool)
+        bfdmincnp = np.array(bfdminc, dtype=np.bool)
 
-        #print "freqs:", self.freqs
-        #print "Dmat:", np.diag(self.Dmat)
+        if not (np.all(bfincnp == self.bfinc) and np.all(bfdmincnp == self.bfdminc)):
+            self.bfinc = bfincnp.copy()
+            self.bfdminc = bfdmincnp.copy()
 
-        try:
-            cf = sl.cho_factor(Sig)
-            self.pseudoFmatT = sl.cho_solve(cf, self.Fmat.T)
-        except np.linalg.LinAlgError:
-            print "WARNING: F^{T}F singular according to Cholesky for '" + self.name + "'. Fall-back to SVD"
-            U, s, Vh = sl.svd(Sig)
-            if not np.all(s > 0):
-                raise ValueError("ERROR: F^{T}F singular according to SVD")
+            bf = np.array([bfincnp, bfincnp]).T.flatten()
+            bfdm = np.array([bfdmincnp, bfdmincnp]).T.flatten()
 
-            self.pseudoFmatT = np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, self.Fmat.T)))
+            self.lEmat = np.append(self.Fmat[:,bf], self.DF[:,bfdm], axis=1)
+            self.lGtE = np.dot(self.Gmat.T, self.lEmat)
+            self.lGGtE = np.dot(self.Gmat, self.lGtE)
 
-        self.FtD = np.dot(self.pseudoFmatT, self.DF)
+    # Just like 'setLimitedModeAuxiliaries', but now with a number as an argument
+    def setLimitedModeNumber(self, nbf, nbfdm):
+        bfinc = np.array([0]*self.Fmat.shape[1], dtype=np.bool)
+        bfdminc = np.array([0]*self.DF.shape[1], dtype=np.bool)
+
+        bfinc[:nbf] = True
+        bfdminc[:nbfdm] = True
+
+        self.setLimitedModeAuxiliaries(bfinc, bfdminc)
 
 
 class ptaLikelihood(object):
@@ -1351,8 +1361,7 @@ class ptaLikelihood(object):
 
 
 
-    # This function is not run yet... see if we can implement the RJMCMC for the
-    # Fourier modes
+    # TODO: see if we can implement the RJMCMC for the Fourier modes
     def allocateAuxiliaries(self):
         # First figure out how large we have to make the arrays
         npsrs = len(self.ptapsrs)
@@ -1396,7 +1405,7 @@ class ptaLikelihood(object):
             self.NGGF = np.zeros((np.sum(self.npobs), np.sum(self.npf)))
             self.NGGD = np.zeros((np.sum(self.npobs), np.sum(self.npfdm)))
             self.DGXr = np.zeros(np.sum(self.npfdm))
-        elif self.likfunc == 'mark6':
+        elif self.likfunc == 'mark6' or self.likfunc == 'mark7':
             self.Phi = np.zeros((np.sum(self.npf), np.sum(self.npf)))
             self.Sigma = np.zeros((np.sum(self.npf), np.sum(self.npf)))
             self.Thetavec = np.zeros(np.sum(self.npfdm))
@@ -1439,6 +1448,15 @@ class ptaLikelihood(object):
                 ndmfreqmodes = nfreqmodes
 
             m2psr.createAuxiliaries(Tmax, nfreqmodes, ndmfreqmodes)
+
+            # When selecting Fourier modes, like in mark7, the binclude vector
+            # indicates whether or not a frequency is included in the likelihood. By
+            # default they are all 'on'
+            if self.likfunc == 'mark7':
+                #m2psr.bfinc = np.array([1]*nfreqmodes, dtype=np.bool)
+                #m2psr.bfdminc = np.array([1]*ndmfreqmodes, dtype=np.bool)
+
+                m2psr.setLimitedModeAuxiliaries([1]*nfreqmodes, [1]*ndmfreqmodes)
 
         # Initialise the ptasignal objects
         # Currently: one efac per pulsar, and red noise
@@ -1690,6 +1708,68 @@ class ptaLikelihood(object):
                     # Fill the Theta matrix
                     self.Thetavec[findex:findex+2*nfreq] += pcdoubled
 
+    def prepareLimFreqIndicators(self, psrbfinc=None, psrbfdminc=None):
+        # Because it's mark7, also set the number of frequency modes
+        # Also set the 'global' index selector that we'll use for the Phi and
+        # Theta matrices
+        npsrs = len(self.ptapsrs)
+        self.lnpf = np.zeros(npsrs, dtype=np.int)
+        self.lnpfdm = np.zeros(npsrs, dtype=np.int)
+
+        find = 0
+        dmfind = 0
+        for ii in range(npsrs):
+            flen = int(self.ptapsrs[ii].Fmat.shape[1]/2)
+            fdmlen = int(self.ptapsrs[ii].DF.shape[1]/2)
+            if psrbfinc != None and psrbfdminc != None:
+                self.ptapsrs[ii].setLimitedModeAuxiliaries( \
+                        psrbfinc[find:find+flen], \
+                        psrbfdminc[dmfind:dmfind+fdmlen])
+
+            # Register how many modes we are including (2*number of freqs)
+            self.lnpf[ii] = 2*np.sum(self.ptapsrs[ii].bfinc)
+            self.lnpfdm[ii] = 2*np.sum(self.ptapsrs[ii].bfdminc)
+
+            find += flen
+            dmfind += fdmlen
+
+        # find and dmfind now hold the total number of frequencies
+        bfind = np.array([1]*find, dtype=np.bool)
+        bfdmind = np.array([1]*dmfind, dtype=np.bool)
+        find = 0
+        dmfind = 0
+        for ii in range(npsrs):
+            flen = int(self.ptapsrs[ii].Fmat.shape[1]/2)
+            fdmlen = int(self.ptapsrs[ii].DF.shape[1]/2)
+            bfind[find:find+flen] = self.ptapsrs[ii].bfinc
+            bfdmind[dmfind:dmfind+fdmlen] = self.ptapsrs[ii].bfdminc
+
+        return bfind, bfdmind
+
+    def getPsrLimFreqFromNumbers(self, psrnfinc, psrnfdminc):
+        npsrs = len(self.ptapsrs)
+        find = 0
+        dmfind = 0
+        for ii in range(npsrs):
+            flen = int(self.ptapsrs[ii].Fmat.shape[1]/2)
+            fdmlen = int(self.ptapsrs[ii].DF.shape[1]/2)
+            find += flen
+            dmfind += fdmlen
+
+        psrbfinc = np.array([0]*flen, dtype=np.bool)
+        psrbfdminc = np.array([0]*fdmlen, dtype=np.bool)
+        find = 0
+        dmfind = 0
+        for ii in range(npsrs):
+            flen = int(self.ptapsrs[ii].Fmat.shape[1]/2)
+            fdmlen = int(self.ptapsrs[ii].DF.shape[1]/2)
+            psrbfinc[find:find+psrnfinc[ii]] = True
+            psrbfdminc[dmfind:dmfind+psrnfdminc[ii]] = True
+            find += flen
+            dmfind += fdmlen
+
+        return psrbfinc, psrbfdminc
+
 
     """
     mark1 loglikelihood of the pta model/likelihood implementation
@@ -1702,15 +1782,6 @@ class ptaLikelihood(object):
     TODO: (Including DM variations not yet implemented)
     """
     def mark1loglikelihood(self, parameters):
-        # Calculating the log-likelihood happens in several steps.
-
-        # For all pulsars, we will need the quantities:
-        # rGGNGGr, rGGNGGF, FGGNGGF and Phi
-
-        # For the total, we will construct the full matrix Sigma from these.
-        # After that, the log-likelihood can be calculated
-
-        # First figure out how large we have to make the arrays
         npsrs = len(self.ptapsrs)
 
         self.setPsrNoise(parameters)
@@ -1790,15 +1861,6 @@ class ptaLikelihood(object):
     Mark F: 605   sec   540    sec
     """
     def mark3loglikelihood(self, parameters):
-        # Calculating the log-likelihood happens in several steps.
-
-        # For all pulsars, we will need the quantities:
-        # rGGNGGr, rGGNGGF, FGGNGGF and Phi
-
-        # For the total, we will construct the full matrix Sigma from these.
-        # After that, the log-likelihood can be calculated
-
-        # First figure out how large we have to make the arrays
         npsrs = len(self.ptapsrs)
 
         # MARK A
@@ -1881,7 +1943,6 @@ class ptaLikelihood(object):
     basis functions
     """
     def mark4loglikelihood(self, parameters):
-        # First figure out how large we have to make the arrays
         npsrs = len(self.ptapsrs)
 
         # The red signals
@@ -1986,15 +2047,6 @@ class ptaLikelihood(object):
     DM variation spectrum is included 
     """
     def mark6loglikelihood(self, parameters):
-        # Calculating the log-likelihood happens in several steps.
-
-        # For all pulsars, we will need the quantities:
-        # rGGNGGr, rGGNGGF, FGGNGGF and Phi
-
-        # For the total, we will construct the full matrix Sigma from these.
-        # After that, the log-likelihood can be calculated
-
-        # First figure out how large we have to make the arrays
         npsrs = len(self.ptapsrs)
 
         # The red signals
@@ -2013,7 +2065,6 @@ class ptaLikelihood(object):
 
             # One temporary quantity
             NGGE = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].GGtE.T).T
-            #NGGE = np.array([(1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].GGtE[:,i] for i in range(self.ptapsrs[ii].Emat.shape[1])]).T
 
             # Fill the auxiliaries
             nobs = len(self.ptapsrs[ii].toas)
@@ -2059,6 +2110,101 @@ class ptaLikelihood(object):
         # Now we are ready to return the log-likelihood
         return -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) + 0.5*rGSigmaGr - 0.5*PhiLD - 0.5*SigmaLD - 0.5*ThetaLD
 
+    """
+    mark7 loglikelihood of the pta model/likelihood implementation
+
+    This likelihood is the same as mark6loglikelihood, except that it allows for
+    a variable number of Fourier modes to be included, both for DM and for red
+    noise
+
+    psrbfinc, psrbfdminc: a boolean array, indicating which frequencies to
+                          include.
+    psrnfinc, psrnfdminc: integer array, indicating how many frequencies per
+                          pulsar to include. Overrides psrbfinc and psrbfdminc
+    """
+    def mark7loglikelihood(self, parameters, psrbfinc=None, psrbfdminc=None, \
+            psrnfinc=None, psrnfdminc=None):
+        npsrs = len(self.ptapsrs)
+
+        # The red signals
+        self.constructPhiAndTheta(parameters)
+
+        # The white noise
+        self.setPsrNoise(parameters)
+
+        # If the included frequencies are passed by numbers -- not indicator
+        # functions --, then obtain the indicators from the numbers
+        if psrnfinc != None and psrnfdminc != None:
+            psrbfinc, psrbfdminc = self.getPsrLimFreqFromNumbers(psrnfinc, psrnfdminc)
+
+        # Obtain the frequency selectors, and set the psr frequencies
+        bfind, bfdmind = self.prepareLimFreqIndicators(psrbfinc, psrbfdminc)
+
+        # Double up the frequency indicators to get the mode indicators
+        bfmind = np.array([bfind, bfind]).T.flatten()
+        bfmdmind = np.array([bfdmind, bfdmind]).T.flatten()
+
+        # Select the limited range Phi and Theta
+        #lPhi = self.Phi[bfmind, bfmind]
+        lPhi = self.Phi[:, bfmind][bfmind, :]
+        lThetavec = self.Thetavec[bfmdmind]
+        lenphi = np.sum(bfmind)
+        lentheta = np.sum(bfmdmind)
+
+        # Armed with the Noise (and it's inverse), we'll construct the
+        # auxiliaries for all pulsars
+        for ii in range(npsrs):
+            findex = np.sum(self.lnpf[:ii])
+            fdmindex = np.sum(self.lnpfdm[:ii])
+            nfreq = int(self.lnpf[ii]/2)
+            nfreqdm = int(self.lnpfdm[ii]/2)
+
+            # One temporary quantity
+            NGGE = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].lGGtE.T).T
+
+            # Fill the auxiliaries
+            nobs = len(self.ptapsrs[ii].toas)
+            ng = self.ptapsrs[ii].Gmat.shape[1]
+            self.rGr[ii] = np.sum(self.ptapsrs[ii].GGr ** 2 / self.ptapsrs[ii].Nvec)
+            self.rGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].GGr, NGGE)
+            self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nvec)) * ng / nobs
+            self.EGGNGGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm, findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].lGGtE.T, NGGE)
+
+        
+        # Now that all arrays are filled, we can proceed to do some linear
+        # algebra. First we'll invert Phi
+        try:
+            cf = sl.cho_factor(lPhi)
+            PhiLD = 2*np.sum(np.log(np.diag(cf[0])))
+            Phiinv = sl.cho_solve(cf, np.identity(lPhi.shape[0]))
+        except np.linalg.LinAlgError:
+            U, s, Vh = sl.svd(lPhi)
+            if not np.all(s > 0):
+                raise ValueError("ERROR: Phi singular according to SVD")
+            PhiLD = np.sum(np.log(s))
+            Phiinv = np.dot(Vh.T, np.dot(np.diag(1.0/s), U.T))
+
+        ThetaLD = np.sum(np.log(lThetavec))
+
+        # Construct and decompose Sigma
+        di = np.diag_indices(np.sum(self.lnpf))
+        didm = np.diag_indices(np.sum(self.lnpfdm))
+        Sigma = self.EGGNGGE[:lenphi+lentheta, :lenphi+lentheta]
+        Sigma[0:np.sum(self.lnpf), 0:np.sum(self.lnpf)] += Phiinv
+        Sigma[np.sum(self.lnpf):, np.sum(self.lnpf):][didm] += 1.0 / lThetavec
+        try:
+            cf = sl.cho_factor(Sigma)
+            SigmaLD = 2*np.sum(np.log(np.diag(cf[0])))
+            rGSigmaGr = np.dot(self.rGE[:lenphi+lentheta], sl.cho_solve(cf, self.rGE[:lenphi+lentheta]))
+        except np.linalg.LinAlgError:
+            U, s, Vh = sl.svd(Sigma)
+            if not np.all(s > 0):
+                raise ValueError("ERROR: Sigma singular according to SVD")
+            SigmaLD = np.sum(np.log(s))
+            rGSigmaGr = np.dot(self.rGE[:lenphi+lentheta], np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, self.rGE[:lenphi+lentheta]))))
+
+        # Now we are ready to return the log-likelihood
+        return -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) + 0.5*rGSigmaGr - 0.5*PhiLD - 0.5*SigmaLD - 0.5*ThetaLD
 
 
 
@@ -2074,12 +2220,15 @@ class ptaLikelihood(object):
                 ll = self.mark4loglikelihood(parameters)
             elif self.likfunc == 'mark6':
                 ll = self.mark6loglikelihood(parameters)
+            elif self.likfunc == 'mark7':
+                ll = self.mark7loglikelihood(parameters)
         else:
             ll = -1e99
 
         return ll
 
-    def logprior(self, parameters):
+    # TODO: the prior for the amplitude parameters is not yet normalised
+    def mark4logprior(self, parameters):
         lp = 0.0
 
         # Loop over all signals
@@ -2100,6 +2249,64 @@ class ptaLikelihood(object):
                     lp -= 1e99
             elif m2signal.stype == 'spectrum':
                 lp += np.sum(parameters[m2signal.nindex:m2signal.nindex+m2signal.npars])
+
+            # Divide by the prior range
+            if np.sum(m2signal.bvary) > 0:
+                lp -= np.sum(np.log(m2signal.pmax[m2signal.bvary]-m2signal.pmin[m2signal.bvary]))
+        return lp
+
+    def mark7logprior(self, parameters, psrbfinc=None, psrbfdminc=None, \
+            psrnfinc=None, psrnfdminc=None):
+        lp = 0.0
+
+        if psrnfinc != None and psrnfdminc != None:
+            psrbfinc, psrbfdminc = self.getPsrLimFreqFromNumbers(psrnfinc, psrnfdminc)
+
+        # Obtain the frequency selectors, and set the psr frequencies
+        bfind, bfdmind = self.prepareLimFreqIndicators(psrbfinc, psrbfdminc)
+
+        # Loop over all signals
+        for m2signal in self.ptasignals:
+            if m2signal.stype == 'spectrum' and m2signal.corr == 'single':
+                # Red noise, see if we need to include it
+                findex = int(np.sum(self.npf[:m2signal.pulsarind])/2)
+                nfreq = int(self.npf[m2signal.pulsarind]/2)
+                inc = bfind[findex:findex+nfreq]
+
+                if np.sum(inc) > 0:
+                    lp -= np.sum(np.log(m2signal.pmax[inc] - m2signal.pmin[inc]))
+            if m2signal.stype == 'dmspectrum' and m2signal.corr == 'single':
+                fdmindex = int(np.sum(self.npfdm[:m2signal.pulsarind])/2)
+                nfreqdm = int(self.npfdm[m2signal.pulsarind]/2)
+                inc = bfdmind[fdmindex:fdmindex+nfreqdm]
+
+                if np.sum(inc) > 0:
+                    lp -= np.sum(np.log(m2signal.pmax[inc] - m2signal.pmin[inc]))
+            else:
+                if np.sum(m2signal.bvary) > 0:
+                    lp -= np.sum(np.log(m2signal.pmax[m2signal.bvary]-m2signal.pmin[m2signal.bvary]))
+
+        return lp
+
+    def logprior(self, parameters):
+        lp = 0.0
+
+        if(np.all(self.pmin <= parameters) and np.all(parameters <= self.pmax)):
+            if self.likfunc == 'mark1':
+                lp = self.mark4logprior(parameters)
+            elif self.likfunc == 'mark3':
+                lp = self.mark4logprior(parameters)
+            elif self.likfunc == 'mark4':
+                lp = self.mark4logprior(parameters)
+            elif self.likfunc == 'mark6':
+                lp = self.mark4logprior(parameters)
+            elif self.likfunc == 'mark6':
+                lp = self.mark4logprior(parameters)
+            elif self.likfunc == 'mark7':  # Mark7 should be called differently of course
+                lp = self.mark7logprior(parameters)
+        else:
+            lp = -1e99
+
         return lp
 
     def logposterior(self, parameters):
