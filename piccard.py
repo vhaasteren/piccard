@@ -899,7 +899,7 @@ class ptaPulsar(object):
         self.GtE = np.dot(self.Gmat.T, self.Emat)
         self.GGtE = np.dot(self.Gmat, self.GtE)
 
-    # When doing Fourier mode selection, like in mark7, we need an adjusted
+    # When doing Fourier mode selection, like in mark7/mark8, we need an adjusted
     # version of the E-matrix, which only includes certain columns. Select those
     # here
     # bfinc and bfdminc are Boolean arrays indicating which Frequencies to include
@@ -914,9 +914,15 @@ class ptaPulsar(object):
             bf = np.array([bfincnp, bfincnp]).T.flatten()
             bfdm = np.array([bfdmincnp, bfdmincnp]).T.flatten()
 
+            # For mark8
             self.lEmat = np.append(self.Fmat[:,bf], self.DF[:,bfdm], axis=1)
             self.lGtE = np.dot(self.Gmat.T, self.lEmat)
             self.lGGtE = np.dot(self.Gmat, self.lGtE)
+
+            # For mark7
+            self.lFmat = self.Fmat[:,bf]
+            self.lGtF = self.GtF[:,bf]
+            self.lGGtF = self.GGtF[:,bf]
 
     # Just like 'setLimitedModeAuxiliaries', but now with a number as an argument
     def setLimitedModeNumber(self, nbf, nbfdm):
@@ -1385,7 +1391,7 @@ class ptaLikelihood(object):
             self.rGFa = np.zeros(npsrs)
             self.aFGFa = np.zeros(npsrs)
             self.avec = np.zeros(np.sum(self.npf))
-        elif self.likfunc == 'mark3':
+        elif self.likfunc == 'mark3' or self.likfunc == 'mark7':
             self.Phi = np.zeros((np.sum(self.npf), np.sum(self.npf)))
             self.Thetavec = np.zeros(np.sum(self.npfdm))
             self.Sigma = np.zeros((np.sum(self.npf), np.sum(self.npf)))
@@ -1406,7 +1412,7 @@ class ptaLikelihood(object):
             self.NGGF = np.zeros((np.sum(self.npobs), np.sum(self.npf)))
             self.NGGD = np.zeros((np.sum(self.npobs), np.sum(self.npfdm)))
             self.DGXr = np.zeros(np.sum(self.npfdm))
-        elif self.likfunc == 'mark6' or self.likfunc == 'mark7':
+        elif self.likfunc == 'mark6' or self.likfunc == 'mark8':
             self.Phi = np.zeros((np.sum(self.npf), np.sum(self.npf)))
             self.Sigma = np.zeros((np.sum(self.npf), np.sum(self.npf)))
             self.Thetavec = np.zeros(np.sum(self.npfdm))
@@ -1450,10 +1456,10 @@ class ptaLikelihood(object):
 
             m2psr.createAuxiliaries(Tmax, nfreqmodes, ndmfreqmodes)
 
-            # When selecting Fourier modes, like in mark7, the binclude vector
+            # When selecting Fourier modes, like in mark7/mark8, the binclude vector
             # indicates whether or not a frequency is included in the likelihood. By
             # default they are all 'on'
-            if self.likfunc == 'mark7':
+            if self.likfunc == 'mark7' or self.likfunc == 'mark8':
                 #m2psr.bfinc = np.array([1]*nfreqmodes, dtype=np.bool)
                 #m2psr.bfdminc = np.array([1]*ndmfreqmodes, dtype=np.bool)
 
@@ -1716,7 +1722,7 @@ class ptaLikelihood(object):
     the likelihood
     """
     def prepareLimFreqIndicators(self, psrbfinc=None, psrbfdminc=None):
-        # Because it's mark7, also set the number of frequency modes
+        # Because it's mark7/mark8, also set the number of frequency modes
         # Also set the 'global' index selector that we'll use for the Phi and
         # Theta matrices
         npsrs = len(self.ptapsrs)
@@ -2030,7 +2036,6 @@ class ptaLikelihood(object):
             SigmaLD = np.sum(np.log(s))
             rGSigmaGr = np.dot(self.rGF, np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, self.rGF))))
         # Mark F
-        return 0
 
         # Now we are ready to return the log-likelihood
         return -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) + 0.5*rGSigmaGr - 0.5*PhiLD - 0.5*SigmaLD
@@ -2213,8 +2218,108 @@ class ptaLikelihood(object):
         # Now we are ready to return the log-likelihood
         return -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) + 0.5*rGSigmaGr - 0.5*PhiLD - 0.5*SigmaLD - 0.5*ThetaLD
 
+
     """
     mark7 loglikelihood of the pta model/likelihood implementation
+
+    This likelihood is the same as mark3loglikelihood, except that it allows for
+    a variable number of Fourier modes to be included for the red noise. The
+    parameters are there for DM as well, to allow the RJMCMC methods to call it
+    in exactly the same way. However, these parameters are ignored
+
+    psrbfinc, psrbfdminc: a boolean array, indicating which frequencies to
+                          include.
+    psrnfinc, psrnfdminc: integer array, indicating how many frequencies per
+                          pulsar to include. Overrides psrbfinc and psrbfdminc
+    """
+    def mark7loglikelihood(self, parameters, psrbfinc=None, psrbfdminc=None, \
+            psrnfinc=None, psrnfdminc=None):
+        npsrs = len(self.ptapsrs)
+
+        # The red signals
+        self.constructPhiAndTheta(parameters)
+
+        # The white noise
+        self.setPsrNoise(parameters)
+
+        # If the included frequencies are passed by numbers -- not indicator
+        # functions --, then obtain the indicators from the numbers
+        if psrnfinc != None and psrnfdminc != None:
+            psrbfinc, psrbfdminc = self.getPsrLimFreqFromNumbers(psrnfinc, psrnfdminc)
+
+        # Obtain the frequency selectors, and set the psr frequencies
+        bfind, bfdmind = self.prepareLimFreqIndicators(psrbfinc, psrbfdminc)
+
+        # Double up the frequency indicators to get the mode indicators
+        bfmind = np.array([bfind, bfind]).T.flatten()
+        bfmdmind = np.array([bfdmind, bfdmind]).T.flatten()
+
+        # Select the limited range Phi and Theta
+        #lPhi = self.Phi[bfmind, bfmind]
+        lPhi = self.Phi[:, bfmind][bfmind, :]
+        #lThetavec = self.Thetavec[bfmdmind]
+        lenphi = np.sum(bfmind)
+        #lentheta = np.sum(bfmdmind)
+
+        # Armed with the Noise (and it's inverse), we'll construct the
+        # auxiliaries for all pulsars
+        for ii in range(npsrs):
+            findex = np.sum(self.lnpf[:ii])
+            #fdmindex = np.sum(self.lnpfdm[:ii])
+            nfreq = int(self.lnpf[ii]/2)
+            #nfreqdm = int(self.lnpfdm[ii]/2)
+
+            # One temporary quantity
+            NGGF = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].lGGtF.T).T
+
+            # Fill the auxiliaries
+            nobs = len(self.ptapsrs[ii].toas)
+            ng = self.ptapsrs[ii].Gmat.shape[1]
+
+            self.rGr[ii] = np.sum(self.ptapsrs[ii].GGr ** 2 / self.ptapsrs[ii].Nvec)
+            self.rGF[findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].GGr, NGGF)
+            self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nvec)) * ng / nobs
+            self.FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].lGGtF.T, NGGF)
+
+        
+        # Now that all arrays are filled, we can proceed to do some linear
+        # algebra. First we'll invert Phi
+        try:
+            cf = sl.cho_factor(lPhi)
+            PhiLD = 2*np.sum(np.log(np.diag(cf[0])))
+            Phiinv = sl.cho_solve(cf, np.identity(lPhi.shape[0]))
+        except np.linalg.LinAlgError:
+            U, s, Vh = sl.svd(lPhi)
+            if not np.all(s > 0):
+                raise ValueError("ERROR: Phi singular according to SVD")
+            PhiLD = np.sum(np.log(s))
+            Phiinv = np.dot(Vh.T, np.dot(np.diag(1.0/s), U.T))
+
+        #ThetaLD = np.sum(np.log(lThetavec))
+
+        # Construct and decompose Sigma
+        #didm = np.diag_indices(np.sum(self.lnpfdm))
+        Sigma = self.FGGNGGF[:lenphi, :lenphi]
+        Sigma[0:np.sum(self.lnpf), 0:np.sum(self.lnpf)] += Phiinv
+        #Sigma[np.sum(self.lnpf):, np.sum(self.lnpf):][didm] += 1.0 / lThetavec
+        try:
+            cf = sl.cho_factor(Sigma)
+            SigmaLD = 2*np.sum(np.log(np.diag(cf[0])))
+            rGSigmaGr = np.dot(self.rGE[:lenphi], sl.cho_solve(cf, self.rGE[:lenphi]))
+        except np.linalg.LinAlgError:
+            U, s, Vh = sl.svd(Sigma)
+            if not np.all(s > 0):
+                raise ValueError("ERROR: Sigma singular according to SVD")
+            SigmaLD = np.sum(np.log(s))
+            rGSigmaGr = np.dot(self.rGF[:lenphi], np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, self.rGF[:lenphi]))))
+
+        # Now we are ready to return the log-likelihood
+        return -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) + 0.5*rGSigmaGr - 0.5*PhiLD - 0.5*SigmaLD - 0.5*ThetaLD
+
+
+
+    """
+    mark8 loglikelihood of the pta model/likelihood implementation
 
     This likelihood is the same as mark6loglikelihood, except that it allows for
     a variable number of Fourier modes to be included, both for DM and for red
@@ -2225,7 +2330,7 @@ class ptaLikelihood(object):
     psrnfinc, psrnfdminc: integer array, indicating how many frequencies per
                           pulsar to include. Overrides psrbfinc and psrbfdminc
     """
-    def mark7loglikelihood(self, parameters, psrbfinc=None, psrbfdminc=None, \
+    def mark8loglikelihood(self, parameters, psrbfinc=None, psrbfdminc=None, \
             psrnfinc=None, psrnfdminc=None):
         npsrs = len(self.ptapsrs)
 
@@ -2290,7 +2395,6 @@ class ptaLikelihood(object):
         ThetaLD = np.sum(np.log(lThetavec))
 
         # Construct and decompose Sigma
-        di = np.diag_indices(np.sum(self.lnpf))
         didm = np.diag_indices(np.sum(self.lnpfdm))
         Sigma = self.EGGNGGE[:lenphi+lentheta, :lenphi+lentheta]
         Sigma[0:np.sum(self.lnpf), 0:np.sum(self.lnpf)] += Phiinv
@@ -2311,6 +2415,7 @@ class ptaLikelihood(object):
 
 
 
+
     def loglikelihood(self, parameters):
         ll = 0.0
 
@@ -2325,6 +2430,8 @@ class ptaLikelihood(object):
                 ll = self.mark6loglikelihood(parameters)
             elif self.likfunc == 'mark7':
                 ll = self.mark7loglikelihood(parameters)
+            elif self.likfunc == 'mark8':
+                ll = self.mark8loglikelihood(parameters)
         else:
             ll = -1e99
 
@@ -2393,12 +2500,26 @@ class ptaLikelihood(object):
 
         return lp
 
+    def mark8logprior(self, parameters, psrbfinc=None, psrbfdminc=None, \
+            psrnfinc=None, psrnfdminc=None):
+        return self.mark7logprior(parameters, psrbfinc, psrbfdminc, \
+                psrnfinc, psrnfdminc)
+
     def mark7logposterior(self, parameters, psrbfinc=None, psrbfdminc=None, \
             psrnfinc=None, psrnfdminc=None):
         lp = self.mark7logprior(parameters, psrbfinc, psrbfdminc, psrnfinc, psrnfdminc)
 
         if lp > -1e98:
             lp += self.mark7loglikelihood(parameters, psrbfinc, psrbfdminc, psrnfinc, psrnfdminc)
+
+        return lp
+
+    def mark8logposterior(self, parameters, psrbfinc=None, psrbfdminc=None, \
+            psrnfinc=None, psrnfdminc=None):
+        lp = self.mark8logprior(parameters, psrbfinc, psrbfdminc, psrnfinc, psrnfdminc)
+
+        if lp > -1e98:
+            lp += self.mark8loglikelihood(parameters, psrbfinc, psrbfdminc, psrnfinc, psrnfdminc)
 
         return lp
 
@@ -2418,6 +2539,8 @@ class ptaLikelihood(object):
                 lp = self.mark4logprior(parameters)
             elif self.likfunc == 'mark7':  # Mark7 should be called differently of course
                 lp = self.mark7logprior(parameters)
+            elif self.likfunc == 'mark8':  # Mark8 ''
+                lp = self.mark8logprior(parameters)
         else:
             lp = -1e99
 
@@ -3128,7 +3251,7 @@ def makespectrumplot(chainfilename, parstart=1, parstop=10, freqs=None):
 
     #plt.plot(ufreqs, yval, 'k.-')
     plt.errorbar(ufreqs, yval, yerr=yerr, fmt='.', c='black')
-    plt.plot(ufreqs, np.log10(yinj), 'k--')
+    #plt.plot(ufreqs, np.log10(yinj), 'k--')
     plt.title("Periodogram")
     plt.xlabel("Frequency [log(f)]")
     plt.ylabel("Power [log(r)]")
@@ -3313,7 +3436,7 @@ Given a rjmcmc chain file, run with the aim of selecting the number of Fourier
 modes for both DM and Red noise, this function lets you plot the distributinon
 of the number of Fourier coefficients.
 """
-def makefouriermodenumberplot(chainfilename):
+def makefouriermodenumberplot(chainfilename, incDM=True):
     rjmcmcchain = np.loadtxt(chainfilename)
     chainmode1 = rjmcmcchain[:,-2]
     chainmode2 = rjmcmcchain[:,-1]
@@ -3338,10 +3461,15 @@ def makefouriermodenumberplot(chainfilename):
     plt.figure()
     # TODO: why does drawstyle 'steps' shift the x-value by '1'?? Makes no sense..
     plt.plot(xx+0.5, xy, 'r-', drawstyle='steps', linewidth=3.0)
-    plt.plot(yx+0.5, yy, 'b-', drawstyle='steps', linewidth=3.0)
     plt.grid(True, which='major')
-    plt.legend((r'Red noise', r'DMV',), loc='upper right',\
-            fancybox=True, shadow=True)
+
+    if incDM:
+        plt.plot(yx+0.5, yy, 'b-', drawstyle='steps', linewidth=3.0)
+        plt.legend((r'Red noise', r'DMV',), loc='upper right',\
+                fancybox=True, shadow=True)
+    else:
+        plt.legend((r'Red noise',), loc='upper right',\
+                fancybox=True, shadow=True)
 
 
 """
