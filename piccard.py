@@ -677,7 +677,7 @@ class ptasignal(object):
     pstart = None           # Start position for all parameters (also n.v.)
 
     # Quantities for EFAC/EQUAD
-    Nvec = None             # For in the mark3 likelihood
+    Nvec = None             # For in the mark3+ likelihood
 
     # If this pulsar has only one efac/equad parameter, use computational
     # shortcut, using:
@@ -742,7 +742,7 @@ class ptaPulsar(object):
     GGtD = None
 
     # Auxiliaries used in the likelihood
-    Nvec = None             # For in the mark3 likelihood (projection approx.)
+    Nvec = None             # For in the mark3+ likelihood (projection approx.)
 
     # To select the number of Frequency modes
     bfinc = None        # Number of modes of all internal matrices
@@ -1418,6 +1418,14 @@ class ptaLikelihood(object):
             self.rGFa = np.zeros(npsrs)
             self.aFGFa = np.zeros(npsrs)
             self.avec = np.zeros(np.sum(self.npf))
+        elif self.likfunc == 'mark2':
+            self.Phi = np.zeros((np.sum(self.npf), np.sum(self.npf)))
+            self.Thetavec = np.zeros(np.sum(self.npfdm))
+            self.Sigma = np.zeros((np.sum(self.npf), np.sum(self.npf)))
+            self.GNGldet = np.zeros(npsrs)
+            self.rGr = np.zeros(npsrs)
+            self.rGF = np.zeros(np.sum(self.npf))
+            self.FGGNGGF = np.zeros((np.sum(self.npf), np.sum(self.npf)))
         elif self.likfunc == 'mark3' or self.likfunc == 'mark7':
             self.Phi = np.zeros((np.sum(self.npf), np.sum(self.npf)))
             self.Thetavec = np.zeros(np.sum(self.npfdm))
@@ -2028,6 +2036,82 @@ class ptaLikelihood(object):
                -0.5*np.sum(self.GNGldet) - 0.5*aPhia - 0.5*PhiLD
 
 
+    """
+    A simpler version of the mark3 likelihood
+    """
+    def mark2loglikelihood(self, parameters):
+        npsrs = len(self.ptapsrs)
+
+        # MARK A
+
+
+        self.setPsrNoise(parameters)
+
+        # MARK B
+
+        self.constructPhiAndTheta(parameters)
+
+        # MARK C
+
+        # Armed with the Noise (and it's inverse), we'll construct the
+        # auxiliaries for all pulsars
+        for ii in range(npsrs):
+            findex = np.sum(self.npf[:ii])
+            nfreq = int(self.npf[ii]/2)
+
+            # One temporary quantity
+            # This is equivalent to np.dot(np.diag(1.0/Nvec, GGtF))
+            NGGF = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].GGtF.T).T
+            # This was too slow
+            # NGGF = np.array([(1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].GGtF[:,i] for i in range(self.ptapsrs[ii].Fmat.shape[1])]).T
+
+            # Fill the auxiliaries
+            nobs = len(self.ptapsrs[ii].toas)
+            ng = self.ptapsrs[ii].Gmat.shape[1]
+
+            self.rGr[ii] = np.sum(self.ptapsrs[ii].GGr ** 2 / self.ptapsrs[ii].Nvec)
+            self.rGF[findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].GGr, NGGF)
+            self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nvec)) * ng / nobs
+            self.FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].GGtF.T, NGGF)
+
+        # MARK D
+        
+        # Now that all arrays are filled, we can proceed to do some linear
+        # algebra. First we'll invert Phi
+        try:
+            cf = sl.cho_factor(self.Phi)
+            PhiLD = 2*np.sum(np.log(np.diag(cf[0])))
+            Phiinv = sl.cho_solve(cf, np.identity(self.Phi.shape[0]))
+        except np.linalg.LinAlgError:
+            U, s, Vh = sl.svd(self.Phi)
+            if not np.all(s > 0):
+                raise ValueError("ERROR: Phi singular according to SVD")
+            PhiLD = np.sum(np.log(s))
+            Phiinv = np.dot(Vh.T, np.dot(np.diag(1.0/s), U.T))
+
+            print "Fallback to SVD for Phi"
+
+        # MARK E
+
+        # Construct and decompose Sigma
+        self.Sigma = self.FGGNGGF + Phiinv
+        try:
+            cf = sl.cho_factor(self.Sigma)
+            SigmaLD = 2*np.sum(np.log(np.diag(cf[0])))
+            rGSigmaGr = np.dot(self.rGF, sl.cho_solve(cf, self.rGF))
+        except np.linalg.LinAlgError:
+            U, s, Vh = sl.svd(self.Sigma)
+            if not np.all(s > 0):
+                raise ValueError("ERROR: Sigma singular according to SVD")
+            SigmaLD = np.sum(np.log(s))
+            rGSigmaGr = np.dot(self.rGF, np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, self.rGF))))
+        # Mark F
+
+        # Now we are ready to return the log-likelihood
+        return -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) + 0.5*rGSigmaGr - 0.5*PhiLD - 0.5*SigmaLD
+
+
+
 
 
     """
@@ -2510,6 +2594,8 @@ class ptaLikelihood(object):
         if(np.all(self.pmin <= parameters) and np.all(parameters <= self.pmax)):
             if self.likfunc == 'mark1':
                 ll = self.mark1loglikelihood(parameters)
+            elif self.likfunc == 'mark2':
+                ll = self.mark2loglikelihood(parameters)
             elif self.likfunc == 'mark3':
                 ll = self.mark3loglikelihood(parameters)
             elif self.likfunc == 'mark4':
@@ -2621,6 +2707,8 @@ class ptaLikelihood(object):
 
         if(np.all(self.pmin <= parameters) and np.all(parameters <= self.pmax)):
             if self.likfunc == 'mark1':
+                lp = self.mark4logprior(parameters)
+            elif self.likfunc == 'mark2':
                 lp = self.mark4logprior(parameters)
             elif self.likfunc == 'mark3':
                 lp = self.mark4logprior(parameters)
