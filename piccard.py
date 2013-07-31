@@ -1363,7 +1363,7 @@ class ptaLikelihood(object):
         # best first-estimate values of these quantities
         # We assume that many auxiliaries have been set already (is done
         # in initModel, so should be ok)
-        # TODO: update this to be smarter...
+        # TODO: check whether this works, and make smarter
         npars = newsignal.npars
         psr = self.ptapsrs[newsignal.pulsarind]
 
@@ -1869,11 +1869,60 @@ class ptaLikelihood(object):
     """
     If we accept a transdimensional RJMCMC jump, adjust the 'current mode'
     indicators, so that we know that we need to update the priors.
+
+    Also, this function returns the *real* logposterior (given the temporary
+    one); When we propose a trans-dimensional jump, we sample the extra dimensional
+    parameters from the prior. Because of this, the prior for these two
+    parameters is not included when comparing the RJMCMC acceptance. However,
+    after we have accepted such a jump, we do need to record the _full_
+    posterior, which includes the prior of these extra parameters. This function
+    calculates that additional prior, and adds it to the temporary logposterior
     """
-    def transDimJumpAccepted(self):
+    def transDimJumpAccepted(self, lnprob, psrbfinc=None, psrbfdminc=None, \
+            psrnfinc=None, psrnfdminc=None):
+        lp = 0.0    # No added prior value just yet
+        
+        # See if we call model per number or per parameter
+        if psrnfinc != None and psrnfdminc != None:
+            psrbfinc, psrbfdminc = self.getPsrLimFreqFromNumbers(psrnfinc, psrnfdminc)
+
+        # Obtain the frequency selectors; setting the psr frequencies is done
+        # already so that will be skipped in this function
+        bfind, bfdmind, bcurfind, bcurfdmind = self.prepareLimFreqIndicators(psrbfinc, psrbfdminc)
+
+        # Loop over all signals, and find the (DM)spectrum parameters
+        for m2signal in self.ptasignals:
+            if m2signal.stype == 'spectrum' and m2signal.corr == 'single':
+                # Red noise, see if we need to include it
+                findex = int(np.sum(self.npf[:m2signal.pulsarind])/2)
+                nfreq = int(self.npf[m2signal.pulsarind]/2)
+
+                # Select the common frequency modes
+                inc = np.logical_and(bfind[findex:findex+nfreq], bcurfind[findex:findex+nfreq])
+                # Select the _new_ frequency modes
+                newind = np.logical_and(bfind[findex:findex+nfreq], inc == False)
+
+                if np.sum(newind) > 0:
+                    lp -= np.sum(np.log(m2signal.pmax[newind] - m2signal.pmin[newind]))
+            elif m2signal.stype == 'dmspectrum' and m2signal.corr == 'single':
+                fdmindex = int(np.sum(self.npfdm[:m2signal.pulsarind])/2)
+                nfreqdm = int(self.npfdm[m2signal.pulsarind]/2)
+
+                # Select the common frequency modes
+                inc = np.logical_and(bfdmind[findex:findex+nfreq], bcurfdmind[findex:findex+nfreq])
+                # Select the _new_ frequency modes
+                newind = np.logical_and(bfind[findex:findex+nfreq], inc == False)
+
+                if np.sum(newind) > 0:
+                    lp -= np.sum(np.log(m2signal.pmax[newind] - m2signal.pmin[newind]))
+
+        # Update the step position in trans-dimensional parameter space (model space)
         for psr in self.ptapsrs:
             psr.bcurfinc = psr.bfinc.copy()
             psr.bcurfdminc = psr.bfdminc.copy()
+
+        # Return the adjusted logposterior value
+        return lnprob + lp
 
     """
     When doing an RJMCMC, sometimes the sampler will jump to a space with more
@@ -2507,7 +2556,6 @@ class ptaLikelihood(object):
     # Note: the inclusion of a uniform-amplitude part can have a big influence
     def mark7logprior(self, parameters, psrbfinc=None, psrbfdminc=None, \
             psrnfinc=None, psrnfdminc=None):
-        #return self.mark4logprior(parameters)
         lp = 0.0
 
         if psrnfinc != None and psrnfdminc != None:
@@ -2530,7 +2578,7 @@ class ptaLikelihood(object):
             elif m2signal.stype == 'dmspectrum' and m2signal.corr == 'single':
                 fdmindex = int(np.sum(self.npfdm[:m2signal.pulsarind])/2)
                 nfreqdm = int(self.npfdm[m2signal.pulsarind]/2)
-                inc = np.logical_and(bdmfind[findex:findex+nfreq], bcurfdmind[findex:findex+nfreq])
+                inc = np.logical_and(bfdmind[findex:findex+nfreq], bcurfdmind[findex:findex+nfreq])
 
                 if np.sum(inc) > 0:
                     lp -= np.sum(np.log(m2signal.pmax[inc] - m2signal.pmin[inc]))
@@ -2548,7 +2596,9 @@ class ptaLikelihood(object):
 
     def mark7logposterior(self, parameters, psrbfinc=None, psrbfdminc=None, \
             psrnfinc=None, psrnfdminc=None):
-        lp = self.mark7logprior(parameters, psrbfinc, psrbfdminc, psrnfinc, psrnfdminc)
+        lp = -1.0e99
+        if(np.all(self.pmin <= parameters) and np.all(parameters <= self.pmax)):
+            lp = self.mark7logprior(parameters, psrbfinc, psrbfdminc, psrnfinc, psrnfdminc)
 
         if lp > -1e98:
             lp += self.mark7loglikelihood(parameters, psrbfinc, psrbfdminc, psrnfinc, psrnfdminc)
@@ -2557,7 +2607,9 @@ class ptaLikelihood(object):
 
     def mark8logposterior(self, parameters, psrbfinc=None, psrbfdminc=None, \
             psrnfinc=None, psrnfdminc=None):
-        lp = self.mark8logprior(parameters, psrbfinc, psrbfdminc, psrnfinc, psrnfdminc)
+        lp = -1.0e99
+        if(np.all(self.pmin <= parameters) and np.all(parameters <= self.pmax)):
+            lp = self.mark8logprior(parameters, psrbfinc, psrbfdminc, psrnfinc, psrnfdminc)
 
         if lp > -1e98:
             lp += self.mark8loglikelihood(parameters, psrbfinc, psrbfdminc, psrnfinc, psrnfdminc)

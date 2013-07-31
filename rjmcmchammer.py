@@ -64,6 +64,10 @@ class RJMHSampler(emcee.MHSampler):
         """Return the log-probability at the given position and model """
         return self.lnprobfn(p, psrnfinc=[nmod1], psrnfdminc=[nmod2])
 
+    def get_acceptjumpfn(self, lnprob, nmod1, nmod2):
+        """Accept a jump, and retrieve the real logposterior"""
+        return self.acceptjumpfn(lnprob, psrnfinc=[nmod1], psrnfdminc=[nmod2])
+
     def sample(self, p0, mod1, mod2, lnprob=None, randomstate=None, thin=1,
             storechain=True, iterations=1):
         """
@@ -152,7 +156,8 @@ class RJMHSampler(emcee.MHSampler):
 
             if diff > 0:
                 if mod1 != qmod1 or mod2 != qmod2:
-                    self.acceptjumpfn()
+                    # Now retrieve the *real* lnprob here
+                    newlnprob = self.get_acceptjumpfn(newlnprob, qmod1, qmod2)
                 p = q
                 mod1 = qmod1
                 mod2 = qmod2
