@@ -46,11 +46,14 @@ class RJMHSampler(emcee.MHSampler):
     is carried out
 
     """
-    def __init__(self, jprob, jumpparsfn, propdjumpfn, *args, **kwargs):
+    def __init__(self, jprob, jumpsize1, jumpsize2, jumpparsfn, propdjumpfn, acceptjumpfn, *args, **kwargs):
         super(RJMHSampler, self).__init__(*args, **kwargs)
         self.jprob = jprob                  # Jump probability
+        self.jumpsize1 = jumpsize1          # Size of jump in RN mode
+        self.jumpsize2 = jumpsize2          # Size of jump in DM mode
         self.jumpparsfn = jumpparsfn        # After jump, draw parameters function
         self.propdjumpfn = propdjumpfn      # Propose a new trans-dim jump
+        self.acceptjumpfn = acceptjumpfn    # Signal we accepted a t-d jump
 
     def reset(self):
         super(RJMHSampler, self).reset()
@@ -136,7 +139,7 @@ class RJMHSampler(emcee.MHSampler):
             # Decide whether we will do a trans-dimensional jump
             if self._random.rand() < self.jprob:
                 # Trans-dim jump. Adjust the models and parameters
-                qmod1, qmod2 = self.propdjumpfn()
+                qmod1, qmod2 = self.propdjumpfn(self.jumpsize1, self.jumpsize2)
                 q = self.jumpparsfn(q, qmod1, qmod2)
 
 	    # Calculate the new loglikelihood
@@ -148,6 +151,8 @@ class RJMHSampler(emcee.MHSampler):
                 diff = np.exp(diff) - self._random.rand()
 
             if diff > 0:
+                if mod1 != qmod1 or mod2 != qmod2:
+                    self.acceptjumpfn()
                 p = q
                 mod1 = qmod1
                 mod2 = qmod2

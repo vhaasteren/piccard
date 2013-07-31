@@ -745,8 +745,10 @@ class ptaPulsar(object):
     Nvec = None             # For in the mark3 likelihood (projection approx.)
 
     # To select the number of Frequency modes
-    bfinc = None
-    bfdminc = None
+    bfinc = None        # Number of modes of all internal matrices
+    bfdminc = None      # Number of modes of all internal matrices (DM)
+    bcurfinc = None     # Current number of modes in RJMCMC
+    bcurfdminc = None   # Current number of modes in RJMCMC
 
     def __init__(self):
         self.raj = 0
@@ -777,6 +779,8 @@ class ptaPulsar(object):
 
         self.bfinc = None
         self.bfdminc = None
+        self.bprevfinc = None
+        self.bprevfdminc = None
 
     def readFromH5(self, filename, psrname):
         h5file = h5.File(filename, 'r+')
@@ -864,18 +868,36 @@ class ptaPulsar(object):
 
     # Modify the design matrix to include fitting for a quadratic in the DM
     # signal.
-    # TODO: Check if the DM is fit for in the design matrix
+    # TODO: Check if the DM is fit for in the design matrix. Use ptmdescription
+    #       for that. It should have a field with 'DM' in it.
     def addDMQuadratic(self):
-        # TODO: Check whether the DM quadratic (and the DM) are already present
-        #       in the design matrix
-        M = np.zeros((self.Mmat.shape[0], self.Mmat.shape[1]+2))
-        Dmatdiag = DMk / (self.freqs**2)
-        d = np.array([Dmatdiag*self.toas, Dmatdiag*(self.toas**2)]).T
-        #d = np.array([Dmatdiag, Dmatdiag*self.toas, Dmatdiag*(self.toas**2)]).T
+        if 'DM' in self.ptmdescription:
+            # DM is included, do not include it again
+            newM = np.zeros((self.Mmat.shape[0], self.Mmat.shape[1]+2))
+            Dmatdiag = DMk / (self.freqs**2)
+            d = np.array([Dmatdiag*self.toas, Dmatdiag*(self.toas**2)]).T
 
-        M[:,:-2] = self.Mmat
-        M[:,-2:] = d
-        self.Mmat = M
+            self.ptmdescription.append('DMLIN')
+            self.ptmdescription.append('DMQUAD')
+            self.ptmpars = np.append(self.ptmpars, [0.0, 0.0])
+            
+            newM[:,:-2] = self.Mmat
+            newM[:,-2:] = d
+        else:
+            # DM is not included, include it now
+            newM = np.zeros((self.Mmat.shape[0], self.Mmat.shape[1]+3))
+            Dmatdiag = DMk / (self.freqs**2)
+            d = np.array([Dmatdiag, Dmatdiag*self.toas, Dmatdiag*(self.toas**2)]).T
+
+            self.ptmdescription.append('DM')
+            self.ptmdescription.append('DMLIN')
+            self.ptmdescription.append('DMQUAD')
+            self.ptmpars = np.append(self.ptmpars, [0.0, 0.0, 0.0])
+            
+            newM[:,:-3] = self.Mmat
+            newM[:,-3:] = d
+
+        self.Mmat = newM
         U, s, Vh = sl.svd(self.Mmat)
         self.Gmat = U[:, (self.Mmat.shape[1]):].copy()
 
@@ -908,6 +930,11 @@ class ptaPulsar(object):
         bfdmincnp = np.array(bfdminc, dtype=np.bool)
 
         if not (np.all(bfincnp == self.bfinc) and np.all(bfdmincnp == self.bfdminc)):
+            if self.bfinc == None or self.bfdminc == None:
+                # First RJMCMC step, initialise all RJMCMC ones, too
+                self.bcurfinc = bfincnp.copy()
+                self.bcurfdminc = bfdmincnp.copy()
+
             self.bfinc = bfincnp.copy()
             self.bfdminc = bfdmincnp.copy()
 
@@ -1123,7 +1150,7 @@ class ptaLikelihood(object):
             newsignal.bvary = np.array([1]*newsignal.ntotpars, dtype=np.bool)
 
             newsignal.pmin = np.ones(newsignal.ntotpars) * -18.0
-            newsignal.pmax = np.ones(newsignal.ntotpars) * 10.0
+            newsignal.pmax = np.ones(newsignal.ntotpars) * -7.0
             newsignal.pstart = np.ones(newsignal.ntotpars) * -10.0
             newsignal.pwidth = np.ones(newsignal.ntotpars) * 0.1
         else:
@@ -1155,8 +1182,8 @@ class ptaLikelihood(object):
             newsignal.bvary = np.array([1]*newsignal.ntotpars, dtype=np.bool)
 
             newsignal.pmin = np.ones(newsignal.ntotpars) * -17.0
-            newsignal.pmax = np.ones(newsignal.ntotpars) * 10.0
-            newsignal.pstart = np.ones(newsignal.ntotpars) * -14.0
+            newsignal.pmax = np.ones(newsignal.ntotpars) * -3.0
+            newsignal.pstart = np.ones(newsignal.ntotpars) * -7.0
             newsignal.pwidth = np.ones(newsignal.ntotpars) * 0.1
         else:
             newsignal.stype = 'dmpowerlaw'
@@ -1460,9 +1487,6 @@ class ptaLikelihood(object):
             # indicates whether or not a frequency is included in the likelihood. By
             # default they are all 'on'
             if self.likfunc == 'mark7' or self.likfunc == 'mark8':
-                #m2psr.bfinc = np.array([1]*nfreqmodes, dtype=np.bool)
-                #m2psr.bfdminc = np.array([1]*ndmfreqmodes, dtype=np.bool)
-
                 m2psr.setLimitedModeAuxiliaries([1]*nfreqmodes, [1]*ndmfreqmodes)
 
         # Initialise the ptasignal objects
@@ -1719,7 +1743,8 @@ class ptaLikelihood(object):
     Set the Auxiliary quantities for mark7loglikelihood in all the pulsars,
     based on the psrbfinc boolean arrays. It returns a boolean array for both
     phi and theta, indicating which elements of the covariance matrix to use in
-    the likelihood
+    the likelihood, and similar boolean arrays for the previously ('the current')
+    accepted t-d position for use in the prior
     """
     def prepareLimFreqIndicators(self, psrbfinc=None, psrbfdminc=None):
         # Because it's mark7/mark8, also set the number of frequency modes
@@ -1749,6 +1774,8 @@ class ptaLikelihood(object):
         # find and dmfind now hold the total number of frequencies
         bfind = np.array([1]*find, dtype=np.bool)
         bfdmind = np.array([1]*dmfind, dtype=np.bool)
+        bcurfind = np.array([1]*find, dtype=np.bool)
+        bcurfdmind = np.array([1]*dmfind, dtype=np.bool)
         find = 0
         dmfind = 0
         for ii in range(npsrs):
@@ -1756,11 +1783,13 @@ class ptaLikelihood(object):
             fdmlen = int(self.ptapsrs[ii].DF.shape[1]/2)
             bfind[find:find+flen] = self.ptapsrs[ii].bfinc
             bfdmind[dmfind:dmfind+fdmlen] = self.ptapsrs[ii].bfdminc
+            bcurfind[find:find+flen] = self.ptapsrs[ii].bcurfinc
+            bcurfdmind[dmfind:dmfind+fdmlen] = self.ptapsrs[ii].bcurfdminc
 
             find += flen
             dmfind += fdmlen
 
-        return bfind, bfdmind
+        return bfind, bfdmind, bcurfind, bcurfdmind
 
     """
     Convert a number of frequencies for RN and DMV to a boolean array that
@@ -1795,7 +1824,7 @@ class ptaLikelihood(object):
     RN and DM spaces. This only works for a model with a single pulsar. Zero
     modes for RN or DM are not allowed.
     """
-    def proposeNextDimJump(self):
+    def proposeNextDimJump(self, stepsizemod1=1, stepsizemod2=1):
         if len(self.ptapsrs) > 1:
             raise ValueError("ERROR: modelNrToArray can only work on single psr")
 
@@ -1814,27 +1843,37 @@ class ptaLikelihood(object):
         propmod1 = curmod1
         propmod2 = curmod2
 
+        # Draw a number from [-stepsizemodx, .., -1, 1, .., stepsizemodx]
+        def drawssm(stepsize):
+            step = np.random.randint(1, stepsize+1)
+            sign = -1 + 2 * np.random.randint(0, 2)
+            return sign * step
+
+        # Produce the next step, in between modmin, modmax
+        #def drawstep(stepsize, modmin, modmax):
+        #    pass
+
         # Either jump in one dimension, or the other. Not both
         if np.random.rand() < 0.5:
-            if maxmod1 == 1:
+            # Produce a valid step
+            propmod1 = curmod1 + drawssm(stepsizemod1)
+            if propmod1 < 1 or propmod1 > maxmod1:
                 propmod1 = curmod1
-            elif curmod1 == 1 and curmod1 < maxmod1:
-                propmod1 = curmod1 + 1
-            elif curmod1 == maxmod1 and curmod1 > 1:
-                propmod1 = curmod1 - 1
-            elif curmod1 > 1 and curmod1 < maxmod1:
-                propmod1 = curmod1 - 1 + 2*np.random.randint(2)
         else:
-            if maxmod2 == 1:
+            propmod2 = curmod2 + drawssm(stepsizemod2)
+            if propmod2 < 1 or propmod2 > maxmod2:
                 propmod2 = curmod2
-            elif curmod2 == 1 and curmod2 < maxmod2:
-                propmod2 = curmod2 + 1
-            elif curmod2 == maxmod2 and curmod2 > 1:
-                propmod2 = curmod2 - 1
-            elif curmod2 > 1 and curmod1 < maxmod2:
-                propmod2 = curmod2 - 1 + 2*np.random.randint(2)
 
         return propmod1, propmod2
+
+    """
+    If we accept a transdimensional RJMCMC jump, adjust the 'current mode'
+    indicators, so that we know that we need to update the priors.
+    """
+    def transDimJumpAccepted(self):
+        for psr in self.ptapsrs:
+            psr.bcurfinc = psr.bfinc.copy()
+            psr.bcurfdminc = psr.bfdminc.copy()
 
     """
     When doing an RJMCMC, sometimes the sampler will jump to a space with more
@@ -2248,7 +2287,7 @@ class ptaLikelihood(object):
             psrbfinc, psrbfdminc = self.getPsrLimFreqFromNumbers(psrnfinc, psrnfdminc)
 
         # Obtain the frequency selectors, and set the psr frequencies
-        bfind, bfdmind = self.prepareLimFreqIndicators(psrbfinc, psrbfdminc)
+        bfind, bfdmind, bcurfind, bcurfdmind = self.prepareLimFreqIndicators(psrbfinc, psrbfdminc)
 
         # Double up the frequency indicators to get the mode indicators
         bfmind = np.array([bfind, bfind]).T.flatten()
@@ -2305,7 +2344,7 @@ class ptaLikelihood(object):
         try:
             cf = sl.cho_factor(Sigma)
             SigmaLD = 2*np.sum(np.log(np.diag(cf[0])))
-            rGSigmaGr = np.dot(self.rGE[:lenphi], sl.cho_solve(cf, self.rGE[:lenphi]))
+            rGSigmaGr = np.dot(self.rGF[:lenphi], sl.cho_solve(cf, self.rGF[:lenphi]))
         except np.linalg.LinAlgError:
             U, s, Vh = sl.svd(Sigma)
             if not np.all(s > 0):
@@ -2314,7 +2353,7 @@ class ptaLikelihood(object):
             rGSigmaGr = np.dot(self.rGF[:lenphi], np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, self.rGF[:lenphi]))))
 
         # Now we are ready to return the log-likelihood
-        return -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) + 0.5*rGSigmaGr - 0.5*PhiLD - 0.5*SigmaLD - 0.5*ThetaLD
+        return -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) + 0.5*rGSigmaGr - 0.5*PhiLD - 0.5*SigmaLD
 
 
 
@@ -2346,7 +2385,7 @@ class ptaLikelihood(object):
             psrbfinc, psrbfdminc = self.getPsrLimFreqFromNumbers(psrnfinc, psrnfdminc)
 
         # Obtain the frequency selectors, and set the psr frequencies
-        bfind, bfdmind = self.prepareLimFreqIndicators(psrbfinc, psrbfdminc)
+        bfind, bfdmind, bcurfind, bcurfdmind = self.prepareLimFreqIndicators(psrbfinc, psrbfdminc)
 
         # Double up the frequency indicators to get the mode indicators
         bfmind = np.array([bfind, bfind]).T.flatten()
@@ -2475,7 +2514,7 @@ class ptaLikelihood(object):
             psrbfinc, psrbfdminc = self.getPsrLimFreqFromNumbers(psrnfinc, psrnfdminc)
 
         # Obtain the frequency selectors, and set the psr frequencies
-        bfind, bfdmind = self.prepareLimFreqIndicators(psrbfinc, psrbfdminc)
+        bfind, bfdmind, bcurfind, bcurfdmind = self.prepareLimFreqIndicators(psrbfinc, psrbfdminc)
 
         # Loop over all signals
         for m2signal in self.ptasignals:
@@ -2483,17 +2522,19 @@ class ptaLikelihood(object):
                 # Red noise, see if we need to include it
                 findex = int(np.sum(self.npf[:m2signal.pulsarind])/2)
                 nfreq = int(self.npf[m2signal.pulsarind]/2)
-                inc = bfind[findex:findex+nfreq]
+                inc = np.logical_and(bfind[findex:findex+nfreq], bcurfind[findex:findex+nfreq])
 
                 if np.sum(inc) > 0:
                     lp -= np.sum(np.log(m2signal.pmax[inc] - m2signal.pmin[inc]))
+                    #lp -= np.sum(inc) * 1.0
             elif m2signal.stype == 'dmspectrum' and m2signal.corr == 'single':
                 fdmindex = int(np.sum(self.npfdm[:m2signal.pulsarind])/2)
                 nfreqdm = int(self.npfdm[m2signal.pulsarind]/2)
-                inc = bfdmind[fdmindex:fdmindex+nfreqdm]
+                inc = np.logical_and(bdmfind[findex:findex+nfreq], bcurfdmind[findex:findex+nfreq])
 
                 if np.sum(inc) > 0:
                     lp -= np.sum(np.log(m2signal.pmax[inc] - m2signal.pmin[inc]))
+                    #lp -= np.sum(inc) * 1.0
             else:
                 if np.sum(m2signal.bvary) > 0:
                     lp -= np.sum(np.log(m2signal.pmax[m2signal.bvary]-m2signal.pmin[m2signal.bvary]))
@@ -3221,39 +3262,50 @@ def makednestplots(par1=72, par2=73, xmin=0, xmax=70, ymin=1, ymax=7, title='DNe
 Given an mcmc chain file, plot the log-spectrum
 
 """
-def makespectrumplot(chainfilename, parstart=1, parstop=10, freqs=None):
-    ufreqs = np.log10(np.sort(np.array(list(sets.Set(freqs)))))
-    #ufreqs = np.array(list(sets.Set(freqs)))
-    yval = np.zeros(parstop-parstart)
-    yerr = np.zeros(parstop-parstart)
+def makespectrumplot(chainfilename, parstart=1, numfreqs=10, freqs=None, \
+        Aref=None, gref=4.33, plotlog=False, lcolor='black'):
+    if freqs is None:
+        ufreqs = np.log10(np.arange(1, 1+numfreqs))
+    else:
+        ufreqs = np.log10(np.sort(np.array(list(sets.Set(freqs)))))
 
-    spd = 24 * 3600.0
-    spy = 365.25 * spd
-    pfreqs = 10 ** ufreqs
-    #Aing = 5.0e-14
-    Aing = 10**(-13.00)
-    #yinj = (Aing**2 * spy**3 / (12*np.pi*np.pi * (5*spy))) * ((pfreqs * spy) ** (-13.0/3.0))
-    yinj = (Aing**2 * spy**3 / (12*np.pi*np.pi * (5*spy))) * ((pfreqs * spy) ** (-5.33))
-    #print pfreqs * spy
-    #print np.log10(yinj)
+    #ufreqs = np.array(list(sets.Set(freqs)))
+    yval = np.zeros(len(ufreqs))
+    yerr = np.zeros(len(ufreqs))
+
+    if Aref is not None:
+        spd = 24 * 3600.0
+        spy = 365.25 * spd
+        pfreqs = 10 ** ufreqs
+        Aing = 10**Aref
+        yinj = (Aing**2 * spy**3 / (12*np.pi*np.pi * (5*spy))) * ((pfreqs * spy) ** (-gref))
 
     emceechain = np.loadtxt(chainfilename)
 
-    if len(ufreqs) != (parstop - parstart):
+    if len(ufreqs) != (numfreqs):
         print "WARNING: parameter range does not correspond to #frequencies"
 
-    for ii in range(parstop - parstart):
+    for ii in range(numfreqs):
         fmin, fmax = confinterval(emceechain[:, parstart+2+ii], sigmalevel=1)
         yval[ii] = (fmax + fmin) * 0.5
         yerr[ii] = (fmax - fmin) * 0.5
 
     fig = plt.figure()
 
-    #plt.plot(ufreqs, yval, 'k.-')
-    plt.errorbar(ufreqs, yval, yerr=yerr, fmt='.', c='black')
-    #plt.plot(ufreqs, np.log10(yinj), 'k--')
-    plt.title("Periodogram")
-    plt.xlabel("Frequency [log(f)]")
+    if plotlog:
+        plt.errorbar(ufreqs, yval, yerr=yerr, fmt='.', c=lcolor)
+        if Aref is not None:
+            plt.plot(ufreqs, np.log10(yinj), 'k--')
+        plt.axis([np.min(ufreqs)-0.1, np.max(ufreqs)+0.1, np.min(yval-yerr)-1, np.max(yval+yerr)+1])
+        plt.xlabel("Frequency [log(f/Hz)]")
+    else:
+        plt.errorbar(10**ufreqs, yval, yerr=yerr, fmt='.', c='black')
+        if Aref is not None:
+            plt.plot(10**ufreqs, np.log10(yinj), 'k--')
+        plt.axis([np.min(10**ufreqs)*0.9, np.max(10**ufreqs)*1.01, np.min(yval-yerr)-1, np.max(yval+yerr)+1])
+        plt.xlabel("Frequency [Hz]")
+
+    plt.title("Power spectrum")
     plt.ylabel("Power [log(r)]")
     plt.grid(True)
 
@@ -3471,6 +3523,10 @@ def makefouriermodenumberplot(chainfilename, incDM=True):
         plt.legend((r'Red noise',), loc='upper right',\
                 fancybox=True, shadow=True)
 
+    plt.xlabel('Nr. of Fourier modes')
+    plt.ylabel('Probability')
+    plt.grid(True, which='major')
+
 
 """
 Run a twalk algorithm on the likelihood wrapper.
@@ -3522,7 +3578,7 @@ matrix
 
 """
 def RunRJMCMC(likob, steps, chainfilename, initfile=None, resize=0.088, \
-        jumpprob=0.01, mhinitfile=False):
+        jumpprob=0.01, jumpsize1=1, jumpsize2=1, mhinitfile=False):
   ndim = likob.dimensions
   pwidth = likob.pwidth.copy()
 
@@ -3558,9 +3614,16 @@ def RunRJMCMC(likob, steps, chainfilename, initfile=None, resize=0.088, \
     cov[i,i] = pwidth[i]*pwidth[i]
 
   # Initialise the emcee Reversible-Jump Metropolis-Hastings sampler
-  sampler = rjemcee.RJMHSampler(jumpprob, likob.afterJumpPars, \
-          likob.proposeNextDimJump, cov, ndim, \
-          likob.mark7logposterior, args=[])
+  if likob.likfunc == 'mark7':
+      lpfn = likob.mark7logposterior
+  elif likob.likfunc == 'mark8':
+      lpfn = likob.mark8logposterior
+  else:
+      raise ValueError("ERROR: must use mark7 or mark8 likelihood functions")
+
+  sampler = rjemcee.RJMHSampler(jumpprob, jumpsize1, jumpsize2, \
+          likob.afterJumpPars, likob.proposeNextDimJump, \
+          likob.transDimJumpAccepted, cov, ndim, lpfn, args=[])
 
   mod1, mod2 = likob.proposeNextDimJump()
 
@@ -3589,9 +3652,9 @@ def RunRJMCMC(likob, steps, chainfilename, initfile=None, resize=0.088, \
           fil.close()
 
       percent = i * nSkip * 100.0 / steps
-      sys.stdout.write("\rSample: {0:d} = {1:4.1f}%   acc. fr. = {2:f}   pos = {3:e} {4:e}  lnprob = {5:e}   ".format(i*nSkip, percent, \
+      sys.stdout.write("\rSample: {0:d} = {1:4.1f}%   acc. fr. = {2:f}   mod = {3:d} {4:d}  lnprob = {5:e}   ".format(i*nSkip, percent, \
               np.mean(sampler.acceptance_fraction),\
-              pos[ndim-2], pos[ndim-1],\
+              mod1, mod2,\
               lnprob))
       sys.stdout.flush()
   sys.stdout.write("\n")
