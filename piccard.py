@@ -1078,7 +1078,7 @@ class ptaLikelihood(object):
                 newsignal.pmin = np.array([pmin])
                 newsignal.pmax = np.array([pmax])
                 newsignal.pwidth = np.array([pwidth])
-                newsignal.pmax = np.array([pstart])
+                newsignal.pstart = np.array([pstart])
 
                 newsignal.nindex = index
                 newsignal.ntotindex = totindex
