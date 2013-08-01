@@ -945,8 +945,8 @@ class ptaPulsar(object):
             # TODO: this selecting is fast, but not general. For general, need
             #       advanced indexing
             self.lEmat = np.append(self.Fmat[:,bf], self.DF[:,bfdm], axis=1)
-            self.lGtE = np.dot(self.Gmat.T, self.lEmat)
-            self.lGGtE = np.dot(self.Gmat, self.lGtE)
+            self.lGtE = np.append(self.GtF[:,bf], self.GtD[:,bfdm], axis=1)
+            self.lGGtE = np.append(self.GGtF[:,bf], self.GGtD[:,bfdm], axis=1)
 
             # For mark7
             self.lFmat = self.Fmat[:,bf]
@@ -2512,16 +2512,43 @@ class ptaLikelihood(object):
                           include.
     psrnfinc, psrnfdminc: integer array, indicating how many frequencies per
                           pulsar to include. Overrides psrbfinc and psrbfdminc
+
+    Profiling execution time. Put J0437 of the ipta-2013 set in the file
+    J0437.h5, and load with:
+    =============================================================================
+    setup_mark8 = "import numpy as np, piccard as pic, matplotlib.pyplot as plt ; m3lik = pic.ptaLikelihood() ; m3lik.initFromFile('J0437.h5') ; m3lik.initModel(30, modelIndependentGWB=False, modelIndependentNoise=True, modelIndependentDM=True, modelIndependentAniGWB=False, varyEfac=True, incRedNoise=True, incEquad=True, separateEfacs=True, incGWB=False, incDM=True, incAniGWB=False, lAniGWB=2, likfunc='mark6') ; m3lik.initPrior()"
+    =============================================================================
+
+    Call with:
+    setup1: timeit.timeit('m3lik.mark8logposterior(m3lik.pstart, psrnfinc=[4], psrnfdminc=[4])', setup=setup_mark8, number=100)
+    setup2: timeit.timeit('m3lik.mark8logposterior(m3lik.pstart, psrnfinc=[np.random.randint(1,6)], psrnfdminc=[np.random.randint(1,6)])', setup=setup_mark8, number=100)
+
+    Setup:      1           2
+    ---------------------------------------
+    Mark A:   0.04  sec    0.50 sec
+    Mark B:   0.074 sec    0.50 sec
+    Mark C:   0.08 sec     0.51 sec
+    Mark D:   0.09 sec     0.54 sec
+    Mark E:   0.10 sec     0.56 sec
+    Mark F:   0.41 sec     0.82 sec
+    Mark G:   0.83 sec     0.91 sec
+    Mark H:   0.76 sec     0.84 sec
     """
     def mark8loglikelihood(self, parameters, psrbfinc=None, psrbfdminc=None, \
             psrnfinc=None, psrnfdminc=None):
         npsrs = len(self.ptapsrs)
 
-        # The red signals
-        self.constructPhiAndTheta(parameters)
+        # MARK A
 
         # The white noise
         self.setPsrNoise(parameters)
+
+        # MARK B
+
+        # The red signals
+        self.constructPhiAndTheta(parameters)
+
+        # MARK C
 
         # If the included frequencies are passed by numbers -- not indicator
         # functions --, then obtain the indicators from the numbers
@@ -2530,6 +2557,8 @@ class ptaLikelihood(object):
 
         # Obtain the frequency selectors, and set the psr frequencies
         bfind, bfdmind, bcurfind, bcurfdmind = self.prepareLimFreqIndicators(psrbfinc, psrbfdminc)
+
+        # MARK D
 
         # Double up the frequency indicators to get the mode indicators
         bfmind = np.array([bfind, bfind]).T.flatten()
@@ -2541,6 +2570,8 @@ class ptaLikelihood(object):
         lThetavec = self.Thetavec[bfmdmind]
         lenphi = np.sum(bfmind)
         lentheta = np.sum(bfmdmind)
+
+        # MARK E
 
         # Armed with the Noise (and it's inverse), we'll construct the
         # auxiliaries for all pulsars
@@ -2562,6 +2593,8 @@ class ptaLikelihood(object):
             self.EGGNGGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm, findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].lGGtE.T, NGGE)
 
         
+        # MARK F
+
         # Now that all arrays are filled, we can proceed to do some linear
         # algebra. First we'll invert Phi. For a single pulsar, this will be
         # diagonal
@@ -2582,6 +2615,8 @@ class ptaLikelihood(object):
 
                 print "Fallback to SVD for Phi"
 
+        # MARK G
+
         ThetaLD = np.sum(np.log(lThetavec))
 
         # Construct and decompose Sigma
@@ -2599,6 +2634,8 @@ class ptaLikelihood(object):
                 raise ValueError("ERROR: Sigma singular according to SVD")
             SigmaLD = np.sum(np.log(s))
             rGSigmaGr = np.dot(self.rGE[:lenphi+lentheta], np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, self.rGE[:lenphi+lentheta]))))
+
+        # MARK H
 
         # Now we are ready to return the log-likelihood
         return -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) + 0.5*rGSigmaGr - 0.5*PhiLD - 0.5*SigmaLD - 0.5*ThetaLD
@@ -2660,11 +2697,17 @@ class ptaLikelihood(object):
             psrnfinc=None, psrnfdminc=None):
         lp = 0.0
 
+        # MARK A1
+
         if psrnfinc != None and psrnfdminc != None:
             psrbfinc, psrbfdminc = self.getPsrLimFreqFromNumbers(psrnfinc, psrnfdminc)
 
+        # MARK A2
+
         # Obtain the frequency selectors, and set the psr frequencies
         bfind, bfdmind, bcurfind, bcurfdmind = self.prepareLimFreqIndicators(psrbfinc, psrbfdminc)
+
+        # MARK A3
 
         # Loop over all signals
         for m2signal in self.ptasignals:
@@ -3998,8 +4041,8 @@ Implementation from "pyMultinest"
 
 """
 def RunMultiNest(likob, chainroot):
-  # Save the parameters to file
-  likob.saveModelParameters(chainroot + '.parameters.txt')
+    # Save the parameters to file
+    likob.saveModelParameters(chainroot + '.parameters.txt')
 
     ndim = likob.dimensions
 
