@@ -1426,6 +1426,19 @@ class ptaLikelihood(object):
             self.rGr = np.zeros(npsrs)
             self.rGF = np.zeros(np.sum(self.npf))
             self.FGGNGGF = np.zeros((np.sum(self.npf), np.sum(self.npf)))
+
+            for ii in range(len(self.ptapsrs)):
+                psr = self.ptapsrs[ii]
+                psr.Gr = np.dot(psr.Gmat.T, psr.residuals)
+                N = np.diag(psr.toaerrs**2)
+                GNG = np.dot(psr.Gmat.T, np.dot(N, psr.Gmat))
+                cf = sl.cho_factor(GNG)
+                psr.GNGldet = 2*np.sum(np.log(np.diag(cf[0])))
+                GNGinv = sl.cho_solve(cf, np.identity(GNG.shape[0]))
+                psr.GGNGG = np.dot(psr.Gmat, np.dot(GNGinv, psr.Gmat.T))
+                psr.rGGNGGr = np.dot(psr.residuals, np.dot(psr.GGNGG, psr.residuals))
+                psr.rGGNGGF = np.dot(psr.Fmat.T, np.dot(psr.GGNGG, psr.residuals))
+                psr.FGGNGGF = np.dot(psr.Fmat.T, np.dot(psr.GGNGG, psr.Fmat))
         elif self.likfunc == 'mark3' or self.likfunc == 'mark7':
             self.Phi = np.zeros((np.sum(self.npf), np.sum(self.npf)))
             self.Thetavec = np.zeros(np.sum(self.npfdm))
@@ -2038,46 +2051,80 @@ class ptaLikelihood(object):
 
     """
     A simpler version of the mark3 likelihood
+
+    Assume the presence of an efac + red noise parameters
     """
     def mark2loglikelihood(self, parameters):
         npsrs = len(self.ptapsrs)
 
-        # MARK A
+        # Construct Phi
+        #self.constructPhiAndTheta(parameters)
+        self.Phi[:] = 0     # We'll do it ourselves
 
+        efacs = []
+        pcoefs = []
+        slength = 0
+        index = 0
 
-        self.setPsrNoise(parameters)
-
-        # MARK B
-
-        self.constructPhiAndTheta(parameters)
-
-        # MARK C
-
-        # Armed with the Noise (and it's inverse), we'll construct the
-        # auxiliaries for all pulsars
+        # Construct the power coefficients that will go into self.Phi
         for ii in range(npsrs):
-            findex = np.sum(self.npf[:ii])
-            nfreq = int(self.npf[ii]/2)
+            pclength = int(len(self.ptapsrs[ii].Ffreqs) / 2)
+            if len(parameters) < index + 1 + pclength:
+                raise ValueError('ERROR:len(parameters) too small in loglikelihood')
 
-            # One temporary quantity
-            # This is equivalent to np.dot(np.diag(1.0/Nvec, GGtF))
-            NGGF = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].GGtF.T).T
-            # This was too slow
-            # NGGF = np.array([(1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].GGtF[:,i] for i in range(self.ptapsrs[ii].Fmat.shape[1])]).T
+            efacs.append(parameters[index])
+            index += 1
 
-            # Fill the auxiliaries
-            nobs = len(self.ptapsrs[ii].toas)
-            ng = self.ptapsrs[ii].Gmat.shape[1]
+            # The power spectrum coefficients enter the matrix twice: for both
+            # sine and cosine basis functions.
+            pcdoubled = np.array([parameters[index:index+pclength], parameters[index:index+pclength]]).T.flatten()
+            #pcoefs.append(np.array(parameters[index:index+pclength]))
+            pcoefs.append(pcdoubled)
+            index += pclength
 
-            self.rGr[ii] = np.sum(self.ptapsrs[ii].GGr ** 2 / self.ptapsrs[ii].Nvec)
-            self.rGF[findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].GGr, NGGF)
-            self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nvec)) * ng / nobs
-            self.FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].GGtF.T, NGGF)
+            slength += 2*pclength
 
-        # MARK D
-        
-        # Now that all arrays are filled, we can proceed to do some linear
-        # algebra. First we'll invert Phi
+            # THIS IS WHAT I HAD (no efac here):
+            #findex = np.sum(self.npf[:ii])
+            #nfreq = int(self.npf[ii]/2)
+
+            #pcdoubled = np.array([parameters[index:index+nfreq], parameters[index:index+nfreq]]).T.flatten()
+
+            #self.Phi[index:index+2*nfreq, index:index+2*nfreq] = 10**pcdoubled
+
+
+        # Form the total correlation matrices
+        self.Sigma = np.zeros((slength, slength))
+        self.Phi = np.zeros((slength, slength))
+        self.rGF = np.zeros(slength)
+        self.rGr = np.zeros(npsrs)
+        self.GNGldet = np.zeros(npsrs)
+
+
+        # Fill Sigma, Phi, and the auxiliaries
+        index = 0
+        for ii in range(npsrs):
+            pclength = int(len(self.ptapsrs[ii].Ffreqs) / 2)
+            self.rGr[ii] = self.ptapsrs[ii].rGGNGGr / efacs[ii] 
+            self.rGF[index:index+2*pclength] = self.ptapsrs[ii].rGGNGGF / efacs[ii]
+            self.GNGldet[ii] = self.ptapsrs[ii].GNGldet + np.log(efacs[ii]) * self.ptapsrs[ii].Gmat.shape[1]
+
+            # Fill the single pulsar part of Sigma
+            self.Sigma[index:index+2*pclength, index:index+2*pclength] = self.ptapsrs[ii].FGGNGGF / efacs[ii]
+
+            # Add the spectrum coefficients to the diagonal indices
+            di = np.diag_indices(2*pclength)
+            self.Sigma[index:index+2*pclength, index:index+2*pclength][di] += 10**(-pcoefs[ii])
+            self.Phi[index:index+2*pclength, index:index+2*pclength][di] = 10**pcoefs[ii]
+
+            index += 2*pclength
+
+
+
+        PhiLD = np.sum(np.log(np.diag(self.Phi)))
+        # THIS IS WHAT I HAD
+        #Phiinv = np.diag(1.0/np.diag(self.Phi))
+        """
         try:
             cf = sl.cho_factor(self.Phi)
             PhiLD = 2*np.sum(np.log(np.diag(cf[0])))
@@ -2090,11 +2137,22 @@ class ptaLikelihood(object):
             Phiinv = np.dot(Vh.T, np.dot(np.diag(1.0/s), U.T))
 
             print "Fallback to SVD for Phi"
+        """
 
-        # MARK E
+        # THIS IS WHAT I HAD
+        #for ii in range(npsrs):
+        #    findex = np.sum(self.npf[:ii])
+        #    nfreq = int(self.npf[ii]/2)
+
+        #    self.rGr[ii] = self.ptapsrs[ii].rGGNGGr # / efacs[ii] 
+        #    self.rGF[findex:findex+2*nfreq] = self.ptapsrs[ii].rGGNGGF # / efacs[ii]
+        #    self.GNGldet[ii] = self.ptapsrs[ii].GNGldet #+ np.log(efacs[ii]) * self.ptapsrs[ii].Gmat.shape[1]
+
+        #    self.FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = self.ptapsrs[ii].FGGNGGF # / efacs[ii]
 
         # Construct and decompose Sigma
-        self.Sigma = self.FGGNGGF + Phiinv
+        #self.Sigma = self.FGGNGGF + Phiinv
+
         try:
             cf = sl.cho_factor(self.Sigma)
             SigmaLD = 2*np.sum(np.log(np.diag(cf[0])))
@@ -2623,7 +2681,7 @@ class ptaLikelihood(object):
                 clm = parameters[m2signal.nindex+m2signal.npars-nclm:m2signal.nindex+m2signal.npars]
                 if m2signal.aniCorr.priorIndicator(clm) == False:
                     lp -= 1e99
-            elif m2signal.stype == 'powerlaw':
+            elif m2signal.stype == 'powerlaw' and m2signal.corr != 'single':
                 lp += parameters[m2signal.nindex]
             elif m2signal.stype == 'spectrum' and m2signal.corr == 'anisotropicgwb':
                 nclm = m2signal.aniCorr.clmlength()
@@ -2631,7 +2689,7 @@ class ptaLikelihood(object):
                 clm = parameters[m2signal.nindex+m2signal.npars-nclm:m2signal.nindex+m2signal.npars]
                 if m2signal.aniCorr.priorIndicator(clm) == False:
                     lp -= 1e99
-            elif m2signal.stype == 'spectrum':
+            elif m2signal.stype == 'spectrum' and m2signal.corr != 'single':
                 lp += np.sum(parameters[m2signal.nindex:m2signal.nindex+m2signal.npars])
 
             # Divide by the prior range
