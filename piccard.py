@@ -1082,6 +1082,8 @@ class ptaLikelihood(object):
 
                 newsignal.nindex = index
                 newsignal.ntotindex = totindex
+                index += newsignal.npars
+                totindex += newsignal.ntotpars
 
                 self.ptasignals.append(newsignal)
         else:
@@ -1492,9 +1494,13 @@ class ptaLikelihood(object):
         index = 0
         totindex = 0
         for ii in range(len(self.ptapsrs)):
+            # When adding efac signals, there may be many
+            noldsignals = len(self.ptasignals)
             self.addSignalEfac(ii, index, totindex, separateEfacs, varyEfac)
-            index += self.ptasignals[-1].npars
-            totindex += self.ptasignals[-1].ntotpars
+            nnewsignals = len(self.ptasignals)
+            for jj in range(noldsignals, nnewsignals):
+                index += self.ptasignals[jj].npars
+                totindex += self.ptasignals[jj].ntotpars
 
             if incEquad:
                 self.addSignalEquad(ii, index, totindex)
