@@ -491,7 +491,7 @@ def real_sph_harm(mm, ll, phi, theta):
     elif mm==0:
         ans = ss.sph_harm(0, ll, phi, theta)
     elif mm<0:
-        ans = (1./math.sqrt(2)/complex(0.,1)) * \
+        ans = (1./(math.sqrt(2)*complex(0.,1))) * \
                 (ss.sph_harm(-mm, ll, phi, theta) - \
                 ((-1)**mm) * ss.sph_harm(mm, ll, phi, theta))
 
@@ -942,6 +942,8 @@ class ptaPulsar(object):
             bfdm = np.array([bfdmincnp, bfdmincnp]).T.flatten()
 
             # For mark8
+            # TODO: this selecting is fast, but not general. For general, need
+            #       advanced indexing
             self.lEmat = np.append(self.Fmat[:,bf], self.DF[:,bfdm], axis=1)
             self.lGtE = np.dot(self.Gmat.T, self.lEmat)
             self.lGGtE = np.dot(self.Gmat, self.lGtE)
@@ -1552,6 +1554,66 @@ class ptaLikelihood(object):
                     totindex += self.ptasignals[-1].ntotpars
 
         self.allocateAuxiliaries()
+
+    """
+    Once a model is defined, it can be useful to have all the parameter names
+    that enter in the MCMC stored in a file. This function does that, in the
+    format: index   psrindex    stype   corr    flagname    flagvalue
+    
+    Example
+    0   0       efac        single      pulsarname  J0030+0451
+    1   1       efac        single      pulsarname  J1600-3053
+    2   0       spectrum    single      frequency   1.0e-7
+    3   0       spectrum    single      frequency   2.0e-7
+    4   1       spectrum    single      frequency   1.0e-7
+    5   1 -     spectrum    single      frequency   2.0e-7
+    6   -1      powerlaw    gr          powerlaw   amplitude
+    7   -1      powerlaw    gr          powerlaw   spectral-index
+
+    As you see, 'flagname' and 'flagvalue' carry information about flags for
+    efac parameters, for other signals they describe what parameter of the
+    signal we are indicating - or the frequency for a spectrum
+
+    This function should in principle always be automatically called by a
+    sampler, so that parameter names/model definitions are always saved
+    """
+    def saveModelParameters(self, filename):
+        fil = open(filename, "w")
+
+        for ii in range(len(self.ptasignals)):
+            sig = self.ptasignals[ii]
+            for jj in range(sig.ntotpars):
+                if sig.bvary[jj]:
+                    # This parameter is in the mcmc
+                    # TODO: the parameter index for varying/nonvarying
+                    # parameters is inconsistent throughout the code
+                    index = sig.nindex + jj
+                    psrindex = sig.pulsarind
+                    if sig.stype == 'efac':
+                        flagname = sig.flagname
+                        flagvalue = sig.flagvalue
+                    elif sig.stype == 'spectrum':
+                        flagname = 'frequency'
+                        flagvalue = str(self.ptapsrs[psrindex].Ffreqs[2*jj])
+                    elif sig.stype == 'dmspectrum':
+                        flagname = 'dmfrequency'
+                        flagvalue = str(self.ptapsrs[psrindex].Fdmfreqs[2*jj])
+                    elif sig.stype == 'powerlaw':
+                        flagname = 'powerlaw'
+                        flagvalue = ['Amplitude', 'spectral-index'][jj]
+                    else:
+                        flagname = 'none'
+                        flagvalue = 'none'
+
+                    fil.write("{0:d} \t{1:d} \t{2:s} \t{3:s} \t{4:s} \t{5:s}\n".format(\
+                            index,
+                            psrindex,
+                            sig.stype,
+                            sig.corr,
+                            flagname,
+                            flagvalue))
+
+        fil.close
 
     """
     Re-calculate the number of varying parameters per signal, and the number of
@@ -2971,7 +3033,7 @@ def confinterval(samples, sigmalevel=2, onesided=False, weights=None):
   else:
     # MultiNest chain with weights or no statsmodel.api package
     hist, xedges = np.histogram(samples[:], bins=bins, range=(xmin,xmax), weights=weights, density=True)
-    x = np.delete(xedges, -1) + 1.5*(xedges[1] - xedges[0])
+    x = np.delete(xedges, -1) + 0.5*(xedges[1] - xedges[0])     # This was originally 1.5*, but turns out this is a bug plotting of 'stepstyle' in matplotlib
     y = np.cumsum(hist) / np.sum(hist)
 
   # Find the intervals
@@ -3603,7 +3665,8 @@ def makefouriermodenumberplot(chainfilename, incDM=True):
         yy[ii] = np.sum(chainmode2==yx[ii]) / len(chainmode2)
 
     plt.figure()
-    # TODO: why does drawstyle 'steps' shift the x-value by '1'?? Makes no sense..
+    # TODO: why does drawstyle 'steps' shift the x-value by '1'?? Makes no
+    #       sense.. probably a bug in the matplotlib package. Check '+0.5'
     plt.plot(xx+0.5, xy, 'r-', drawstyle='steps', linewidth=3.0)
     plt.grid(True, which='major')
 
@@ -3636,29 +3699,32 @@ pwidth - offset of starting position for second walker
 steps - number of MCMC walks to take
 """
 def Runtwalk(likob, steps, chainfilename, thin=1):
-  # Define the support function (in or outside of domain)
-  def PtaSupp(x, xmin=likob.pmin, xmax=likob.pmax):
-    return np.all(xmin <= x) and np.all(x <= xmax)
+    # Save the parameters to file
+    likob.saveModelParameters(chainfilename + '.parameters.txt')
 
-  p0 = likob.pstart
-  p1 = likob.pstart + likob.pwidth 
+    # Define the support function (in or outside of domain)
+    def PtaSupp(x, xmin=likob.pmin, xmax=likob.pmax):
+        return np.all(xmin <= x) and np.all(x <= xmax)
 
-  # Initialise the twalk sampler
-  #sampler = pytwalk.pytwalk(n=likob.dimensions, U=np_ns_WrapLL, Supp=PtaSupp)
-  #sampler = pytwalk.pytwalk(n=likob.dimensions, U=likob.nloglikelihood, Supp=PtaSupp)
-  sampler = pytwalk.pytwalk(n=likob.dimensions, U=likob.nlogposterior, Supp=PtaSupp)
+    p0 = likob.pstart
+    p1 = likob.pstart + likob.pwidth 
 
-  # Run the twalk sampler
-  sampler.Run(T=steps, x0=p0, xp0=p1)
-  sampler.Ana()
+    # Initialise the twalk sampler
+    #sampler = pytwalk.pytwalk(n=likob.dimensions, U=np_ns_WrapLL, Supp=PtaSupp)
+    #sampler = pytwalk.pytwalk(n=likob.dimensions, U=likob.nloglikelihood, Supp=PtaSupp)
+    sampler = pytwalk.pytwalk(n=likob.dimensions, U=likob.nlogposterior, Supp=PtaSupp)
 
-  indices = range(0, steps, thin)
+    # Run the twalk sampler
+    sampler.Run(T=steps, x0=p0, xp0=p1)
+    sampler.Ana()
 
-  savechain = np.zeros((len(indices), sampler.Output.shape[1]+1))
-  savechain[:,1] = -sampler.Output[indices, likob.dimensions]
-  savechain[:,2:] = sampler.Output[indices, :-1]
+    indices = range(0, steps, thin)
 
-  np.savetxt(chainfilename, savechain)
+    savechain = np.zeros((len(indices), sampler.Output.shape[1]+1))
+    savechain[:,1] = -sampler.Output[indices, likob.dimensions]
+    savechain[:,2:] = sampler.Output[indices, :-1]
+
+    np.savetxt(chainfilename, savechain)
 
 
 """
@@ -3671,6 +3737,9 @@ matrix
 """
 def RunRJMCMC(likob, steps, chainfilename, initfile=None, resize=0.088, \
         jumpprob=0.01, jumpsize1=1, jumpsize2=1, mhinitfile=False):
+  # Save the parameters to file
+  likob.saveModelParameters(chainfilename + '.parameters.txt')
+
   ndim = likob.dimensions
   pwidth = likob.pwidth.copy()
 
@@ -3770,6 +3839,9 @@ covest=True, this file will be used to estimate the stepsize for the mcmc
 
 """
 def RunMetropolis(likob, steps, chainfilename, initfile=None, resize=0.088):
+  # Save the parameters to file
+  likob.saveModelParameters(chainfilename + '.parameters.txt')
+
   ndim = likob.dimensions
   pwidth = likob.pwidth.copy()
 
@@ -3852,6 +3924,9 @@ Run an ensemble sampler on the likelihood wrapper.
 Implementation from "emcee".
 """
 def Runemcee(likob, steps, chainfilename, initfile=None, savechain=False, a=2.0):
+  # Save the parameters to file
+  likob.saveModelParameters(chainfilename + '.parameters.txt')
+
   ndim = len(likob.pstart)
   nwalkers = 6 * ndim
   mcmcsteps = steps / nwalkers
@@ -3923,6 +3998,9 @@ Implementation from "pyMultinest"
 
 """
 def RunMultiNest(likob, chainroot):
+  # Save the parameters to file
+  likob.saveModelParameters(chainroot + '.parameters.txt')
+
     ndim = likob.dimensions
 
     if pymultinest is None:
@@ -3962,6 +4040,9 @@ Implementation from "pyDnest"
 def RunDNest(likob, mcmcFile=None, numParticles=1, newLevelInterval=500,\
         saveInterval=100, maxNumLevels=110, lamb=10.0, beta=10.0,\
         deleteParticles=True, maxNumSaves=np.inf):
+    # Save the parameters to file
+    #likob.saveModelParameters(chainfilename + '.parameters.txt')
+
     ndim = likob.dimensions
 
     options = pydnest.Options(numParticles=numParticles,\
