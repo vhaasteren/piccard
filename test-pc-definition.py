@@ -5,7 +5,6 @@
 import numpy as np
 import scipy.linalg as sl, scipy.special as ss
 import h5py as h5
-import sets as sets
 #import bangwrapper as bw
 import matplotlib.pyplot as plt
 import os as os

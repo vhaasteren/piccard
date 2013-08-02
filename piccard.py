@@ -20,7 +20,6 @@ import numpy as np
 import math
 import scipy.linalg as sl, scipy.special as ss
 import h5py as h5
-import sets as sets
 import matplotlib.pyplot as plt
 import os as os
 import sys
@@ -29,7 +28,7 @@ import pydnest                  # Internal module
 import anisotropygammas as ang  # Internal module
 import rjmcmchammer as rjemcee  # Internal module
 
-# Optional packages:
+
 try:
     import statsmodels.api as smapi
     sm = smapi
@@ -193,7 +192,7 @@ class DataFile(object):
         flaggroup = pulsarsgroup.create_group("Flags")
 
         # Obtain the unique flags in this dataset
-        uflags = list(sets.Set(t2pulsar.flags))
+        uflags = list(set(t2pulsar.flags))
 
         # For every flag id, write the values for the TOAs
         print "# For every flag id, write the values for the TOAs"
@@ -238,7 +237,7 @@ class DataFile(object):
     def pulsarnumberfromflagvalue(self, flagvalue, flagvalues, pulsarflags, pulsarnames):
         indices = np.flatnonzero(np.array(flagvalues == flagvalue))
         sourcepulsars = pulsarflags[indices]
-        uniquepulsars = list(sets.Set(sourcepulsars))
+        uniquepulsars = list(set(sourcepulsars))
         if len(uniquepulsars) == 1:
             retvalue = pulsarnames.index(uniquepulsars[0])
         else:
@@ -1056,7 +1055,7 @@ class ptaLikelihood(object):
     def addSignalEfac(self, psrind, index, totindex, separateEfacs=False, \
             varyEfac=True, pmin=0.001, pmax=1000.0, pwidth=0.1, pstart=1.0):
         if separateEfacs:
-            uflagvals = list(sets.Set(self.ptapsrs[psrind].flags))   # uniques
+            uflagvals = list(set(self.ptapsrs[psrind].flags))   # uniques
             for flagval in uflagvals:
                 newsignal = ptasignal()
                 newsignal.pulsarind = psrind
@@ -3464,9 +3463,9 @@ def makespectrumplot(chainfilename, parstart=1, numfreqs=10, freqs=None, \
     if freqs is None:
         ufreqs = np.log10(np.arange(1, 1+numfreqs))
     else:
-        ufreqs = np.log10(np.sort(np.array(list(sets.Set(freqs)))))
+        ufreqs = np.log10(np.sort(np.array(list(set(freqs)))))
 
-    #ufreqs = np.array(list(sets.Set(freqs)))
+    #ufreqs = np.array(list(set(freqs)))
     yval = np.zeros(len(ufreqs))
     yerr = np.zeros(len(ufreqs))
 
@@ -3512,8 +3511,8 @@ Given a MultiNest chain file, plot the log-spectrum
 
 """
 def makemnspectrumplot(mnchainfilename, minmaxfile=None, parstart=1, parstop=10, freqs=None):
-    ufreqs = np.log10(np.sort(np.array(list(sets.Set(freqs)))))
-    #ufreqs = np.array(list(sets.Set(freqs)))
+    ufreqs = np.log10(np.sort(np.array(list(set(freqs)))))
+    #ufreqs = np.array(list(set(freqs)))
     yval = np.zeros(parstop-parstart)
     yerr = np.zeros(parstop-parstart)
 
@@ -3662,7 +3661,7 @@ Maximum number of figures is an optional parameter (for emcee can be large)
 def makellplot(chainfilename, numfigs=2):
   emceechain = np.loadtxt(chainfilename)
 
-  uniquechains = sets.Set(emceechain[:,0])
+  uniquechains = set(emceechain[:,0])
 
   styles = ['b-', 'g-', 'r-', 'c-', 'm-', 'y-', 'k-',
       'b--', 'g--', 'r--', 'c--', 'm--', 'y--', 'k--',
