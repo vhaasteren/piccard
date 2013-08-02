@@ -3066,7 +3066,7 @@ def confinterval(samples, sigmalevel=2, onesided=False, weights=None):
   xmax = max(samples)
 
   # If we don't have any weighting (MCMC chain), use the statsmodels package
-  if weights is None or sm is None:
+  if weights is None and sm != None:
     # Create the ecdf function
     ecdf = sm.distributions.ECDF(samples)
 
