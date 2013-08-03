@@ -920,6 +920,23 @@ class ptaPulsar(object):
         self.GtE = np.dot(self.Gmat.T, self.Emat)
         self.GGtE = np.dot(self.Gmat, self.GtE)
 
+        # Temporary, for mark2b:
+        Ceo = np.diag(self.toaerrs**2)
+        Ceq = np.identity(len(self.toas))
+        GCeoG = np.dot(self.Gmat.T, np.dot(Ceo, self.Gmat))
+        GCeqG = np.dot(self.Gmat.T, np.dot(Ceq, self.Gmat))   # Also identity...
+        cf = sl.cholesky(GCeoG)     # Upper-triangular
+        
+        U = sl.solve_triangular(cf.T, np.identity(cf.shape[0]), lower=True)
+        Cweq = np.dot(U, np.dot(GCeqG, U.T))
+
+        # Now find the diagonalisation of Cweq
+        self.Wvec, self.Amat = sl.eigh(Cweq)
+
+        self.AUGr = np.dot(self.Amat, np.dot(U, self.Gr))
+        self.AUGF = np.dot(self.Amat, np.dot(U, np.dot(self.Gmat.T, self.Fmat)))
+
+
     # When doing Fourier mode selection, like in mark7/mark8, we need an adjusted
     # version of the E-matrix, which only includes certain columns. Select those
     # here
@@ -1418,6 +1435,14 @@ class ptaLikelihood(object):
             self.rGFa = np.zeros(npsrs)
             self.aFGFa = np.zeros(npsrs)
             self.avec = np.zeros(np.sum(self.npf))
+        elif self.likfunc == 'mark2b':
+            self.Phi = np.zeros((np.sum(self.npf), np.sum(self.npf)))
+            self.Thetavec = np.zeros(np.sum(self.npfdm))
+            self.Sigma = np.zeros((np.sum(self.npf), np.sum(self.npf)))
+            self.GNGldet = np.zeros(npsrs)
+            self.rGr = np.zeros(npsrs)
+            self.rGF = np.zeros(np.sum(self.npf))
+            self.FGGNGGF = np.zeros((np.sum(self.npf), np.sum(self.npf)))
         elif self.likfunc == 'mark3' or self.likfunc == 'mark7':
             self.Phi = np.zeros((np.sum(self.npf), np.sum(self.npf)))
             self.Thetavec = np.zeros(np.sum(self.npfdm))
@@ -2089,6 +2114,126 @@ class ptaLikelihood(object):
                -0.5*np.sum(self.GNGldet) - 0.5*aPhia - 0.5*PhiLD
 
 
+    """
+    Assume parameter 0 is efac
+    Assume parameter 1 is equad
+    Assume parameter 2 is amplitude
+    Assume parameter 3 is spectral index
+    """
+    def mark2aloglikelihood(self, parameters):
+        npsrs = len(self.ptapsrs)
+
+        psr = self.ptapsrs[0]
+
+        efac = parameters[0]
+        equad = 10**parameters[1]
+        Amp = 10**parameters[2]
+        alpha = 0.5 * (3 - parameters[3])
+
+        Cov = Amp**2 * Cred_sec(psr.toas, alpha)
+        Nvec = psr.toaerrs * efac**2 + equad**2
+
+        Cov += np.diag(Nvec)
+        GCG = np.dot(psr.Gmat.T, np.dot(Cov, psr.Gmat))
+
+        try:
+            cf = sl.cho_factor(GCG)
+            CovLD = 2*np.sum(np.log(np.diag(cf[0])))
+            rGr = np.dot(psr.Gr, sl.cho_solve(cf, psr.Gr))
+        except np.linalg.LinAlgError:
+            U, s, Vh = sl.svd(GCG)
+            if not np.all(s > 0):
+                raise ValueError("ERROR: C singular according to SVD")
+            CovLD = np.sum(np.log(s))
+            rGr = np.dot(psr.Gr, np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, psr.Gr))))
+
+        # Now we are ready to return the log-likelihood
+        return -0.5*np.sum(rGr) - 0.5*CovLD
+
+
+    """
+    Assume parameter 0 is efac
+    Assume parameter 1 is equad
+    Assume parameter 2 is amplitude
+    Assume parameter 3 is spectral index
+    """
+    def mark2bloglikelihood(self, parameters):
+        npsrs = len(self.ptapsrs)
+
+        self.constructPhiAndTheta(parameters)
+
+        efac = parameters[0]
+        equad = 10**parameters[1]
+        Amp = 10**parameters[2]
+        alpha = 0.5 * (3 - parameters[3])
+
+        for ii in range(npsrs):
+            self.ptapsrs[ii].Nwvec = equad**2 * self.ptapsrs[ii].Wvec + efac**2
+
+        # MARK B
+
+        # Armed with the Noise (and it's inverse), we'll construct the
+        # auxiliaries for all pulsars
+        for ii in range(npsrs):
+            findex = np.sum(self.npf[:ii])
+            nfreq = int(self.npf[ii]/2)
+
+            # One temporary quantity
+            # This is equivalent to np.dot(np.diag(1.0/Nvec, GGtF))
+            NGGF = ((1.0/self.ptapsrs[ii].Nwvec) * self.ptapsrs[ii].AUGF.T).T
+            # This was too slow
+            # NGGF = np.array([(1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].GGtF[:,i] for i in range(self.ptapsrs[ii].Fmat.shape[1])]).T
+
+            # Fill the auxiliaries
+            nobs = len(self.ptapsrs[ii].toas)
+            ng = self.ptapsrs[ii].Gmat.shape[1]
+
+            self.rGr[ii] = np.sum(self.ptapsrs[ii].AUGr ** 2 / self.ptapsrs[ii].Nwvec)
+            self.rGF[findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].AUGr, NGGF)
+            self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nwvec))
+            self.FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].AUGF.T, NGGF)
+
+        # Now that all arrays are filled, we can proceed to do some linear
+        # algebra. First we'll invert Phi. For a single pulsar, this will be
+        # diagonal
+        if npsrs == 1:
+            PhiLD = np.sum(np.log(np.diag(self.Phi)))
+            Phiinv = np.diag(1.0 / np.diag(self.Phi))
+        else:
+            try:
+                cf = sl.cho_factor(self.Phi)
+                PhiLD = 2*np.sum(np.log(np.diag(cf[0])))
+                Phiinv = sl.cho_solve(cf, np.identity(self.Phi.shape[0]))
+            except np.linalg.LinAlgError:
+                U, s, Vh = sl.svd(self.Phi)
+                if not np.all(s > 0):
+                    raise ValueError("ERROR: Phi singular according to SVD")
+                PhiLD = np.sum(np.log(s))
+                Phiinv = np.dot(Vh.T, np.dot(np.diag(1.0/s), U.T))
+
+                print "Fallback to SVD for Phi"
+
+        # MARK E
+
+        # Construct and decompose Sigma
+        self.Sigma = self.FGGNGGF + Phiinv
+        try:
+            cf = sl.cho_factor(self.Sigma)
+            SigmaLD = 2*np.sum(np.log(np.diag(cf[0])))
+            rGSigmaGr = np.dot(self.rGF, sl.cho_solve(cf, self.rGF))
+        except np.linalg.LinAlgError:
+            U, s, Vh = sl.svd(self.Sigma)
+            if not np.all(s > 0):
+                raise ValueError("ERROR: Sigma singular according to SVD")
+            SigmaLD = np.sum(np.log(s))
+            rGSigmaGr = np.dot(self.rGF, np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, self.rGF))))
+        # Mark F
+
+        # Now we are ready to return the log-likelihood
+        return -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) + 0.5*rGSigmaGr - 0.5*PhiLD - 0.5*SigmaLD
+
+
+
 
 
     """
@@ -2648,6 +2793,10 @@ class ptaLikelihood(object):
         if(np.all(self.pmin <= parameters) and np.all(parameters <= self.pmax)):
             if self.likfunc == 'mark1':
                 ll = self.mark1loglikelihood(parameters)
+            elif self.likfunc == 'mark2a':
+                ll = self.mark2aloglikelihood(parameters)
+            elif self.likfunc == 'mark2b':
+                ll = self.mark2bloglikelihood(parameters)
             elif self.likfunc == 'mark3':
                 ll = self.mark3loglikelihood(parameters)
             elif self.likfunc == 'mark4':
@@ -3740,7 +3889,7 @@ pstart - starting position in parameter space
 pwidth - offset of starting position for second walker
 steps - number of MCMC walks to take
 """
-def Runtwalk(likob, steps, chainfilename, thin=1):
+def Runtwalk(likob, steps, chainfilename, thin=1, analyse=False):
     # Save the parameters to file
     likob.saveModelParameters(chainfilename + '.parameters.txt')
 
@@ -3758,7 +3907,10 @@ def Runtwalk(likob, steps, chainfilename, thin=1):
 
     # Run the twalk sampler
     sampler.Run(T=steps, x0=p0, xp0=p1)
-    sampler.Ana()
+    
+    # Do some post-processing analysis like the autocorrelation time
+    if analyse:
+        sampler.Ana()
 
     indices = range(0, steps, thin)
 
