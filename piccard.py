@@ -162,6 +162,9 @@ class DataFile(object):
         U, s, Vh = sl.svd(desmat)
         pulsarsgroup.create_dataset('Gmatrix', data=U[:, desmat.shape[1]:])
 
+        # Write the coG-matrix (complement of the G-matrix)
+        pulsarsgroup.create_dataset('coGmatrix', data=U[:, :desmat.shape[1]])
+
         # Now write the timing model parameters
         tmpname = ['Offset'] + list(t2pulsar.pars)
         tmpvalpre = np.zeros(len(tmpname))
@@ -720,6 +723,7 @@ class ptaPulsar(object):
     residuals = None
     freqs = None
     Gmat = None
+    Gcmat = None
     Mmat = None
     ptmpars = []
     ptmdescription = []
@@ -735,13 +739,18 @@ class ptaPulsar(object):
     Fdmfreqs = None
     Gr = None
     GGr = None
-    GtF = None
     GGtF = None
-    GtD = None
     GGtD = None
+    AGr = None      # Replaces GGr in 2-component noise model
+    AGF = None      # Replaces GGtF in 2-component noise model
+    AGD = None      # Replaces GGtD in 2-component noise model
+    AGE = None      # Replaces GGtE in 2-component noise model
 
     # Auxiliaries used in the likelihood
-    Nvec = None             # For in the mark3+ likelihood (projection approx.)
+    twoComponentNoise = False      # Whether we use the 2-component noise model
+    Nvec = None             # The total white noise (eq^2 + ef^2*err)
+    Wvec = None             # The weights in 2-component noise
+    Nwvec = None            # Total noise in 2-component basis (eq^2 + ef^2*Wvec)
 
     # To select the number of Frequency modes
     bfinc = None        # Number of modes of all internal matrices
@@ -757,6 +766,7 @@ class ptaPulsar(object):
         self.residuals = None
         self.freqs = None
         self.Gmat = None
+        self.Gcmat = None
         self.Mmat = None
         self.ptmpars = []
         self.ptmdescription = []
@@ -771,9 +781,7 @@ class ptaPulsar(object):
         self.Fdmfreqs = None
         self.Gr = None
         self.GGr = None
-        self.GtF = None
         self.GGtF = None
-        self.GtD = None
         self.GGtD = None
 
         self.bfinc = None
@@ -819,13 +827,15 @@ class ptaPulsar(object):
         self.freqs = np.array(pulsarsgroup[psrname]['freq'])
         self.Mmat = np.array(pulsarsgroup[psrname]['designmatrix'])
 
-        # See if we can find the Gmatrix
-        if not "Gmatrix" in pulsarsgroup[psrname]:
-            print "Gmatrix not found for " + psrname + ". Constructing it now."
+        # See if we can find the G-matrix and coG-matrix
+        if not "Gmatrix" in pulsarsgroup[psrname] or not "coGmatrix" in pulsarsgroup[psrname]:
+            print "(co)Gmatrix not found for " + psrname + ". Constructing it now."
             U, s, Vh = sl.svd(self.Mmat)
             self.Gmat = U[:, self.Mmat.shape[1]:].copy()
+            self.Gcmat = U[:, :self.Mmat.shape[1]].copy()
         else:
             self.Gmat = np.array(pulsarsgroup[psrname]['Gmatrix'])
+            self.Gcmat = np.array(pulsarsgroup[psrname]['coGmatrix'])
 
         # Obtain the other stuff
         self.ptmpars = np.array(pulsarsgroup[psrname]['tmp_valpre'])
@@ -899,42 +909,40 @@ class ptaPulsar(object):
         self.Mmat = newM
         U, s, Vh = sl.svd(self.Mmat)
         self.Gmat = U[:, (self.Mmat.shape[1]):].copy()
+        self.Gcmat = U[:, :(self.Mmat.shape[1])].copy()
 
     # The number of frequencies is not the number of modes: model = 2*freqs
-    def createAuxiliaries(self, Tmax, nfreqs, ndmfreqs):
+    def createAuxiliaries(self, Tmax, nfreqs, ndmfreqs, twoComponent=False):
         (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
         self.Gr = np.dot(self.Gmat.T, self.residuals)
         self.GGr = np.dot(self.Gmat, self.Gr)
-        self.GtF = np.dot(self.Gmat.T, self.Fmat)
-        self.GGtF = np.dot(self.Gmat, self.GtF)
+        GtF = np.dot(self.Gmat.T, self.Fmat)
+        self.GGtF = np.dot(self.Gmat, GtF)
 
         # For the DM stuff
         (self.Fdmmat, self.Fdmfreqs) = fourierdesignmatrix(self.toas, 2*ndmfreqs, Tmax)
         self.Dmat = np.diag(DMk / (self.freqs**2))
         self.DF = np.dot(self.Dmat, self.Fdmmat)
-        self.GtD = np.dot(self.Gmat.T, self.DF)
-        self.GGtD = np.dot(self.Gmat, self.GtD)
+        GtD = np.dot(self.Gmat.T, self.DF)
+        self.GGtD = np.dot(self.Gmat, GtD)
 
         # DM + Red noise stuff (mark6 needs this)
         self.Emat = np.append(self.Fmat, self.DF, axis=1)
-        self.GtE = np.dot(self.Gmat.T, self.Emat)
-        self.GGtE = np.dot(self.Gmat, self.GtE)
+        GtE = np.dot(self.Gmat.T, self.Emat)
+        self.GGtE = np.dot(self.Gmat, GtE)
 
-        # Temporary, for mark2b:
-        Ceo = np.diag(self.toaerrs**2)
-        Ceq = np.identity(len(self.toas))
-        GCeoG = np.dot(self.Gmat.T, np.dot(Ceo, self.Gmat))
-        GCeqG = np.dot(self.Gmat.T, np.dot(Ceq, self.Gmat))   # Also identity...
-        cf = sl.cholesky(GCeoG)     # Upper-triangular
-        
-        U = sl.solve_triangular(cf.T, np.identity(cf.shape[0]), lower=True)
-        Cweq = np.dot(U, np.dot(GCeqG, U.T))
+        # For a two-component noise model, we need some more stuff done
+        if twoComponent:
+            self.twoComponentNoise = True
 
-        # Now find the diagonalisation of Cweq
-        self.Wvec, self.Amat = sl.eigh(Cweq)
+            # Diagonalise GtEfG
+            GtNeG = np.dot(self.Gmat.T, ((self.toaerrs**2) * self.Gmat.T).T)
+            self.Wvec, Amat = sl.eigh(GtNeG)
 
-        self.AUGr = np.dot(self.Amat, np.dot(U, self.Gr))
-        self.AUGF = np.dot(self.Amat, np.dot(U, np.dot(self.Gmat.T, self.Fmat)))
+            self.AGr = np.dot(Amat.T, self.Gr)
+            self.AGF = np.dot(Amat.T, GtF)
+            self.AGD = np.dot(Amat.T, GtD)
+            self.AGE = np.dot(Amat.T, GtE)
 
 
     # When doing Fourier mode selection, like in mark7/mark8, we need an adjusted
@@ -957,17 +965,19 @@ class ptaPulsar(object):
             bf = np.array([bfincnp, bfincnp]).T.flatten()
             bfdm = np.array([bfdmincnp, bfdmincnp]).T.flatten()
 
-            # For mark8
-            # TODO: this selecting is fast, but not general. For general, need
-            #       advanced indexing
-            self.lEmat = np.append(self.Fmat[:,bf], self.DF[:,bfdm], axis=1)
-            self.lGtE = np.append(self.GtF[:,bf], self.GtD[:,bfdm], axis=1)
-            self.lGGtE = np.append(self.GGtF[:,bf], self.GGtD[:,bfdm], axis=1)
+            if self.twoComponentNoise:
+                # For mark8
+                # TODO: this selecting is fast, but not general. For general, need
+                #       advanced indexing
+                self.lAGE = np.append(self.AGE[:,bf], self.AGD[:,bfdm], axis=1)
+                self.lAGF = self.AGF[:,bf]
+            else:
+                self.lEmat = np.append(self.Fmat[:,bf], self.DF[:,bfdm], axis=1)
+                self.lGGtE = np.append(self.GGtF[:,bf], self.GGtD[:,bfdm], axis=1)
 
-            # For mark7
-            self.lFmat = self.Fmat[:,bf]
-            self.lGtF = self.GtF[:,bf]
-            self.lGGtF = self.GGtF[:,bf]
+                # For mark7
+                self.lFmat = self.Fmat[:,bf]
+                self.lGGtF = self.GGtF[:,bf]
 
     # Just like 'setLimitedModeAuxiliaries', but now with a number as an argument
     def setLimitedModeNumber(self, nbf, nbfdm):
@@ -1426,6 +1436,7 @@ class ptaLikelihood(object):
             self.npobs[ii] = len(self.ptapsrs[ii].toas)
             self.npgs[ii] = self.ptapsrs[ii].Gmat.shape[1]
             self.ptapsrs[ii].Nvec = np.zeros(len(self.ptapsrs[ii].toas))
+            self.ptapsrs[ii].Nwvec = np.zeros(self.ptapsrs[ii].Gmat.shape[1])
 
         if self.likfunc == 'mark1':
             self.Phi = np.zeros((np.sum(self.npf), np.sum(self.npf)))
@@ -1435,14 +1446,6 @@ class ptaLikelihood(object):
             self.rGFa = np.zeros(npsrs)
             self.aFGFa = np.zeros(npsrs)
             self.avec = np.zeros(np.sum(self.npf))
-        elif self.likfunc == 'mark2b':
-            self.Phi = np.zeros((np.sum(self.npf), np.sum(self.npf)))
-            self.Thetavec = np.zeros(np.sum(self.npfdm))
-            self.Sigma = np.zeros((np.sum(self.npf), np.sum(self.npf)))
-            self.GNGldet = np.zeros(npsrs)
-            self.rGr = np.zeros(npsrs)
-            self.rGF = np.zeros(np.sum(self.npf))
-            self.FGGNGGF = np.zeros((np.sum(self.npf), np.sum(self.npf)))
         elif self.likfunc == 'mark3' or self.likfunc == 'mark7':
             self.Phi = np.zeros((np.sum(self.npf), np.sum(self.npf)))
             self.Thetavec = np.zeros(np.sum(self.npfdm))
@@ -1506,7 +1509,7 @@ class ptaLikelihood(object):
             if ndmfreqmodes is None:
                 ndmfreqmodes = nfreqmodes
 
-            m2psr.createAuxiliaries(Tmax, nfreqmodes, ndmfreqmodes)
+            m2psr.createAuxiliaries(Tmax, nfreqmodes, ndmfreqmodes, not separateEfacs)
 
             # When selecting Fourier modes, like in mark7/mark8, the binclude vector
             # indicates whether or not a frequency is included in the likelihood. By
@@ -1675,11 +1678,15 @@ class ptaLikelihood(object):
     """
     Loop over all signals, and fill the diagonal pulsar noise covariance matrix
     (based on efac/equad)
+    For two-component noise model, fill the total weights vector
     """
     def setPsrNoise(self, parameters):
         # For every pulsar, set the noise vector to zero
         for m2psr in self.ptapsrs:
-            m2psr.Nvec[:] = 0
+            if m2psr.twoComponentNoise:
+                m2psr.Nwvec[:] = 0
+            else:
+                m2psr.Nvec[:] = 0
 
         # Loop over all white noise signals, and fill the pulsar Nvec
         for m2signal in self.ptasignals:
@@ -1687,7 +1694,12 @@ class ptaLikelihood(object):
                 pefac = 1.0
                 if m2signal.npars == 1:
                     pefac = parameters[m2signal.nindex]
-                self.ptapsrs[m2signal.pulsarind].Nvec += m2signal.Nvec * pefac**2
+
+                if self.ptapsrs[m2signal.pulsarind].twoComponentNoise:
+                    self.ptapsrs[m2signal.pulsarind].Nwvec += \
+                            self.ptapsrs[m2signal.pulsarind].Wvec * pefac**2
+                else:
+                    self.ptapsrs[m2signal.pulsarind].Nvec += m2signal.Nvec * pefac**2
 
                 #if m2signal.bvary[0]:
                 #    pefac = parameters[m2signal.nindex]
@@ -1696,7 +1708,11 @@ class ptaLikelihood(object):
                 #self.ptapsrs[m2signal.pulsarind].Nvec += m2signal.Nvec * pefac**2
             elif m2signal.stype == 'equad':
                 pequadsqr = 10**(2*parameters[m2signal.nindex])
-                self.ptapsrs[m2signal.pulsarind].Nvec += m2signal.Nvec * pequadsqr
+
+                if self.ptapsrs[m2signal.pulsarind].twoComponentNoise:
+                    self.ptapsrs[m2signal.pulsarind].Nwvec += pequadsqr
+                else:
+                    self.ptapsrs[m2signal.pulsarind].Nvec += m2signal.Nvec * pequadsqr
 
                 #if m2signal.bvary[0]:
                 #    pequadsqr = 10**(2*parameters[m2signal.nindex])
@@ -2114,125 +2130,6 @@ class ptaLikelihood(object):
                -0.5*np.sum(self.GNGldet) - 0.5*aPhia - 0.5*PhiLD
 
 
-    """
-    Assume parameter 0 is efac
-    Assume parameter 1 is equad
-    Assume parameter 2 is amplitude
-    Assume parameter 3 is spectral index
-    """
-    def mark2aloglikelihood(self, parameters):
-        npsrs = len(self.ptapsrs)
-
-        psr = self.ptapsrs[0]
-
-        efac = parameters[0]
-        equad = 10**parameters[1]
-        Amp = 10**parameters[2]
-        alpha = 0.5 * (3 - parameters[3])
-
-        Cov = Amp**2 * Cred_sec(psr.toas, alpha)
-        Nvec = psr.toaerrs * efac**2 + equad**2
-
-        Cov += np.diag(Nvec)
-        GCG = np.dot(psr.Gmat.T, np.dot(Cov, psr.Gmat))
-
-        try:
-            cf = sl.cho_factor(GCG)
-            CovLD = 2*np.sum(np.log(np.diag(cf[0])))
-            rGr = np.dot(psr.Gr, sl.cho_solve(cf, psr.Gr))
-        except np.linalg.LinAlgError:
-            U, s, Vh = sl.svd(GCG)
-            if not np.all(s > 0):
-                raise ValueError("ERROR: C singular according to SVD")
-            CovLD = np.sum(np.log(s))
-            rGr = np.dot(psr.Gr, np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, psr.Gr))))
-
-        # Now we are ready to return the log-likelihood
-        return -0.5*np.sum(rGr) - 0.5*CovLD
-
-
-    """
-    Assume parameter 0 is efac
-    Assume parameter 1 is equad
-    Assume parameter 2 is amplitude
-    Assume parameter 3 is spectral index
-    """
-    def mark2bloglikelihood(self, parameters):
-        npsrs = len(self.ptapsrs)
-
-        self.constructPhiAndTheta(parameters)
-
-        efac = parameters[0]
-        equad = 10**parameters[1]
-        Amp = 10**parameters[2]
-        alpha = 0.5 * (3 - parameters[3])
-
-        for ii in range(npsrs):
-            self.ptapsrs[ii].Nwvec = equad**2 * self.ptapsrs[ii].Wvec + efac**2
-
-        # MARK B
-
-        # Armed with the Noise (and it's inverse), we'll construct the
-        # auxiliaries for all pulsars
-        for ii in range(npsrs):
-            findex = np.sum(self.npf[:ii])
-            nfreq = int(self.npf[ii]/2)
-
-            # One temporary quantity
-            # This is equivalent to np.dot(np.diag(1.0/Nvec, GGtF))
-            NGGF = ((1.0/self.ptapsrs[ii].Nwvec) * self.ptapsrs[ii].AUGF.T).T
-            # This was too slow
-            # NGGF = np.array([(1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].GGtF[:,i] for i in range(self.ptapsrs[ii].Fmat.shape[1])]).T
-
-            # Fill the auxiliaries
-            nobs = len(self.ptapsrs[ii].toas)
-            ng = self.ptapsrs[ii].Gmat.shape[1]
-
-            self.rGr[ii] = np.sum(self.ptapsrs[ii].AUGr ** 2 / self.ptapsrs[ii].Nwvec)
-            self.rGF[findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].AUGr, NGGF)
-            self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nwvec))
-            self.FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].AUGF.T, NGGF)
-
-        # Now that all arrays are filled, we can proceed to do some linear
-        # algebra. First we'll invert Phi. For a single pulsar, this will be
-        # diagonal
-        if npsrs == 1:
-            PhiLD = np.sum(np.log(np.diag(self.Phi)))
-            Phiinv = np.diag(1.0 / np.diag(self.Phi))
-        else:
-            try:
-                cf = sl.cho_factor(self.Phi)
-                PhiLD = 2*np.sum(np.log(np.diag(cf[0])))
-                Phiinv = sl.cho_solve(cf, np.identity(self.Phi.shape[0]))
-            except np.linalg.LinAlgError:
-                U, s, Vh = sl.svd(self.Phi)
-                if not np.all(s > 0):
-                    raise ValueError("ERROR: Phi singular according to SVD")
-                PhiLD = np.sum(np.log(s))
-                Phiinv = np.dot(Vh.T, np.dot(np.diag(1.0/s), U.T))
-
-                print "Fallback to SVD for Phi"
-
-        # MARK E
-
-        # Construct and decompose Sigma
-        self.Sigma = self.FGGNGGF + Phiinv
-        try:
-            cf = sl.cho_factor(self.Sigma)
-            SigmaLD = 2*np.sum(np.log(np.diag(cf[0])))
-            rGSigmaGr = np.dot(self.rGF, sl.cho_solve(cf, self.rGF))
-        except np.linalg.LinAlgError:
-            U, s, Vh = sl.svd(self.Sigma)
-            if not np.all(s > 0):
-                raise ValueError("ERROR: Sigma singular according to SVD")
-            SigmaLD = np.sum(np.log(s))
-            rGSigmaGr = np.dot(self.rGF, np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, self.rGF))))
-        # Mark F
-
-        # Now we are ready to return the log-likelihood
-        return -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) + 0.5*rGSigmaGr - 0.5*PhiLD - 0.5*SigmaLD
-
-
 
 
 
@@ -2283,20 +2180,55 @@ class ptaLikelihood(object):
             findex = np.sum(self.npf[:ii])
             nfreq = int(self.npf[ii]/2)
 
-            # One temporary quantity
-            # This is equivalent to np.dot(np.diag(1.0/Nvec, GGtF))
-            NGGF = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].GGtF.T).T
-            # This was too slow
-            # NGGF = np.array([(1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].GGtF[:,i] for i in range(self.ptapsrs[ii].Fmat.shape[1])]).T
+            if self.ptapsrs[ii].twoComponentNoise:
+                # This is equivalent to np.dot(np.diag(1.0/Nwvec, AGF))
+                NGGF = ((1.0/self.ptapsrs[ii].Nwvec) * self.ptapsrs[ii].AGF.T).T
 
-            # Fill the auxiliaries
-            nobs = len(self.ptapsrs[ii].toas)
-            ng = self.ptapsrs[ii].Gmat.shape[1]
+                self.rGr[ii] = np.sum(self.ptapsrs[ii].AGr ** 2 / self.ptapsrs[ii].Nwvec)
+                self.rGF[findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].AGr, NGGF)
+                self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nwvec))
+                self.FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].AGF.T, NGGF)
+            else:
+                Nir = self.ptapsrs[ii].residuals / self.ptapsrs[ii].Nvec
+                NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Gcmat.T).T
+                GcNiGc = np.dot(self.ptapsrs[ii].Gcmat.T, NiGc)
+                NiF = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Fmat.T).T
+                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].residuals)
+                GcNiF = np.dot(NiGc.T, self.ptapsrs[ii].Fmat)
 
-            self.rGr[ii] = np.sum(self.ptapsrs[ii].GGr ** 2 / self.ptapsrs[ii].Nvec)
-            self.rGF[findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].GGr, NGGF)
-            self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nvec)) * ng / nobs
-            self.FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].GGtF.T, NGGF)
+                try:
+                    cf = sl.cho_factor(GcNiGc)
+                    self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nvec)) + \
+                            2*np.sum(np.log(np.diag(cf[0])))
+                    GcNiGcr = sl.cho_solve(cf, GcNir)
+                    GcNiGcF = sl.cho_solve(cf, GcNiF)
+                except np.linalg.LinAlgError:
+                    print "MAJOR ERROR"
+
+                self.rGr[ii] = np.dot(self.ptapsrs[ii].residuals, Nir) \
+                        - np.dot(GcNir, GcNiGcr)
+                self.rGF[findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].residuals, NiF) \
+                        - np.dot(GcNir, GcNiGcF)
+                self.FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = \
+                        np.dot(NiF.T, self.ptapsrs[ii].Fmat) - np.dot(GcNiF.T, GcNiGcF)
+
+
+                """
+                # One temporary quantity
+                # This is equivalent to np.dot(np.diag(1.0/Nvec, GGtF))
+                NGGF = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].GGtF.T).T
+                # This was too slow
+                # NGGF = np.array([(1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].GGtF[:,i] for i in range(self.ptapsrs[ii].Fmat.shape[1])]).T
+
+                # Fill the auxiliaries
+                nobs = len(self.ptapsrs[ii].toas)
+                ng = self.ptapsrs[ii].Gmat.shape[1]
+
+                self.rGr[ii] = np.sum(self.ptapsrs[ii].GGr ** 2 / self.ptapsrs[ii].Nvec)
+                self.rGF[findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].GGr, NGGF)
+                self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nvec)) * ng / nobs
+                self.FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].GGtF.T, NGGF)
+                """
 
         # MARK D
         
@@ -2484,6 +2416,38 @@ class ptaLikelihood(object):
             nfreq = int(self.npf[ii]/2)
             nfreqdm = int(self.npfdm[ii]/2)
 
+            if self.ptapsrs[ii].twoComponentNoise:
+                NGGE = ((1.0/self.ptapsrs[ii].Nwvec) * self.ptapsrs[ii].AGE.T).T
+
+                self.rGr[ii] = np.sum(self.ptapsrs[ii].AGr ** 2 / self.ptapsrs[ii].Nwvec)
+                self.rGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].AGr, NGGE)
+                self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nwvec))
+                self.EGGNGGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm, findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].AGE.T, NGGE)
+            else:
+                Nir = self.ptapsrs[ii].residuals / self.ptapsrs[ii].Nvec
+                NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Gcmat.T).T
+                GcNiGc = np.dot(self.ptapsrs[ii].Gcmat.T, NiGc)
+                NiE = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Emat.T).T
+                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].residuals)
+                GcNiE = np.dot(NiGc.T, self.ptapsrs[ii].Emat)
+
+                try:
+                    cf = sl.cho_factor(GcNiGc)
+                    self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nvec)) + \
+                            2*np.sum(np.log(np.diag(cf[0])))
+                    GcNiGcr = sl.cho_solve(cf, GcNir)
+                    GcNiGcE = sl.cho_solve(cf, GcNiE)
+                except np.linalg.LinAlgError:
+                    print "MAJOR ERROR"
+
+                self.rGr[ii] = np.dot(self.ptapsrs[ii].residuals, Nir) \
+                        - np.dot(GcNir, GcNiGcr)
+                self.rGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].residuals, NiE) \
+                        - np.dot(GcNir, GcNiGcE)
+                self.EGGNGGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm, findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = \
+                        np.dot(NiE.T, self.ptapsrs[ii].Emat) - np.dot(GcNiE.T, GcNiGcE)
+
+            """
             # One temporary quantity
             NGGE = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].GGtE.T).T
 
@@ -2494,6 +2458,7 @@ class ptaLikelihood(object):
             self.rGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].GGr, NGGE)
             self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nvec)) * ng / nobs
             self.EGGNGGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm, findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].GGtE.T, NGGE)
+            """
 
         
         # Now that all arrays are filled, we can proceed to do some linear
@@ -2585,21 +2550,54 @@ class ptaLikelihood(object):
         # auxiliaries for all pulsars
         for ii in range(npsrs):
             findex = np.sum(self.lnpf[:ii])
-            #fdmindex = np.sum(self.lnpfdm[:ii])
             nfreq = int(self.lnpf[ii]/2)
-            #nfreqdm = int(self.lnpfdm[ii]/2)
 
-            # One temporary quantity
-            NGGF = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].lGGtF.T).T
+            if self.ptapsrs[ii].twoComponentNoise:
+                # This is equivalent to np.dot(np.diag(1.0/Nwvec, AGF))
+                NGGF = ((1.0/self.ptapsrs[ii].Nwvec) * self.ptapsrs[ii].lAGF.T).T
 
-            # Fill the auxiliaries
-            nobs = len(self.ptapsrs[ii].toas)
-            ng = self.ptapsrs[ii].Gmat.shape[1]
+                self.rGr[ii] = np.sum(self.ptapsrs[ii].AGr ** 2 / self.ptapsrs[ii].Nwvec)
+                self.rGF[findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].AGr, NGGF)
+                self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nwvec))
+                self.FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].lAGF.T, NGGF)
+            else:
+                Nir = self.ptapsrs[ii].residuals / self.ptapsrs[ii].Nvec
+                NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Gcmat.T).T
+                GcNiGc = np.dot(self.ptapsrs[ii].Gcmat.T, NiGc)
+                NiF = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].lFmat.T).T
+                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].residuals)
+                GcNiF = np.dot(NiGc.T, self.ptapsrs[ii].lFmat)
 
-            self.rGr[ii] = np.sum(self.ptapsrs[ii].GGr ** 2 / self.ptapsrs[ii].Nvec)
-            self.rGF[findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].GGr, NGGF)
-            self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nvec)) * ng / nobs
-            self.FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].lGGtF.T, NGGF)
+                try:
+                    cf = sl.cho_factor(GcNiGc)
+                    self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nvec)) + \
+                            2*np.sum(np.log(np.diag(cf[0])))
+                    GcNiGcr = sl.cho_solve(cf, GcNir)
+                    GcNiGcF = sl.cho_solve(cf, GcNiF)
+                except np.linalg.LinAlgError:
+                    print "MAJOR ERROR"
+
+                self.rGr[ii] = np.dot(self.ptapsrs[ii].residuals, Nir) \
+                        - np.dot(GcNir, GcNiGcr)
+                self.rGF[findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].residuals, NiF) \
+                        - np.dot(GcNir, GcNiGcF)
+                self.FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = \
+                        np.dot(NiF.T, self.ptapsrs[ii].lFmat) - np.dot(GcNiF.T, GcNiGcF)
+
+
+                """
+                # One temporary quantity
+                NGGF = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].lGGtF.T).T
+
+                # Fill the auxiliaries
+                nobs = len(self.ptapsrs[ii].toas)
+                ng = self.ptapsrs[ii].Gmat.shape[1]
+
+                self.rGr[ii] = np.sum(self.ptapsrs[ii].GGr ** 2 / self.ptapsrs[ii].Nvec)
+                self.rGF[findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].GGr, NGGF)
+                self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nvec)) * ng / nobs
+                self.FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].lGGtF.T, NGGF)
+                """
 
         
         # Now that all arrays are filled, we can proceed to do some linear
@@ -2725,16 +2723,48 @@ class ptaLikelihood(object):
             nfreq = int(self.lnpf[ii]/2)
             nfreqdm = int(self.lnpfdm[ii]/2)
 
-            # One temporary quantity
-            NGGE = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].lGGtE.T).T
+            if self.ptapsrs[ii].twoComponentNoise:
+                NGGE = ((1.0/self.ptapsrs[ii].Nwvec) * self.ptapsrs[ii].lAGE.T).T
 
-            # Fill the auxiliaries
-            nobs = len(self.ptapsrs[ii].toas)
-            ng = self.ptapsrs[ii].Gmat.shape[1]
-            self.rGr[ii] = np.sum(self.ptapsrs[ii].GGr ** 2 / self.ptapsrs[ii].Nvec)
-            self.rGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].GGr, NGGE)
-            self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nvec)) * ng / nobs
-            self.EGGNGGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm, findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].lGGtE.T, NGGE)
+                self.rGr[ii] = np.sum(self.ptapsrs[ii].AGr ** 2 / self.ptapsrs[ii].Nwvec)
+                self.rGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].AGr, NGGE)
+                self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nwvec))
+                self.EGGNGGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm, findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].lAGE.T, NGGE)
+            else:
+                Nir = self.ptapsrs[ii].residuals / self.ptapsrs[ii].Nvec
+                NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Gcmat.T).T
+                GcNiGc = np.dot(self.ptapsrs[ii].Gcmat.T, NiGc)
+                NiE = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].lEmat.T).T
+                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].residuals)
+                GcNiE = np.dot(NiGc.T, self.ptapsrs[ii].lEmat)
+
+                try:
+                    cf = sl.cho_factor(GcNiGc)
+                    self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nvec)) + \
+                            2*np.sum(np.log(np.diag(cf[0])))
+                    GcNiGcr = sl.cho_solve(cf, GcNir)
+                    GcNiGcE = sl.cho_solve(cf, GcNiE)
+                except np.linalg.LinAlgError:
+                    print "MAJOR ERROR"
+
+                self.rGr[ii] = np.dot(self.ptapsrs[ii].residuals, Nir) \
+                        - np.dot(GcNir, GcNiGcr)
+                self.rGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].residuals, NiE) \
+                        - np.dot(GcNir, GcNiGcE)
+                self.EGGNGGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm, findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = \
+                        np.dot(NiE.T, self.ptapsrs[ii].lEmat) - np.dot(GcNiE.T, GcNiGcE)
+                """
+                # One temporary quantity
+                NGGE = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].lGGtE.T).T
+
+                # Fill the auxiliaries
+                nobs = len(self.ptapsrs[ii].toas)
+                ng = self.ptapsrs[ii].Gmat.shape[1]
+                self.rGr[ii] = np.sum(self.ptapsrs[ii].GGr ** 2 / self.ptapsrs[ii].Nvec)
+                self.rGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].GGr, NGGE)
+                self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nvec)) * ng / nobs
+                self.EGGNGGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm, findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].lGGtE.T, NGGE)
+                """
 
         
         # MARK F
@@ -2793,10 +2823,6 @@ class ptaLikelihood(object):
         if(np.all(self.pmin <= parameters) and np.all(parameters <= self.pmax)):
             if self.likfunc == 'mark1':
                 ll = self.mark1loglikelihood(parameters)
-            elif self.likfunc == 'mark2a':
-                ll = self.mark2aloglikelihood(parameters)
-            elif self.likfunc == 'mark2b':
-                ll = self.mark2bloglikelihood(parameters)
             elif self.likfunc == 'mark3':
                 ll = self.mark3loglikelihood(parameters)
             elif self.likfunc == 'mark4':
