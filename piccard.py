@@ -2213,22 +2213,6 @@ class ptaLikelihood(object):
                         np.dot(NiF.T, self.ptapsrs[ii].Fmat) - np.dot(GcNiF.T, GcNiGcF)
 
 
-                """
-                # One temporary quantity
-                # This is equivalent to np.dot(np.diag(1.0/Nvec, GGtF))
-                NGGF = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].GGtF.T).T
-                # This was too slow
-                # NGGF = np.array([(1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].GGtF[:,i] for i in range(self.ptapsrs[ii].Fmat.shape[1])]).T
-
-                # Fill the auxiliaries
-                nobs = len(self.ptapsrs[ii].toas)
-                ng = self.ptapsrs[ii].Gmat.shape[1]
-
-                self.rGr[ii] = np.sum(self.ptapsrs[ii].GGr ** 2 / self.ptapsrs[ii].Nvec)
-                self.rGF[findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].GGr, NGGF)
-                self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nvec)) * ng / nobs
-                self.FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].GGtF.T, NGGF)
-                """
 
         # MARK D
         
@@ -2280,6 +2264,9 @@ class ptaLikelihood(object):
     adding a separate analytical integration over DM Fourier modes. This is
     necessary, since the DM variations and red noise work in a different set of
     basis functions
+
+    Note: deprecated since the two-component noise model and the generalised
+          approach
     """
     def mark4loglikelihood(self, parameters):
         npsrs = len(self.ptapsrs)
@@ -2447,19 +2434,6 @@ class ptaLikelihood(object):
                 self.EGGNGGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm, findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = \
                         np.dot(NiE.T, self.ptapsrs[ii].Emat) - np.dot(GcNiE.T, GcNiGcE)
 
-            """
-            # One temporary quantity
-            NGGE = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].GGtE.T).T
-
-            # Fill the auxiliaries
-            nobs = len(self.ptapsrs[ii].toas)
-            ng = self.ptapsrs[ii].Gmat.shape[1]
-            self.rGr[ii] = np.sum(self.ptapsrs[ii].GGr ** 2 / self.ptapsrs[ii].Nvec)
-            self.rGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].GGr, NGGE)
-            self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nvec)) * ng / nobs
-            self.EGGNGGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm, findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].GGtE.T, NGGE)
-            """
-
         
         # Now that all arrays are filled, we can proceed to do some linear
         # algebra. First we'll invert Phi. For a single pulsar, this will be
@@ -2584,20 +2558,6 @@ class ptaLikelihood(object):
                 self.FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = \
                         np.dot(NiF.T, self.ptapsrs[ii].lFmat) - np.dot(GcNiF.T, GcNiGcF)
 
-
-                """
-                # One temporary quantity
-                NGGF = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].lGGtF.T).T
-
-                # Fill the auxiliaries
-                nobs = len(self.ptapsrs[ii].toas)
-                ng = self.ptapsrs[ii].Gmat.shape[1]
-
-                self.rGr[ii] = np.sum(self.ptapsrs[ii].GGr ** 2 / self.ptapsrs[ii].Nvec)
-                self.rGF[findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].GGr, NGGF)
-                self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nvec)) * ng / nobs
-                self.FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].lGGtF.T, NGGF)
-                """
 
         
         # Now that all arrays are filled, we can proceed to do some linear
@@ -2753,18 +2713,6 @@ class ptaLikelihood(object):
                         - np.dot(GcNir, GcNiGcE)
                 self.EGGNGGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm, findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = \
                         np.dot(NiE.T, self.ptapsrs[ii].lEmat) - np.dot(GcNiE.T, GcNiGcE)
-                """
-                # One temporary quantity
-                NGGE = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].lGGtE.T).T
-
-                # Fill the auxiliaries
-                nobs = len(self.ptapsrs[ii].toas)
-                ng = self.ptapsrs[ii].Gmat.shape[1]
-                self.rGr[ii] = np.sum(self.ptapsrs[ii].GGr ** 2 / self.ptapsrs[ii].Nvec)
-                self.rGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].GGr, NGGE)
-                self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nvec)) * ng / nobs
-                self.EGGNGGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm, findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].lGGtE.T, NGGE)
-                """
 
         
         # MARK F
