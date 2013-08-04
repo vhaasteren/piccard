@@ -3792,11 +3792,11 @@ def makellplot(chainfilename, numfigs=2):
 
   # For each chain, plot the ll range
   for i in uniquechains:
-    if i < numfigs*len(styles):
-      if i % len(styles) == 0:
-	plt.figure()
-      plt.plot(np.arange(emceechain[(emceechain[:,0]==i),1].size), \
-	  emceechain[(emceechain[:,0]==i),1], styles[int(i % len(styles))])
+      if i < numfigs*len(styles):
+          if i % len(styles) == 0:
+              plt.figure()
+              plt.plot(np.arange(emceechain[(emceechain[:,0]==i),1].size), \
+                      emceechain[(emceechain[:,0]==i),1], styles[int(i % len(styles))])
 
   plt.xlabel("Sample number")
   plt.ylabel("Log-likelihood")
@@ -3846,6 +3846,16 @@ def makefouriermodenumberplot(chainfilename, incDM=True):
     plt.xlabel('Nr. of frequencies')
     plt.ylabel('Probability')
     plt.grid(True, which='major')
+
+"""
+Given a likelihood object, a 'normal' MCMC chain file, and an output directory,
+this function spits out a lot of plots summarising all relevant results of the
+MCMC
+"""
+def makeresultsplot(likob, chainfilename, outputdir):
+    emceechain = np.loadtxt(chainfilename)
+
+    # CONTINUE HERE
 
 
 """
