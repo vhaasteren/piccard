@@ -1676,6 +1676,72 @@ class ptaLikelihood(object):
                     index += 1
 
     """
+    Return a list of all efac parameter numbers, their names, and the pulsar
+    they belong to
+    """
+    def getEfacNumbers(self):
+        parind = []
+        psrind = []
+        names = []
+
+        for ii in range(len(self.ptasignals)):
+            if self.ptasignals[ii].stype == 'efac' and self.ptasignals[ii].bvary[0]:
+                parind.append(self.ptasignals[ii].nindex)
+                psrind.append(self.ptasignals[ii].pulsarind)
+                names.append(self.ptasignals[ii].flagvalue)
+
+        return (parind, psrind, names)
+
+    """
+    Return a list of all spectrum signals: signal name, start-par, stop-par, and
+    the actual frequencies
+
+    TODO: parameters can be non-varying. Take that into accoutn as well
+    """
+    def getSpectraNumbers(self):
+        signame = []
+        signameshort = []
+        parmin = []
+        parmax = []
+        freqs = []
+        for ii in range(len(self.ptasignals)):
+            if self.ptasignals[ii].stype == 'spectrum' or self.ptasignals[ii].stype == 'dmspectrum':
+                if self.ptasignals[ii].stype == 'spectrum' and self.ptasignals[ii].corr == 'single':
+                    signame.append('Red noise ' + self.ptapsrs[self.ptasignals[ii].pulsarind].name)
+                    signameshort.append('rnspectrum-' + self.ptapsrs[self.ptasignals[ii].pulsarind].name)
+                    freqs.append(np.sort(np.array(list(set(self.ptapsrs[0].Ffreqs)))))
+                elif self.ptasignals[ii].stype == 'spectrum' and self.ptasignals[ii].corr == 'gr':
+                    signame.append('GWB spectrum')
+                    signameshort.append('gwbspectrum')
+                    freqs.append(np.sort(np.array(list(set(self.ptapsrs[0].Ffreqs)))))
+                elif self.ptasignals[ii].stype == 'spectrum' and self.ptasignals[ii].corr == 'uniform':
+                    signame.append('Clock spectrum')
+                    signameshort.append('clockspectrum')
+                    freqs.append(np.sort(np.array(list(set(self.ptapsrs[0].Ffreqs)))))
+                elif self.ptasignals[ii].stype == 'spectrum' and self.ptasignals[ii].corr == 'dipole':
+                    signame.append('Dipole spectrum')
+                    signameshort.append('dipolespectrum')
+                    freqs.append(np.sort(np.array(list(set(self.ptapsrs[0].Ffreqs)))))
+                elif self.ptasignals[ii].stype == 'spectrum' and self.ptasignals[ii].corr == 'anisotropicgwb':
+                    signame.append('Anisotropy spectrum')
+                    signameshort.append('anisotropyspectrum')
+                    freqs.append(np.sort(np.array(list(set(self.ptapsrs[0].Ffreqs)))))
+                elif self.ptasignals[ii].stype == 'dmspectrum':
+                    signame.append('DM variation ' + self.ptapsrs[self.ptasignals[ii].pulsarind].name)
+                    signameshort.append('dmspectrum-' + self.ptapsrs[self.ptasignals[ii].pulsarind].name)
+                    freqs.append(np.sort(np.array(list(set(self.ptapsrs[self.ptasignals[ii].pulsarind].Fdmfreqs)))))
+                else:
+                    signame.append('Spectrum')
+                    signameshort.append('spectrum')
+                    freqs.append(np.sort(np.array(list(set(self.ptapsrs[0].Ffreqs)))))
+
+                parmin.append(self.ptasignals[ii].nindex)
+                parmax.append(self.ptasignals[ii].nindex+self.ptasignals[ii].npars)
+
+        return (signame, signameshort, parmin, parmax, freqs)
+
+
+    """
     Loop over all signals, and fill the diagonal pulsar noise covariance matrix
     (based on efac/equad)
     For two-component noise model, fill the total weights vector
@@ -3855,7 +3921,101 @@ MCMC
 def makeresultsplot(likob, chainfilename, outputdir):
     emceechain = np.loadtxt(chainfilename)
 
-    # CONTINUE HERE
+    # First make a plot of all efac's
+    efacparind, efacpsrind, efacnames = likob.getEfacNumbers()
+
+    if len(efacparind) > 0:
+        maxplotpars = 20
+        pages = int(1 + len(efacparind) / maxplotpars)
+        for pp in range(pages):
+            minpar = pp * maxplotpars
+            maxpar = min(len(efacparind), minpar + maxplotpars)
+            fileout = outputdir+'/efac-page-' + str(pp)
+
+            # Create the plotting data for this plot
+            x = np.arange(maxpar-minpar)
+            yval = np.zeros(maxpar-minpar)
+            yerr = np.zeros(maxpar-minpar)
+
+            for ii in range(maxpar-minpar):
+                fmin, fmax = confinterval(emceechain[:, efacparind[ii]+2], sigmalevel=1)
+                yval[ii] = (fmax + fmin) * 0.5
+                yerr[ii] = (fmax - fmin) * 0.5
+
+            # Now make the plot
+            fig = plt.figure()
+
+            #fig = plt.figure(figsize=(10,6))   # Figure size can be adjusted if it gets big
+            ax = fig.add_subplot(111)
+
+            #plt.subplots_adjust(left=0.075, right=0.95, top=0.9, bottom=0.25)
+            plt.subplots_adjust(left=0.115, right=0.95, top=0.9, bottom=0.25)
+
+            resp = ax.errorbar(x, yval, yerr=yerr, fmt='.', c='blue')
+
+            ax.axis([-1, max(x)+1, 0, max(yval+yerr)+1])
+            ax.xaxis.grid(True, which='major')
+
+            #ax.yaxis.grid(True, linestyle='-', which='major', color='lightgrey',
+            #              alpha=1.0)
+
+            ax.set_xticks(np.arange(maxpar-minpar))
+
+            ax.set_title(r'Efac values, page ' + str(pp))
+            ax.set_ylabel(r'EFAC')
+            #ax.legend(('Rutger', 'Rutger ML', 'Lindley', 'Steve',), shadow=True, fancybox=True, numpoints=1)
+            ax.set_yscale('log')
+
+            xtickNames = plt.setp(ax, xticklabels=efacnames[minpar:maxpar])
+            #plt.getp(xtickNames)
+            plt.setp(xtickNames, rotation=45, fontsize=8, ha='right')
+
+            plt.savefig(fileout+'.png')
+            plt.savefig(fileout+'.eps')
+
+    # Make a plot of the spectra of all pulsars
+    spectrumname, spectrumnameshort, spmin, spmax, spfreqs = likob.getSpectraNumbers()
+
+    for ii in range(len(spectrumname)):
+        minpar = spmin[ii]
+        maxpar = spmax[ii]
+        fileout = outputdir+'/'+spectrumnameshort[ii]
+
+        # Create the plotting data for this plot
+        x = np.log(np.array(spfreqs[ii]))
+        yval = np.zeros(len(x))
+        yerr = np.zeros(len(x))
+
+        if (maxpar-minpar) != len(x):
+            raise ValueError("ERROR: len(freqs) != maxpar-minpar")
+
+        for jj in range(maxpar-minpar):
+            fmin, fmax = confinterval(emceechain[:, minpar+jj+2], sigmalevel=1)
+            yval[jj] = (fmax + fmin) * 0.5
+            yerr[jj] = (fmax - fmin) * 0.5
+
+        fig = plt.figure()
+
+        plt.errorbar(x, yval, yerr=yerr, fmt='.', c='blue')
+
+        plt.axis([np.min(x)-0.1, np.max(x)+0.1, np.min(yval-yerr)-1, np.max(yval+yerr)+1])
+        plt.xlabel("Frequency [log(f/Hz)]")
+        plt.ylabel("Power [log(r)]")
+        plt.grid(True)
+        plt.title(spectrumname[ii])
+
+        plt.savefig(fileout+'.png')
+        plt.savefig(fileout+'.eps')
+
+
+
+
+
+
+
+
+
+
 
 
 """
@@ -3915,6 +4075,14 @@ matrix
 """
 def RunRJMCMC(likob, steps, chainfilename, initfile=None, resize=0.088, \
         jumpprob=0.01, jumpsize1=1, jumpsize2=1, mhinitfile=False):
+  # Check the likelihood object, and record the likelihood function
+  if likob.likfunc == 'mark7':
+      lpfn = likob.mark7logposterior
+  elif likob.likfunc == 'mark8':
+      lpfn = likob.mark8logposterior
+  else:
+      raise ValueError("ERROR: must use mark7 or mark8 likelihood functions")
+
   # Save the parameters to file
   likob.saveModelParameters(chainfilename + '.parameters.txt')
 
@@ -3953,13 +4121,6 @@ def RunRJMCMC(likob, steps, chainfilename, initfile=None, resize=0.088, \
     cov[i,i] = pwidth[i]*pwidth[i]
 
   # Initialise the emcee Reversible-Jump Metropolis-Hastings sampler
-  if likob.likfunc == 'mark7':
-      lpfn = likob.mark7logposterior
-  elif likob.likfunc == 'mark8':
-      lpfn = likob.mark8logposterior
-  else:
-      raise ValueError("ERROR: must use mark7 or mark8 likelihood functions")
-
   sampler = rjemcee.RJMHSampler(jumpprob, jumpsize1, jumpsize2, \
           likob.afterJumpPars, likob.proposeNextDimJump, \
           likob.transDimJumpAccepted, cov, ndim, lpfn, args=[])
