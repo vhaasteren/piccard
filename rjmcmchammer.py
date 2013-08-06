@@ -140,8 +140,18 @@ class RJMHSampler(emcee.MHSampler):
             qmod1 = mod1
             qmod2 = mod2
 
+            # J1643-hack. 1% of the time, do a 39-3 or 3-39 jump
+            # if self._random.rand() < 0.01:
+            #    if qmod1 == 5:
+            #        qmod1 = 39
+            #        q = self.jumpparsfn(q, qmod1, qmod2)
+            #    elif qmod1 == 39:
+            #        qmod1 = 5
+            #        q = self.jumpparsfn(q, qmod1, qmod2)
+
+
             # Decide whether we will do a trans-dimensional jump
-            if self._random.rand() < self.jprob:
+            elif self._random.rand() < self.jprob:
                 # Trans-dim jump. Adjust the models and parameters
                 qmod1, qmod2 = self.propdjumpfn(self.jumpsize1, self.jumpsize2)
                 q = self.jumpparsfn(q, qmod1, qmod2)

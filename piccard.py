@@ -6,10 +6,12 @@ dataformat.py
 
 Requirements:
 - numpy:        pip install numpy
-- emcee:        pip install emcee
 - h5py:         macports, apt-get, http://h5py.googlecode.com/
 - matplotlib:   macports, apt-get
+- emcee:        pip install emcee (fallback option included)
+- pyMultiNest:  (optional)
 - pytwalk:      (included)
+- pydnest:      (included)
 
 
 Notes:
@@ -3503,6 +3505,141 @@ class ptaLikelihood(object):
 
         CtGCp = np.dot(Cpred, np.dot(totG, GCGCp))
         recsigCov = Cpred - CtGCp
+
+        return recsig, np.diag(recsigCov)
+
+
+    """
+    Same as mlPredictionFilter, but this one requires one very specific extra
+    object: a likelihood object initialised with the same dataset (par+tim) as
+    the previous one, except that it has some virtual toas added to it. These
+    virtual toas are for prediction/interpolation.
+    """
+    def mlPredictionFilter2(self, predlikob, mlparameters, signum=None, selection=None):
+        npsrs = len(self.ptapsrs)
+
+        if signum is not None:
+            selection = np.array([0]*len(self.ptasignals), dtype=np.bool)
+            selection[signum] = True
+        elif selection is None:
+            # Make a prediction for _all_ signals (i.e. true residuals with
+            # timing model paramers correctly removed)
+            selection = np.array([1]*len(self.ptasignals), dtype=np.bool)
+
+        # The full covariance matrix components
+        self.constructPhiAndTheta(mlparameters)
+        allPhi = self.Phi.copy()
+        allThetavec = self.Thetavec.copy()
+
+        # The covariance matrix components of the prediction signal
+        predlikob.constructPhiAndTheta(mlparameters, selection)
+        predPhi = self.Phi.copy()
+        predThetavec = self.Thetavec.copy()
+
+        # The white noise
+        self.setPsrNoise(mlparameters)
+        predlikob.setPsrNoise(mlparameters)
+
+        GCGfull = np.zeros((np.sum(self.npgs), np.sum(self.npgs)))
+        Cpred = np.zeros((np.sum(predlikob.npobs), np.sum(predlikob.npobs)))
+        
+        totGF = np.zeros((np.sum(self.npgs), np.sum(self.npf)))
+        totF = np.zeros((np.sum(self.npobs), np.sum(self.npf)))
+        totG = np.zeros((np.sum(self.npobs), np.sum(self.npgs)))
+        totGr = np.zeros(np.sum(self.npgs))
+        totDvec = np.zeros(np.sum(self.npobs))
+        totGFp = np.zeros((np.sum(predlikob.npgs), np.sum(predlikob.npf)))
+        totFp = np.zeros((np.sum(predlikob.npobs), np.sum(predlikob.npf)))
+        totGp = np.zeros((np.sum(predlikob.npobs), np.sum(predlikob.npgs)))
+        totGrp = np.zeros(np.sum(predlikob.npgs))
+        totDvecp = np.zeros(np.sum(predlikob.npobs))
+
+        # Construct the full covariance matrices
+        for ii in range(npsrs):
+            findex = np.sum(self.npf[:ii])
+            fdmindex = np.sum(self.npfdm[:ii])
+            nfreq = int(self.npf[ii]/2)
+            nfreqdm = int(self.npfdm[ii]/2)
+            gindex = np.sum(self.npgs[:ii])
+            ngs = self.npgs[ii]
+            nindex = np.sum(self.npobs[:ii])
+            nobs = self.npobs[ii]
+            findexp = np.sum(predlikob.npf[:ii])
+            fdmindexp = np.sum(predlikob.npfdm[:ii])
+            nfreqp = int(predlikob.npf[ii]/2)
+            nfreqdmp = int(predlikob.npfdm[ii]/2)
+            gindexp = np.sum(predlikob.npgs[:ii])
+            ngsp = predlikob.npgs[ii]
+            nindexp = np.sum(predlikob.npobs[:ii])
+            nobsp = predlikob.npobs[ii]
+
+            # Start with the white noise
+            if self.ptapsrs[ii].twoComponentNoise:
+                GCGfull[gindex:gindex+ngs, gindex:gindex+ngs] = \
+                        np.dot(self.ptapsrs[ii].Amat.T, \
+                        (self.ptapsrs[ii].Nwvec * self.ptapsrs[ii].Amat.T).T)
+            else:
+                GCGfull[gindex:gindex+ngs, gindex:gindex+ngs] = \
+                        np.dot(self.ptapsrs[ii].Gmat.T, \
+                        (self.ptapsrs[ii].Nvec * self.ptapsrs[ii].Gmat.T).T)
+
+            # The Phi we cannot add yet. There can be cross-pulsar correlations.
+            # Construct a total F-matrix
+            totGF[gindex:gindex+ngs, findex:findex+2*nfreq] = \
+                    np.dot(self.ptapsrs[ii].Gmat.T, self.ptapsrs[ii].Fmat)
+            totF[nindex:nindex+nobs, findex:findex+2*nfreq] = \
+                    self.ptapsrs[ii].Fmat
+            totG[nindex:nindex+nobs, gindex:gindex+ngs] = self.ptapsrs[ii].Gmat
+            totGr[gindex:gindex+ngs] = self.ptapsrs[ii].Gr
+            totDvec[nindex:nindex+nobs] = np.diag(self.ptapsrs[ii].Dmat)
+
+            totGFp[gindexp:gindexp+ngsp, findexp:findexp+2*nfreqp] = \
+                    np.dot(predlikob.ptapsrs[ii].Gmat.T, predlikob.ptapsrs[ii].Fmat)
+            totFp[nindexp:nindexp+nobsp, findexp:findexp+2*nfreqp] = \
+                    predlikob.ptapsrs[ii].Fmat
+            totGp[nindexp:nindexp+nobsp, gindexp:gindexp+ngsp] = predlikob.ptapsrs[ii].Gmat
+            totGrp[gindexp:gindexp+ngsp] = predlikob.ptapsrs[ii].Gr
+            totDvecp[nindexp:nindexp+nobsp] = np.diag(predlikob.ptapsrs[ii].Dmat)
+
+            DF = self.ptapsrs[ii].DF
+            GDF = np.dot(self.ptapsrs[ii].Gmat.T, self.ptapsrs[ii].DF)
+            DFp = predlikob.ptapsrs[ii].DF
+            GDFp = np.dot(predlikob.ptapsrs[ii].Gmat.T, predlikob.ptapsrs[ii].DF)
+
+            # Add the dispersion measure variations
+            GCGfull[gindex:gindex+ngs, gindex:gindex+ngs] += \
+                    np.dot(GDF, (allThetavec[fdmindex:fdmindex+2*nfreqdm] * GDF).T)
+            Cpred[nindexp:nindexp+nobsp, nindexp:nindexp+nobsp] += \
+                    np.dot(DFp, (predThetavec[fdmindexp:fdmindexp+2*nfreqdmp] * DFp).T)
+
+        # Now add the red signals, too
+        GCGfull += np.dot(totGF, np.dot(allPhi, totGF.T))
+        Cpred += np.dot(totFp, np.dot(predPhi, totFp.T))
+
+        origlen = totG.shape[0]
+        predfulllen = Cpred.shape[0]
+        predlen = Cpred.shape[0] - totG.shape[0]
+
+        Bt = Cpred[origlen:, :origlen]
+        D = Cpred[origlen:, origlen:]
+        BtG = np.dot(Bt, totG)
+
+        # Re-construct the DM variations, and the signal
+        try:
+            cf = sl.cho_factor(GCGfull)
+            GCGr = sl.cho_solve(cf, totGr)
+            GCGCp = sl.cho_solve(cf, BtG.T)
+        except np.linalg.LinAlgError:
+            U, s, Vh = sl.svd(GCGfull)
+            if not np.all(s > 0):
+                raise ValueError("ERROR: GCGr singular according to SVD")
+            GCGr = np.dot(Vh.T, np.dot(((1.0/s)*U).T, totGr))
+            GCGCp = np.dot(Vh.T, np.dot(((1.0/s)*U).T, GtCpred))
+
+        recsig = np.dot(BtG, GCGr)
+
+        CtGCp = np.dot(BtG, GCGCp)
+        recsigCov = D - CtGCp
 
         return recsig, np.diag(recsigCov)
 
