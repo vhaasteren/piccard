@@ -3,9 +3,6 @@
 # vim: tabstop=4:softtabstop=4:shiftwidth=4:expandtab
 
 """
-totindex, ntotindex, totpars, ntotpars
-line 1810
-
 piccard.py
 
 Requirements:
@@ -1219,9 +1216,9 @@ class ptaLikelihood(object):
             newsignal.ntotpars = 3
             newsignal.bvary = np.array([1, 1, 0], dtype=np.bool)
 
-            newsignal.pmin = np.array([-28, 0, -4])
-            newsignal.pmax = np.array([-14, 10, 2])
-            newsignal.pstart = np.array([-22, 2, -1])
+            newsignal.pmin = np.array([-28., 0., -4.])
+            newsignal.pmax = np.array([-14., 10., 2.])
+            newsignal.pstart = np.array([-22., 2., -1.])
             newsignal.pwidth = np.array([-0.2, 0.1, 0.1])
 
         newsignal.corr = 'single'
@@ -1619,7 +1616,10 @@ class ptaLikelihood(object):
                 psrindex = sig.pulsarind
                 if sig.stype == 'efac':
                     flagname = sig.flagname
-                    flagvalue = sig.flagvalue
+                    flagvalue = 'efac'+sig.flagvalue
+                elif sig.stype == 'equad':
+                    flagname = sig.flagname
+                    flagvalue = 'equad'+sig.flagvalue
                 elif sig.stype == 'spectrum':
                     flagname = 'frequency'
                     flagvalue = str(self.ptapsrs[psrindex].Ffreqs[2*jj])
