@@ -112,7 +112,16 @@ def makesubplot2d(ax, samples1, samples2, weights=None):
     
     
 def makesubplot1d(ax, samples, weights=None):
-    ax.hist(samples, 100, color='k', histtype='bar', linewidth=2.0)
+    bins = 100
+    xmin = np.min(samples)
+    xmax = np.max(samples)
+
+    hist, xedges = np.histogram(samples[:], bins=bins, range=(xmin,xmax), weights=weights, density=True)
+    x = np.delete(xedges, -1) + 1.5*(xedges[1] - xedges[0])     # This should be 0.5*, but turns out this is a bug plotting of 'stepstyle' in matplotlib
+
+    ax.plot(x, hist, 'k-', drawstyle='steps', linewidth=2.0)
+
+    #ax.hist(samples, 100, color='k', histtype='bar', linewidth=2.0)
 
 
 

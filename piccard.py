@@ -1506,12 +1506,12 @@ class ptaLikelihood(object):
 
     # Initialise the model
     def initModel(self, nfreqmodes=20, ndmfreqmodes=None, \
-            incRedNoise=False, noiseModel='powerlaw',
-            incDM=False, dmModel='powerlaw',
-            incClock=False, clockModel='powerlaw',
-            incGWB=False, gwbModel='powerlaw',
-            incDipole=False, dipoleModel='powerlaw',
-            incAniGWB=False, anigwbModel='powerlaw', lAniGWB=1,
+            incRedNoise=False, noiseModel='powerlaw', \
+            incDM=False, dmModel='powerlaw', \
+            incClock=False, clockModel='powerlaw', \
+            incGWB=False, gwbModel='powerlaw', \
+            incDipole=False, dipoleModel='powerlaw', \
+            incAniGWB=False, anigwbModel='powerlaw', lAniGWB=1, \
             varyEfac=False, incEquad=False, separateEfacs=False, \
             likfunc='mark3'):
         # For every pulsar, construct the auxiliary quantities like the Fourier
@@ -4144,7 +4144,8 @@ Given an mcmc chain file, plot the log-spectrum
 
 """
 def makespectrumplot(chainfilename, parstart=1, numfreqs=10, freqs=None, \
-        Aref=None, gref=4.33, plotlog=False, lcolor='black'):
+        Apl=None, gpl=None, Asm=None, asm=None, fcsm=0.1, plotlog=False, \
+        lcolor='black', Tmax=None):
     if freqs is None:
         ufreqs = np.log10(np.arange(1, 1+numfreqs))
     else:
@@ -4153,13 +4154,6 @@ def makespectrumplot(chainfilename, parstart=1, numfreqs=10, freqs=None, \
     #ufreqs = np.array(list(set(freqs)))
     yval = np.zeros(len(ufreqs))
     yerr = np.zeros(len(ufreqs))
-
-    if Aref is not None:
-        spd = 24 * 3600.0
-        spy = 365.25 * spd
-        pfreqs = 10 ** ufreqs
-        Aing = 10**Aref
-        yinj = (Aing**2 * spy**3 / (12*np.pi*np.pi * (5*spy))) * ((pfreqs * spy) ** (-gref))
 
     emceechain = np.loadtxt(chainfilename)
 
@@ -4173,10 +4167,28 @@ def makespectrumplot(chainfilename, parstart=1, numfreqs=10, freqs=None, \
 
     fig = plt.figure()
 
+    # For plotting reference spectra
+    spd = 24 * 3600.0
+    spy = 365.25 * spd
+    pfreqs = 10 ** ufreqs
+    ypl = None
+    ysm = None
+
     if plotlog:
         plt.errorbar(ufreqs, yval, yerr=yerr, fmt='.', c=lcolor)
-        if Aref is not None:
-            plt.plot(ufreqs, np.log10(yinj), 'k--')
+
+        if Apl is not None and gpl is not None and Tmax is not None:
+            Apl = 10**Apl
+            ypl = (Apl**2 * spy**3 / (12*np.pi*np.pi * (Tmax))) * ((pfreqs * spy) ** (-gpl))
+            plt.plot(np.log10(pfreqs), np.log10(ypl), 'g--', linewidth=2.0)
+
+        if Asm is not None and asm is not None and Tmax is not None:
+            Asm = 10**Asm
+            fcsm = fcsm / spy
+            ysm = (Asm * spy**3 / Tmax) * ((1 + (pfreqs/fcsm)**2)**(-0.5*asm))
+            plt.plot(np.log10(pfreqs), np.log10(ysm), 'r--', linewidth=2.0)
+
+
         #plt.axis([np.min(ufreqs)-0.1, np.max(ufreqs)+0.1, np.min(yval-yerr)-1, np.max(yval+yerr)+1])
         plt.xlabel("Frequency [log(f/Hz)]")
         #if True:
@@ -4861,7 +4873,7 @@ Run a MultiNest algorithm on the likelihood
 Implementation from "pyMultinest"
 
 """
-def RunMultiNest(likob, chainroot):
+def RunMultiNest(likob, chainroot, rseed=16):
     # Save the parameters to file
     likob.saveModelParameters(chainroot + '.txt.parameters.txt')
 
@@ -4870,11 +4882,11 @@ def RunMultiNest(likob, chainroot):
     if pymultinest is None:
         raise ImportError("pymultinest")
 
-    mmodal = True       # search for multiple modes
+    mmodal = True      # search for multiple modes
     ceff = 0            # SMBH tuning
-    nlive = 500        # number of "live" points
+    nlive = 500         # number of "live" points
     tol = 0.5           # final tolerance in computing evidence
-    efr = 0.80          # sampling efficiency (0.8 and 0.3 are recommended for parameter estimation & evidence evaluation)
+    efr = 0.3           # sampling efficiency (0.8 and 0.3 are recommended for parameter estimation & evidence evaluation)
     ndims = ndim        # number of search parameters
     nPar = ndims        # number of reported parameters (see above)
     nClsPar = 1         # number of parameters on which to attempt mode separation (first nClsPar parameters used)
@@ -4882,7 +4894,7 @@ def RunMultiNest(likob, chainroot):
     updInt = 100        # interval of updates
     Ztol = -1.e90       # threshold for reporting evidence about modes
     root = chainroot    # prefix for output files
-    seed = 16           # seed for random numbers
+    seed = rseed        # seed for random numbers
     periodic = np.ones(ndims)    # period conditions
     fb = True           # output status updates?
     resume = False      # resume from previous run?
