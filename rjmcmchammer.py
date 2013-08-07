@@ -2,6 +2,9 @@
 """
 A class, adjusted from ''emcee'', that does RJMCMC sampling
 
+Created by vhaasteren on 2013-08-06.
+Copyright (c) 2013 Rutger van Haasteren
+
 """
 
 from __future__ import division
@@ -151,7 +154,7 @@ class RJMHSampler(emcee.MHSampler):
 
 
             # Decide whether we will do a trans-dimensional jump
-            elif self._random.rand() < self.jprob:
+            if self._random.rand() < self.jprob:
                 # Trans-dim jump. Adjust the models and parameters
                 qmod1, qmod2 = self.propdjumpfn(self.jumpsize1, self.jumpsize2)
                 q = self.jumpparsfn(q, qmod1, qmod2)

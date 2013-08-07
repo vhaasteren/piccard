@@ -1,4 +1,15 @@
 #!/usr/bin/env python
+"""
+Copyright (c) 2013 Chiara Mingarelli
+
+Contributed code for anisotropic gravitrational-wave background by Chiara
+Mingarelli. Work that uses the anisotropic background functionality should
+reference Mingarelli and Vecchio 2013,  arXiv:1306.5394
+
+Contributed work on anisotropic gravitational-wave background by Steve Taylor.
+Work that uses the anisotropic background functionality should reference Taylor
+and Gair 2013, arXiv:1306:5395
+"""
 
 
 import math

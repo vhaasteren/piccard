@@ -1,8 +1,12 @@
 #!/usr/bin/env python
 # encoding: utf-8
 # vim: tabstop=4:softtabstop=4:shiftwidth=4:expandtab
+
 """
-dataformat.py
+totindex, ntotindex, totpars, ntotpars
+line 1810
+
+piccard.py
 
 Requirements:
 - numpy:        pip install numpy
@@ -13,10 +17,20 @@ Requirements:
 - pytwalk:      (included)
 - pydnest:      (included)
 
+Created by vhaasteren on 2013-08-06.
+Copyright (c) 2013 Rutger van Haasteren
 
-Notes:
-Burn-in of a chain can be removed with "sed '1,1000d' filename"
-Thinning of a chain can be done with "awk 'NR%10==0' filename"
+Work that uses this code should reference van Haasteren et al. (in prep). (I'll
+add the reference later).
+
+Contributed code for anisotropic gravitrational-wave background by Chiara
+Mingarelli. Work that uses the anisotropic background functionality should
+reference Mingarelli and Vecchio 2013,  arXiv:1306.5394
+
+Contributed work on anisotropic gravitational-wave background by Steve Taylor.
+Work that uses the anisotropic background functionality should reference Taylor
+and Gair 2013, arXiv:1306:5395
+
 """
 
 from __future__ import division
@@ -663,7 +677,7 @@ frequencies for all pulsars.
 class ptasignal(object):
     pulsarind = None        # pulsar nr. for EFAC/EQUAD
     stype = "none"          # EFAC, EQUAD, spectrum, powerlaw,
-                            # dmspectrum, dmpowerlaw, fouriercoeff
+                            # dmspectrum, dmpowerlaw, fouriercoeff...
     corr = "single"         # single, gr, uniform, dipole, anisotropicgwb...
                             # Here dipole is not the dipole in anisotropies, but
                             # in 'ephemeris' etc.
@@ -674,7 +688,6 @@ class ptasignal(object):
     npars = 0               # Number of parameters
     ntotpars = 0            # Total number of parameters (also non-varying)
     nindex = 0              # Index in parameters array
-    ntotindex = 0           # Index in total par. array. inc. non-varying pars
 
     bvary = None            # Which parameters are varying of this signals
 
@@ -711,14 +724,21 @@ variations are projected on these modes, which is very suboptimal. Do not use
 with DM variations. The Phi matrix inversion is not optimised per frequency. At
 least one red signal must be included for each pulsar
 
-mark4loglikelihood: analytically integrated over the red noise Fourier modes,
-and the DM variation Fourier modes. The integration done separately (red noise
-first). At least one red signal must be included for each pulsar, and one DM
-signal must be included for each pulsar
+mark4loglikelihood: (DEPRECATED) analytically integrated over the red noise
+Fourier modes, and the DM variation Fourier modes. The integration done
+separately (red noise first). At least one red signal must be included for each
+pulsar, and one DM signal must be included for each pulsar.  Deprecated now,
+after the inclusion of two-component noise and general white noise modelling.
 
 mark6loglikelihood: As mark4loglikelihood, but now the DM and red noise Fourier
 modes are integrated over simultaneously. Makes for a larger Phi matrix, but
 less computational hassle. About as fast as mark4.
+
+mark7loglikelihood: like mar3loglikelihood, but allows for RJMCMC Fourier mode
+selection
+
+mark8loglikelihood: like mar6loglikelihood, but allows for RJMCMC Fourier mode
+selection
 """
 class ptaPulsar(object):
     raj = 0
@@ -1009,6 +1029,7 @@ class ptaLikelihood(object):
     pwidth = None
     pamplitudeind = None
     initialised = False
+    pardes = None
 
     # What likelihood function to use
     likfunc = 'mark3'
@@ -1084,7 +1105,7 @@ class ptaLikelihood(object):
             #newpsr.readFromImagination(filename, psrname)
             self.ptapsrs.append(newpsr)
 
-    def addSignalEfac(self, psrind, index, totindex, separateEfacs=False, \
+    def addSignalEfac(self, psrind, index, separateEfacs=False, \
             varyEfac=True, pmin=0.001, pmax=1000.0, pwidth=0.1, pstart=1.0):
         if separateEfacs:
             uflagvals = list(set(self.ptapsrs[psrind].flags))   # uniques
@@ -1114,9 +1135,7 @@ class ptaLikelihood(object):
                 newsignal.pstart = np.array([pstart])
 
                 newsignal.nindex = index
-                newsignal.ntotindex = totindex
                 index += newsignal.npars
-                totindex += newsignal.ntotpars
 
                 self.ptasignals.append(newsignal)
         else:
@@ -1143,11 +1162,10 @@ class ptaLikelihood(object):
             newsignal.pstart = np.array([pstart])
 
             newsignal.nindex = index
-            newsignal.ntotindex = totindex
 
             self.ptasignals.append(newsignal)
 
-    def addSignalEquad(self, psrind, index, totindex, \
+    def addSignalEquad(self, psrind, index, \
             pmin=-10.0, pmax=-2.0, pwidth=0.1, pstart=-8.0):
         newsignal = ptasignal()
         newsignal.pulsarind = psrind
@@ -1166,16 +1184,15 @@ class ptaLikelihood(object):
         newsignal.pstart = np.array([pstart])
 
         newsignal.nindex = index
-        newsignal.ntotindex = totindex
 
         self.ptasignals.append(newsignal)
 
-    def addSignalRedNoise(self, psrind, index, totindex, Tmax, \
-            modelIndependent=False):
+    def addSignalRedNoise(self, psrind, index, Tmax, \
+            noiseModel):
         newsignal = ptasignal()
         newsignal.pulsarind = psrind
 
-        if modelIndependent:
+        if noiseModel=='spectrum':
             newsignal.stype = 'spectrum'
             newsignal.npars = int(len(self.ptapsrs[psrind].Ffreqs)/2)
             newsignal.ntotpars = int(len(self.ptapsrs[psrind].Ffreqs)/2)
@@ -1185,7 +1202,7 @@ class ptaLikelihood(object):
             newsignal.pmax = np.ones(newsignal.ntotpars) * -7.0
             newsignal.pstart = np.ones(newsignal.ntotpars) * -10.0
             newsignal.pwidth = np.ones(newsignal.ntotpars) * 0.1
-        else:
+        elif noiseModel=='powerlaw':
             newsignal.stype = 'powerlaw'
             newsignal.npars = 2
             newsignal.ntotpars = 3
@@ -1195,19 +1212,29 @@ class ptaLikelihood(object):
             newsignal.pmax = np.array([-5.0, 6.98, 3.0e-9])
             newsignal.pstart = np.array([-14.0, 2.01, 1.0e-10])
             newsignal.pwidth = np.array([0.1, 0.1, 5.0e-11])
+        elif noiseModel=='spectralModel':
+            # A in sec^3, alpha unitless, fc in log10(yr^{-1})
+            newsignal.stype = 'spectralModel'
+            newsignal.npars = 2
+            newsignal.ntotpars = 3
+            newsignal.bvary = np.array([1, 1, 0], dtype=np.bool)
+
+            newsignal.pmin = np.array([-28, 0, -4])
+            newsignal.pmax = np.array([-14, 10, 2])
+            newsignal.pstart = np.array([-22, 2, -1])
+            newsignal.pwidth = np.array([-0.2, 0.1, 0.1])
 
         newsignal.corr = 'single'
         newsignal.Tmax = Tmax
         newsignal.nindex = index
-        newsignal.ntotindex = totindex
         self.ptasignals.append(newsignal)
 
-    def addSignalDMV(self, psrind, index, totindex, Tmax, \
-            modelIndependent=False):
+    def addSignalDMV(self, psrind, index, Tmax, \
+            dmModel):
         newsignal = ptasignal()
         newsignal.pulsarind = psrind
 
-        if modelIndependent:
+        if dmModel=='spectrum':
             newsignal.stype = 'dmspectrum'
             newsignal.npars = int(len(self.ptapsrs[psrind].Ffreqs)/2)
             newsignal.ntotpars = int(len(self.ptapsrs[psrind].Ffreqs)/2)
@@ -1217,7 +1244,7 @@ class ptaLikelihood(object):
             newsignal.pmax = np.ones(newsignal.ntotpars) * -3.0
             newsignal.pstart = np.ones(newsignal.ntotpars) * -7.0
             newsignal.pwidth = np.ones(newsignal.ntotpars) * 0.1
-        else:
+        elif dmModel=='powerlaw':
             newsignal.stype = 'dmpowerlaw'
             newsignal.npars = 2
             newsignal.ntotpars = 3
@@ -1231,16 +1258,15 @@ class ptaLikelihood(object):
         newsignal.corr = 'single'
         newsignal.Tmax = Tmax
         newsignal.nindex = index
-        newsignal.ntotindex = totindex
         self.ptasignals.append(newsignal)
 
     # TODO: use the independent GWB frequencies, instead of those of the first pulsar
-    def addSignalGWB(self, index, totindex, Tmax, \
-            modelIndependent=False):
+    def addSignalGWB(self, index, Tmax, \
+            gwbModel):
         newsignal = ptasignal()
         newsignal.pulsarind = -1
 
-        if modelIndependent:
+        if gwbModel=='spectrum':
             newsignal.stype = 'spectrum'
             newsignal.npars = int(len(self.ptapsrs[0].Ffreqs)/2)
             newsignal.ntotpars = int(len(self.ptapsrs[0].Ffreqs)/2)
@@ -1250,7 +1276,7 @@ class ptaLikelihood(object):
             newsignal.pmax = np.ones(newsignal.ntotpars) * 10.0
             newsignal.pstart = np.ones(newsignal.ntotpars) * -10.0
             newsignal.pwidth = np.ones(newsignal.ntotpars) * 0.1
-        else:
+        elif gwModel=='powerlaw':
             newsignal.stype = 'powerlaw'
             newsignal.npars = 2
             newsignal.ntotpars = 3
@@ -1264,16 +1290,15 @@ class ptaLikelihood(object):
         newsignal.corr = 'gr'
         newsignal.Tmax = Tmax
         newsignal.nindex = index
-        newsignal.ntotindex = totindex
         newsignal.corrmat = hdcorrmat(self.ptapsrs)           # The H&D matrix
         self.ptasignals.append(newsignal)
 
-    def addSignalClock(self, index, totindex, Tmax, \
-            modelIndependent=False):
+    def addSignalClock(self, index, Tmax, \
+            clockModel):
         newsignal = ptasignal()
         newsignal.pulsarind = -1
 
-        if modelIndependent:
+        if clockModel=='spectrum':
             newsignal.stype = 'spectrum'
             newsignal.npars = int(len(self.ptapsrs[0].Ffreqs)/2)
             newsignal.ntotpars = int(len(self.ptapsrs[0].Ffreqs)/2)
@@ -1283,7 +1308,7 @@ class ptaLikelihood(object):
             newsignal.pmax = np.ones(newsignal.ntotpars) * 10.0
             newsignal.pstart = np.ones(newsignal.ntotpars) * -10.0
             newsignal.pwidth = np.ones(newsignal.ntotpars) * 0.1
-        else:
+        elif clockModel=='powerlaw':
             newsignal.stype = 'powerlaw'
             newsignal.npars = 2
             newsignal.ntotpars = 3
@@ -1297,16 +1322,15 @@ class ptaLikelihood(object):
         newsignal.corr = 'uniform'
         newsignal.Tmax = Tmax
         newsignal.nindex = index
-        newsignal.ntotindex = totindex
         newsignal.corrmat = np.ones((len(self.ptapsrs), len(self.ptapsrs)))
         self.ptasignals.append(newsignal)
 
-    def addSignalDipole(self, index, totindex, Tmax, \
-            modelIndependent=False):
+    def addSignalDipole(self, index, Tmax, \
+            dipoleModel):
         newsignal = ptasignal()
         newsignal.pulsarind = -1
 
-        if modelIndependent:
+        if dipoleModel=='spectrum':
             newsignal.stype = 'spectrum'
             newsignal.npars = int(len(self.ptapsrs[0].Ffreqs)/2)
             newsignal.ntotpars = int(len(self.ptapsrs[0].Ffreqs)/2)
@@ -1316,7 +1340,7 @@ class ptaLikelihood(object):
             newsignal.pmax = np.ones(newsignal.ntotpars) * 10.0
             newsignal.pstart = np.ones(newsignal.ntotpars) * -10.0
             newsignal.pwidth = np.ones(newsignal.ntotpars) * 0.1
-        else:
+        elif dipoleModel=='powerlaw':
             newsignal.stype = 'powerlaw'
             newsignal.npars = 2
             newsignal.ntotpars = 3
@@ -1330,18 +1354,17 @@ class ptaLikelihood(object):
         newsignal.corr = 'uniform'
         newsignal.Tmax = Tmax
         newsignal.nindex = index
-        newsignal.ntotindex = totindex
         newsignal.corrmat = dipolecorrmat(self.ptapsrs)
         self.ptasignals.append(newsignal)
 
-    def addSignalAniGWB(self, index, totindex, Tmax, \
-            modelIndependent=False, lAniGWB=2):
+    def addSignalAniGWB(self, index, Tmax, \
+            anigwbModel, lAniGWB=2):
         newsignal = ptasignal()
         newsignal.pulsarind = -1
         newsignal.aniCorr = aniCorrelations(self.ptapsrs, lAniGWB)
         nclm = newsignal.aniCorr.clmlength()
 
-        if modelIndependent:
+        if anigwbModel=='spectrum':
             newsignal.stype = 'spectrum'
             newsignal.npars = nclm+int(len(self.ptapsrs[0].Ffreqs)/2)
             newsignal.ntotpars = nclm+int(len(self.ptapsrs[0].Ffreqs)/2)
@@ -1351,7 +1374,7 @@ class ptaLikelihood(object):
             newsignal.pmax = np.ones(newsignal.ntotpars) * 10.0
             newsignal.pstart = np.ones(newsignal.ntotpars) * -10.0
             newsignal.pwidth = np.ones(newsignal.ntotpars) * 0.1
-        else:
+        elif anigwbModel=='powerlaw':
             newsignal.stype = 'powerlaw'
             newsignal.npars = nclm+2
             newsignal.ntotpars = nclm+3
@@ -1371,10 +1394,9 @@ class ptaLikelihood(object):
         newsignal.corr = 'anisotropicgwb'
         newsignal.Tmax = Tmax
         newsignal.nindex = index
-        newsignal.ntotindex = totindex
         self.ptasignals.append(newsignal)
 
-    def addSignalFourierCoeff(self, psrind, index, totindex, Tmax, isDM=False):
+    def addSignalFourierCoeff(self, psrind, index, Tmax, isDM=False):
         newsignal = ptasignal()
         newsignal.pulsarind = psrind
         if isDM:
@@ -1389,7 +1411,6 @@ class ptaLikelihood(object):
         newsignal.corr = 'single'
         newsignal.Tmax = Tmax
         newsignal.nindex = index
-        newsignal.ntotindex = totindex
 
         # Since this parameter space is so large, calculate the
         # best first-estimate values of these quantities
@@ -1484,12 +1505,12 @@ class ptaLikelihood(object):
 
     # Initialise the model
     def initModel(self, nfreqmodes=20, ndmfreqmodes=None, \
-            modelIndependentNoise=False, incRedNoise=False, \
-            modelIndependentGWB=False, incGWB=False, \
-            modelIndependentDM=False, incDM=False, \
-            modelIndependentClock=False, incClock=False,  \
-            modelIndependentDipole=False, incDipole=False, \
-            modelIndependentAniGWB=False, incAniGWB=False, lAniGWB=1, \
+            incRedNoise=False, noiseModel='powerlaw',
+            incDM=False, dmModel='powerlaw',
+            incClock=False, clockModel='powerlaw',
+            incGWB=False, gwbModel='powerlaw',
+            incDipole=False, dipoleModel='powerlaw',
+            incAniGWB=False, anigwbModel='powerlaw', lAniGWB=1,
             varyEfac=False, incEquad=False, separateEfacs=False, \
             likfunc='mark3'):
         # For every pulsar, construct the auxiliary quantities like the Fourier
@@ -1526,66 +1547,105 @@ class ptaLikelihood(object):
         # Currently: one efac per pulsar, and red noise
         self.ptasignals = []
         index = 0
-        totindex = 0
         for ii in range(len(self.ptapsrs)):
             # When adding efac signals, there may be many
             noldsignals = len(self.ptasignals)
-            self.addSignalEfac(ii, index, totindex, separateEfacs, varyEfac)
+            self.addSignalEfac(ii, index, separateEfacs, varyEfac)
             nnewsignals = len(self.ptasignals)
             for jj in range(noldsignals, nnewsignals):
                 index += self.ptasignals[jj].npars
-                totindex += self.ptasignals[jj].ntotpars
 
             if incEquad:
-                self.addSignalEquad(ii, index, totindex)
+                self.addSignalEquad(ii, index)
                 index += self.ptasignals[-1].npars
-                totindex += self.ptasignals[-1].ntotpars
 
             if incRedNoise:
-                self.addSignalRedNoise(ii, index, totindex, Tmax, modelIndependentNoise)
+                self.addSignalRedNoise(ii, index, Tmax, noiseModel)
                 index += self.ptasignals[-1].npars
-                totindex += self.ptasignals[-1].ntotpars
 
             if incDM:
-                self.addSignalDMV(ii, index, totindex, Tmax, modelIndependentDM)
+                self.addSignalDMV(ii, index, Tmax, dmModel)
                 index += self.ptasignals[-1].npars
-                totindex += self.ptasignals[-1].ntotpars
 
         if incGWB:
-            self.addSignalGWB(index, totindex, Tmax, modelIndependentGWB)
+            self.addSignalGWB(index, Tmax, gwbModel)
             index += self.ptasignals[-1].npars
-            totindex += self.ptasignals[-1].ntotpars
 
         if incClock:
-            self.addSignalGWB(index, totindex, Tmax, modelIndependentClock)
+            self.addSignalGWB(index, Tmax, clockModel)
             index += self.ptasignals[-1].npars
-            totindex += self.ptasignals[-1].ntotpars
 
         if incDipole:
-            self.addSignalDipole(index, totindex, Tmax, modelIndependentDipole)
+            self.addSignalDipole(index, Tmax, dipoleModel)
             index += self.ptasignals[-1].npars
-            totindex += self.ptasignals[-1].ntotpars
 
         if incAniGWB:
-            self.addSignalAniGWB(index, totindex, Tmax, modelIndependentDipole, lAniGWB)
+            self.addSignalAniGWB(index, Tmax, anigwbModel, lAniGWB)
             index += self.ptasignals[-1].npars
-            totindex += self.ptasignals[-1].ntotpars
 
 
         # If the frequency coefficients are included explicitly (mark1
         # likelihood), we need a couple of extra signals
         if likfunc=='mark1':
             for ii in range(len(self.ptapsrs)):
-                self.addSignalFourierCoeff(ii, index, totindex, Tmax)
+                self.addSignalFourierCoeff(ii, index, Tmax)
                 index += self.ptasignals[-1].npars
-                totindex += self.ptasignals[-1].ntotpars
 
                 if incDM:
-                    self.addSignalFourierCoeff(ii, index, totindex, Tmax, isDM=True)
+                    self.addSignalFourierCoeff(ii, index, Tmax, isDM=True)
                     index += self.ptasignals[-1].npars
-                    totindex += self.ptasignals[-1].ntotpars
 
         self.allocateAuxiliaries()
+        self.initPrior()
+        self.pardes = self.getModelParameterList()
+
+    def getModelParameterList(self):
+        pardes = []
+
+        for ii in range(len(self.ptasignals)):
+            sig = self.ptasignals[ii]
+
+            pindex = 0
+            for jj in range(sig.ntotpars):
+                if sig.bvary[jj]:
+                    # This parameter is in the mcmc
+                    # TODO: the parameter index for varying/nonvarying
+                    # parameters is inconsistent throughout the code
+                    index = sig.nindex + pindex
+                    pindex += 1
+                else:
+                    index = -1
+
+                psrindex = sig.pulsarind
+                if sig.stype == 'efac':
+                    flagname = sig.flagname
+                    flagvalue = sig.flagvalue
+                elif sig.stype == 'spectrum':
+                    flagname = 'frequency'
+                    flagvalue = str(self.ptapsrs[psrindex].Ffreqs[2*jj])
+                elif sig.stype == 'dmspectrum':
+                    flagname = 'dmfrequency'
+                    flagvalue = str(self.ptapsrs[psrindex].Fdmfreqs[2*jj])
+                elif sig.stype == 'powerlaw':
+                    flagname = 'powerlaw'
+                    flagvalue = ['RN-Amplitude', 'RN-spectral-index', 'low-frequency-cutoff'][jj]
+                elif sig.stype == 'dmpowerlaw':
+                    flagname = 'dmpowerlaw'
+                    flagvalue = ['DM-Amplitude', 'DM-spectral-index', 'low-frequency-cutoff'][jj]
+                elif sig.stype == 'spectralModel':
+                    flagname = 'spectralModel'
+                    flagvalue = ['SM-Amplitude', 'SM-spectral-index', 'SM-corner-frequency'][jj]
+                else:
+                    flagname = 'none'
+                    flagvalue = 'none'
+
+                pardes.append(\
+                        {'index': index, 'pulsar': psrindex, 'sigindex': ii, \
+                            'sigtype': sig.stype, 'correlation': sig.corr, \
+                            'name': flagname, 'id': flagvalue})
+
+        return pardes
+
 
     """
     Once a model is defined, it can be useful to have all the parameter names
@@ -1612,38 +1672,14 @@ class ptaLikelihood(object):
     def saveModelParameters(self, filename):
         fil = open(filename, "w")
 
-        for ii in range(len(self.ptasignals)):
-            sig = self.ptasignals[ii]
-            for jj in range(sig.ntotpars):
-                if sig.bvary[jj]:
-                    # This parameter is in the mcmc
-                    # TODO: the parameter index for varying/nonvarying
-                    # parameters is inconsistent throughout the code
-                    index = sig.nindex + jj
-                    psrindex = sig.pulsarind
-                    if sig.stype == 'efac':
-                        flagname = sig.flagname
-                        flagvalue = sig.flagvalue
-                    elif sig.stype == 'spectrum':
-                        flagname = 'frequency'
-                        flagvalue = str(self.ptapsrs[psrindex].Ffreqs[2*jj])
-                    elif sig.stype == 'dmspectrum':
-                        flagname = 'dmfrequency'
-                        flagvalue = str(self.ptapsrs[psrindex].Fdmfreqs[2*jj])
-                    elif sig.stype == 'powerlaw':
-                        flagname = 'powerlaw'
-                        flagvalue = ['Amplitude', 'spectral-index'][jj]
-                    else:
-                        flagname = 'none'
-                        flagvalue = 'none'
-
-                    fil.write("{0:d} \t{1:d} \t{2:s} \t{3:s} \t{4:s} \t{5:s}\n".format(\
-                            index,
-                            psrindex,
-                            sig.stype,
-                            sig.corr,
-                            flagname,
-                            flagvalue))
+        for ii in range(len(self.pardes)):
+            fil.write("{0:d} \t{1:d} \t{2:s} \t{3:s} \t{4:s} \t{5:s}\n".format(\
+                    self.pardes[ii]['index'],
+                    self.pardes[ii]['pulsar'],
+                    self.pardes[ii]['sigtype'],
+                    self.pardes[ii]['correlation'],
+                    self.pardes[ii]['name'],
+                    self.pardes[ii]['id']))
 
         fil.close
 
@@ -1762,9 +1798,10 @@ class ptaLikelihood(object):
         # Loop over all white noise signals, and fill the pulsar Nvec
         for m2signal in self.ptasignals:
             if m2signal.stype == 'efac':
-                pefac = 1.0
                 if m2signal.npars == 1:
                     pefac = parameters[m2signal.nindex]
+                else:
+                    pefac = m2signal.pstart[0]
 
                 if self.ptapsrs[m2signal.pulsarind].twoComponentNoise:
                     self.ptapsrs[m2signal.pulsarind].Nwvec += \
@@ -1778,7 +1815,10 @@ class ptaLikelihood(object):
                 #    pefac = parameters[m2signal.ntotindex]
                 #self.ptapsrs[m2signal.pulsarind].Nvec += m2signal.Nvec * pefac**2
             elif m2signal.stype == 'equad':
-                pequadsqr = 10**(2*parameters[m2signal.nindex])
+                if m2signals.npars == 1:
+                    pequadsqr = 10**(2*parameters[m2signal.nindex])
+                else:
+                    pequadsqr = 10**(2*m2signal.pstart[0])
 
                 if self.ptapsrs[m2signal.pulsarind].twoComponentNoise:
                     self.ptapsrs[m2signal.pulsarind].Nwvec += pequadsqr
@@ -1800,6 +1840,184 @@ class ptaLikelihood(object):
 
     selection allows the user to specify which signals to include. By
     default=all
+
+    TODO: if the number of possible modes gets really large, but the number of
+          actually selected modes (modes, not signals) is not, this function
+          becomes the computational bottleneck. Make a version of this that only
+          constructs the required elements
+    """
+    def constructPhiAndTheta(self, parameters, selection=None):
+        self.Phi[:] = 0         # Start with a fresh matrix
+        self.Thetavec[:] = 0    # ''
+        npsrs = len(self.ptapsrs)
+
+        if selection is None:
+            selection = np.array([1]*len(self.ptasignals), dtype=np.bool)
+
+        # Loop over all signals, and fill the phi matrix
+        #for m2signal in self.ptasignals:
+        for ss in range(len(self.ptasignals)):
+            m2signal = self.ptasignals[ss]
+            if selection[ss]:
+                # Create a parameters array for this particular signal
+                sparameters = m2signal.pstart.copy()
+                sparameters[m2signal.bvary] = \
+                        parameters[m2signal.nindex:m2signal.nindex+m2signal.npars]
+                if m2signal.stype == 'spectrum':
+                    if m2signal.corr == 'single':
+                        findex = np.sum(self.npf[:m2signal.pulsarind])
+                        nfreq = int(self.npf[m2signal.pulsarind]/2)
+
+                        # Pcdoubled is an array where every element of the parameters
+                        # of this m2signal is repeated once (e.g. [1, 1, 3, 3, 2, 2, 5, 5, ...]
+
+                        pcdoubled = np.array([sparameters, sparameters]).T.flatten()
+
+                        # Fill the phi matrix
+                        di = np.diag_indices(2*nfreq)
+                        self.Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += 10**pcdoubled
+                    elif m2signal.corr in ['gr', 'uniform', 'dipole', 'anisotropicgwb']:
+                        nfreq = m2signal.npars
+
+                        if m2signal.corr in ['gr', 'uniform', 'dipole']:
+                            pcdoubled = np.array([sparameters, sparameters]).T.flatten()
+                            corrmat = m2signal.corrmat
+                        elif m2signal.corr == 'anisotropicgwb':
+                            nclm = m2signal.aniCorr.clmlength()
+                            pcdoubled = np.array([\
+                                    sparameters[:-nclm],\
+                                    sparameters[:-nclm]]).T.flatten()
+                            clm = sparameters[-nclm:]
+                            corrmat = m2signal.aniCorr.corrmat(clm)
+
+                        indexa = 0
+                        indexb = 0
+                        for aa in range(npsrs):
+                            for bb in range(npsrs):
+                                # Some pulsars may have fewer frequencies than
+                                # others (right?). So only use overlapping ones
+                                nof = np.min([self.npf[aa], self.npf[bb], 2*nfreq])
+                                di = np.diag_indices(nof)
+                                self.Phi[indexa:indexa+nof,indexb:indexb+nof][di] += 10**pcdoubled[:nof] * corrmat[aa, bb]
+                                indexb += self.npf[bb]
+                            indexb = 0
+                            indexa += self.npf[aa]
+                elif m2signal.stype == 'dmspectrum':
+                    if m2signal.corr == 'single':
+                        findex = np.sum(self.npfdm[:m2signal.pulsarind])
+                        nfreq = int(self.npfdm[m2signal.pulsarind]/2)
+
+                        pcdoubled = np.array([sparameters, sparameters]).T.flatten()
+
+                        # Fill the Theta matrix
+                        self.Thetavec[findex:findex+2*nfreq] += 10**pcdoubled
+                elif m2signal.stype == 'powerlaw':
+                    spd = 24 * 3600.0
+                    spy = 365.25 * spd
+                    Amp = 10**sparameters[0]
+                    Si = sparameters[1]
+
+                    if m2signal.corr == 'single':
+                        findex = np.sum(self.npf[:m2signal.pulsarind])
+                        nfreq = int(self.npf[m2signal.pulsarind]/2)
+                        freqpy = self.ptapsrs[m2signal.pulsarind].Ffreqs * spy
+                        pcdoubled = (Amp**2 * spy**3 / (12*np.pi*np.pi * m2signal.Tmax)) * freqpy ** (-Si)
+
+                        # Fill the phi matrix
+                        di = np.diag_indices(2*nfreq)
+                        self.Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += pcdoubled
+                    elif m2signal.corr in ['gr', 'uniform', 'dipole', 'anisotropicgwb']:
+                        freqpy = self.ptapsrs[0].Ffreqs * spy
+                        pcdoubled = (Amp**2 * spy**3 / (12*np.pi*np.pi * m2signal.Tmax)) * freqpy ** (-Si)
+                        nfreq = len(freqpy)
+
+                        if m2signal.corr in ['gr', 'uniform', 'dipole']:
+                            corrmat = m2signal.corrmat
+                        elif m2signal.corr == 'anisotropicgwb':
+                            nclm = m2signal.aniCorr.clmlength()
+                            clm = sparameters[-nclm:]
+                            corrmat = m2signal.aniCorr.corrmat(clm)
+
+                        indexa = 0
+                        indexb = 0
+                        for aa in range(npsrs):
+                            for bb in range(npsrs):
+                                # Some pulsars may have fewer frequencies than
+                                # others (right?). So only use overlapping ones
+                                nof = np.min([self.npf[aa], self.npf[bb]])
+                                if nof > nfreq:
+                                    raise IOError, "ERROR: nof > nfreq. Adjust GWB freqs"
+
+                                di = np.diag_indices(nof)
+                                self.Phi[indexa:indexa+nof,indexb:indexb+nof][di] += pcdoubled[:nof] * corrmat[aa, bb]
+                                indexb += self.npf[bb]
+                            indexb = 0
+                            indexa += self.npf[aa]
+                elif m2signal.stype == 'spectralModel':
+                    spd = 24 * 3600.0
+                    spy = 365.25 * spd
+                    Amp = 10**sparameters[0]
+                    alpha = sparameters[1]
+                    fc = 10**sparameters[2] / spy
+
+                    if m2signal.corr == 'single':
+                        findex = np.sum(self.npf[:m2signal.pulsarind])
+                        nfreq = int(self.npf[m2signal.pulsarind]/2)
+                        freqpy = self.ptapsrs[m2signal.pulsarind].Ffreqs
+                        pcdoubled = (Amp * spy**3 / m2signal.Tmax) * ((1 + (freqpy/fc)**2)**(-0.5*alpha))
+
+                        #pcdoubled = (Amp * spy**3 / (m2signal.Tmax)) * freqpy ** (-Si)
+
+                        # Fill the phi matrix
+                        di = np.diag_indices(2*nfreq)
+                        self.Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += pcdoubled
+                    elif m2signal.corr in ['gr', 'uniform', 'dipole', 'anisotropicgwb']:
+                        freqpy = self.ptapsrs[0].Ffreqs * spy
+                        pcdoubled = (Amp * spy**3 / m2signal.Tmax) / \
+                                ((1 + (freqpy/fc)**2)**(-0.5*alpha))
+                        nfreq = len(freqpy)
+
+                        if m2signal.corr in ['gr', 'uniform', 'dipole']:
+                            corrmat = m2signal.corrmat
+                        elif m2signal.corr == 'anisotropicgwb':
+                            nclm = m2signal.aniCorr.clmlength()
+                            clm = sparameters[-nclm:m2signal.nindex+m2signal.npars]
+                            corrmat = m2signal.aniCorr.corrmat(clm)
+
+                        indexa = 0
+                        indexb = 0
+                        for aa in range(npsrs):
+                            for bb in range(npsrs):
+                                # Some pulsars may have fewer frequencies than
+                                # others (right?). So only use overlapping ones
+                                nof = np.min([self.npf[aa], self.npf[bb]])
+                                if nof > nfreq:
+                                    raise IOError, "ERROR: nof > nfreq. Adjust GWB freqs"
+
+                                di = np.diag_indices(nof)
+                                self.Phi[indexa:indexa+nof,indexb:indexb+nof][di] += pcdoubled[:nof] * corrmat[aa, bb]
+                                indexb += self.npf[bb]
+                            indexb = 0
+                            indexa += self.npf[aa]
+                elif m2signal.stype == 'dmpowerlaw':
+                    spd = 24 * 3600.0
+                    spy = 365.25 * spd
+                    Amp = 10**sparameters[0]
+                    Si = sparameters[1]
+
+                    if m2signal.corr == 'single':
+                        findex = np.sum(self.npfdm[:m2signal.pulsarind])
+                        nfreq = int(self.npfdm[m2signal.pulsarind]/2)
+                        freqpy = self.ptapsrs[m2signal.pulsarind].Fdmfreqs * spy
+                        # TODO: change the units of the DM signal
+                        pcdoubled = (Amp**2 * spy**3 / (12*np.pi*np.pi * m2signal.Tmax)) * freqpy ** (-Si)
+
+                        # Fill the Theta matrix
+                        self.Thetavec[findex:findex+2*nfreq] += pcdoubled
+
+
+    """
+    This version is under construction
 
     TODO: if the number of possible modes gets really large, but the number of
           actually selected modes (modes, not signals) is not, this function
@@ -1836,7 +2054,6 @@ class ptaLikelihood(object):
 
                         # Pcdoubled is an array where every element of the parameters
                         # of this m2signal is repeated once (e.g. [1, 1, 3, 3, 2, 2, 5, 5, ...]
-
                         pcdoubled = np.array([parameters[m2signal.nindex:m2signal.nindex+m2signal.npars], parameters[m2signal.nindex:m2signal.nindex+m2signal.npars]]).T.flatten()
 
                         # Fill the phi matrix
@@ -1935,140 +2152,6 @@ class ptaLikelihood(object):
                         # Fill the Theta matrix
                         self.Thetavec[findex:findex+2*nfreq] += pcdoubled
 
-
-
-    """
-    Loop over all signals, and fill the phi matrix. This function assumes that
-    the self.Phi matrix has already been allocated
-
-    In this version, the DM variations are included in self.Thetavec
-
-    selection allows the user to specify which signals to include. By
-    default=all
-
-    TODO: if the number of possible modes gets really large, but the number of
-          actually selected modes (modes, not signals) is not, this function
-          becomes the computational bottleneck. Make a version of this that only
-          constructs the required elements
-    """
-    def constructPhiAndTheta(self, parameters, selection=None):
-        self.Phi[:] = 0         # Start with a fresh matrix
-        self.Thetavec[:] = 0    # ''
-        npsrs = len(self.ptapsrs)
-
-        if selection is None:
-            selection = np.array([1]*len(self.ptasignals), dtype=np.bool)
-
-        # Loop over all signals, and fill the phi matrix
-        #for m2signal in self.ptasignals:
-        for ss in range(len(self.ptasignals)):
-            m2signal = self.ptasignals[ss]
-            if selection[ss]:
-                if m2signal.stype == 'spectrum':
-                    if m2signal.corr == 'single':
-                        findex = np.sum(self.npf[:m2signal.pulsarind])
-                        nfreq = int(self.npf[m2signal.pulsarind]/2)
-
-                        # Pcdoubled is an array where every element of the parameters
-                        # of this m2signal is repeated once (e.g. [1, 1, 3, 3, 2, 2, 5, 5, ...]
-
-                        pcdoubled = np.array([parameters[m2signal.nindex:m2signal.nindex+m2signal.npars], parameters[m2signal.nindex:m2signal.nindex+m2signal.npars]]).T.flatten()
-
-                        # Fill the phi matrix
-                        di = np.diag_indices(2*nfreq)
-                        self.Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += 10**pcdoubled
-                    elif m2signal.corr in ['gr', 'uniform', 'dipole', 'anisotropicgwb']:
-                        nfreq = m2signal.npars
-
-                        if m2signal.corr in ['gr', 'uniform', 'dipole']:
-                            pcdoubled = np.array([parameters[m2signal.nindex:m2signal.nindex+m2signal.npars], parameters[m2signal.nindex:m2signal.nindex+m2signal.npars]]).T.flatten()
-                            corrmat = m2signal.corrmat
-                        elif m2signal.corr == 'anisotropicgwb':
-                            nclm = m2signal.aniCorr.clmlength()
-                            pcdoubled = np.array([\
-                                parameters[m2signal.nindex:m2signal.nindex+m2signal.npars-nclm],\
-                                parameters[m2signal.nindex:m2signal.nindex+m2signal.npars-nclm]]).T.flatten()
-                            clm = parameters[m2signal.nindex+m2signal.npars-nclm:m2signal.nindex+m2signal.npars]
-                            corrmat = m2signal.aniCorr.corrmat(clm)
-
-                        indexa = 0
-                        indexb = 0
-                        for aa in range(npsrs):
-                            for bb in range(npsrs):
-                                # Some pulsars may have fewer frequencies than
-                                # others (right?). So only use overlapping ones
-                                nof = np.min([self.npf[aa], self.npf[bb], 2*nfreq])
-                                di = np.diag_indices(nof)
-                                self.Phi[indexa:indexa+nof,indexb:indexb+nof][di] += 10**pcdoubled[:nof] * corrmat[aa, bb]
-                                indexb += self.npf[bb]
-                            indexb = 0
-                            indexa += self.npf[aa]
-                elif m2signal.stype == 'dmspectrum':
-                    if m2signal.corr == 'single':
-                        findex = np.sum(self.npfdm[:m2signal.pulsarind])
-                        nfreq = int(self.npfdm[m2signal.pulsarind]/2)
-
-                        pcdoubled = np.array([parameters[m2signal.nindex:m2signal.nindex+m2signal.npars], parameters[m2signal.nindex:m2signal.nindex+m2signal.npars]]).T.flatten()
-
-                        # Fill the Theta matrix
-                        self.Thetavec[findex:findex+2*nfreq] += 10**pcdoubled
-                elif m2signal.stype == 'powerlaw':
-                    spd = 24 * 3600.0
-                    spy = 365.25 * spd
-                    Amp = 10**parameters[m2signal.nindex]
-                    Si = parameters[m2signal.nindex+1]
-
-                    if m2signal.corr == 'single':
-                        findex = np.sum(self.npf[:m2signal.pulsarind])
-                        nfreq = int(self.npf[m2signal.pulsarind]/2)
-                        freqpy = self.ptapsrs[m2signal.pulsarind].Ffreqs * spy
-                        pcdoubled = (Amp**2 * spy**3 / (12*np.pi*np.pi * m2signal.Tmax)) * freqpy ** (-Si)
-
-                        # Fill the phi matrix
-                        di = np.diag_indices(2*nfreq)
-                        self.Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += pcdoubled
-                    elif m2signal.corr in ['gr', 'uniform', 'dipole', 'anisotropicgwb']:
-                        freqpy = self.ptapsrs[0].Ffreqs * spy
-                        pcdoubled = (Amp**2 * spy**3 / (12*np.pi*np.pi * m2signal.Tmax)) * freqpy ** (-Si)
-                        nfreq = len(freqpy)
-
-                        if m2signal.corr in ['gr', 'uniform', 'dipole']:
-                            corrmat = m2signal.corrmat
-                        elif m2signal.corr == 'anisotropicgwb':
-                            nclm = m2signal.aniCorr.clmlength()
-                            clm = parameters[m2signal.nindex+m2signal.npars-nclm:m2signal.nindex+m2signal.npars]
-                            corrmat = m2signal.aniCorr.corrmat(clm)
-
-                        indexa = 0
-                        indexb = 0
-                        for aa in range(npsrs):
-                            for bb in range(npsrs):
-                                # Some pulsars may have fewer frequencies than
-                                # others (right?). So only use overlapping ones
-                                nof = np.min([self.npf[aa], self.npf[bb]])
-                                if nof > nfreq:
-                                    raise IOError, "ERROR: nof > nfreq. Adjust GWB freqs"
-
-                                di = np.diag_indices(nof)
-                                self.Phi[indexa:indexa+nof,indexb:indexb+nof][di] += pcdoubled[:nof] * corrmat[aa, bb]
-                                indexb += self.npf[bb]
-                            indexb = 0
-                            indexa += self.npf[aa]
-                elif m2signal.stype == 'dmpowerlaw':
-                    spd = 24 * 3600.0
-                    spy = 365.25 * spd
-                    Amp = 10**parameters[m2signal.nindex]
-                    Si = parameters[m2signal.nindex+1]
-
-                    if m2signal.corr == 'single':
-                        findex = np.sum(self.npfdm[:m2signal.pulsarind])
-                        nfreq = int(self.npfdm[m2signal.pulsarind]/2)
-                        freqpy = self.ptapsrs[m2signal.pulsarind].Fdmfreqs * spy
-                        # TODO: change the units of the DM signal
-                        pcdoubled = (Amp**2 * spy**3 / (12*np.pi*np.pi * m2signal.Tmax)) * freqpy ** (-Si)
-
-                        # Fill the Theta matrix
-                        self.Thetavec[findex:findex+2*nfreq] += pcdoubled
 
 
 
@@ -4090,8 +4173,22 @@ def makespectrumplot(chainfilename, parstart=1, numfreqs=10, freqs=None, \
         plt.errorbar(ufreqs, yval, yerr=yerr, fmt='.', c=lcolor)
         if Aref is not None:
             plt.plot(ufreqs, np.log10(yinj), 'k--')
-        plt.axis([np.min(ufreqs)-0.1, np.max(ufreqs)+0.1, np.min(yval-yerr)-1, np.max(yval+yerr)+1])
+        #plt.axis([np.min(ufreqs)-0.1, np.max(ufreqs)+0.1, np.min(yval-yerr)-1, np.max(yval+yerr)+1])
         plt.xlabel("Frequency [log(f/Hz)]")
+        #if True:
+        #    spd = 24 * 3600.0
+        #    spy = 365.25 * spd
+        #    #freqs = likobhy.ptapsrs[0].Ffreqs
+        #    Tmax = 156038571.88061461
+        #    Apl = 10**-13.3 ; Asm = 10**-24
+        #    apl = 4.33 ; asm = 4.33
+        #    fc = (10**-1.0)/spy
+
+        #    pcsm = (Asm * spy**3 / Tmax) * ((1 + (freqs/fc)**2)**(-0.5*asm))
+        #    pcpl = (Apl**2 * spy**3 / (12*np.pi*np.pi * Tmax)) * (freqs*spy) ** (-apl)
+        #    plt.plot(np.log10(freqs), np.log10(pcsm), 'r--', linewidth=2.0)
+        #    plt.plot(np.log10(freqs), np.log10(pcpl), 'g--', linewidth=2.0)
+
     else:
         plt.errorbar(10**ufreqs, yval, yerr=yerr, fmt='.', c='black')
         if Aref is not None:
@@ -4762,7 +4859,7 @@ Implementation from "pyMultinest"
 """
 def RunMultiNest(likob, chainroot):
     # Save the parameters to file
-    likob.saveModelParameters(chainroot + '.parameters.txt')
+    likob.saveModelParameters(chainroot + '.txt.parameters.txt')
 
     ndim = likob.dimensions
 
@@ -4788,7 +4885,7 @@ def RunMultiNest(likob, chainroot):
 
     # Save the min and max values for the hypercube transform
     cols = np.array([likob.pmin, likob.pmax]).T
-    np.savetxt(root+"minmax.txt", cols)
+    np.savetxt(root+".txt.minmax.txt", cols)
 
     pymultinest.nested.nestRun(mmodal, ceff, nlive, tol, efr, ndims, nPar, nClsPar, maxModes, updInt, Ztol, root, seed, periodic, fb, resume, likob.logposteriorhc, 0)
 

@@ -1,3 +1,28 @@
+#!/usr/bin/env python
+# encoding: utf-8
+# vim: tabstop=4:softtabstop=4:shiftwidth=4:expandtab
+
+"""
+readprepset.py
+
+Requirements:
+- numpy:        pip install numpy
+- matplotlib:   macports, apt-get
+
+Created by vhaasteren on 2013-08-06.
+Copyright (c) 2013 Rutger van Haasteren
+
+Work that uses this code should reference van Haasteren et al. (in prep). (I'll
+add the reference later).
+
+This is a collection of tools based on the IPTA student workshop code in Krabi
+2013.
+It contains functions for the 'optimal correlation statistic' (Demorest et
+al. 2013, arXiv:1201.664, 2013ApJ...762...94D ; Chamberlain et al. in prep)
+It also contains continuous wave code written by Justin Ellis, arXiv:1305:0835
+
+"""
+
 from __future__ import division
 import math, numpy as np, matplotlib.pyplot as plt, os as os, sys as sys, glob as glob
 import scipy.linalg as sl, scipy.special as ss

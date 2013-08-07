@@ -1,13 +1,20 @@
 #!/usr/bin/env python
 # encoding: utf-8
+# vim: tabstop=4:softtabstop=4:shiftwidth=4:expandtab
+"""
+Created by vhaasteren on 2013-08-06.
+Copyright (c) 2013 Rutger van Haasteren
+
+"""
 
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FormatStrFormatter, LinearLocator, NullFormatter, NullLocator
 import matplotlib as mpl
 import matplotlib.ticker
-from optparse import OptionParser
+import os as os
 
+"""
 font = {'family' : 'serif',
         'serif'  : 'Computer modern Roman',
         'weight' : 'bold',
@@ -16,6 +23,7 @@ font = {'family' : 'serif',
 mpl.rc('font', **font)
 #mpl.rc('text', usetex=True)
 mpl.rc('text')
+"""
 
 """
 Given a 2D matrix of (marginalised) likelihood levels, this function returns
@@ -117,107 +125,126 @@ def makesubplot1d(ax, samples, weights=None):
 #   walker id  loglikelihood  parameter 1   parameter 2
 #  .... etc.
 
-parser = OptionParser()
-parser.add_option("-f", "--infile", dest="root",metavar='INFILE')
-(options,args)=parser.parse_args()
 
+def triplot(chainfilename, plotparameters=None, minmaxfile=None):
+    #shortname=options.root
+    chainfilename = chainfilename
+    parametersfilename = chainfilename+'.parameters.txt'
+    figurefilenameeps = chainfilename+'.fig.eps'
+    figurefilenamepng = chainfilename+'.fig.png'
+    chain = np.loadtxt(chainfilename)
 
-shortname=options.root
-chainfilename = shortname+'-metro.txt'
-parametersfilename = shortname+'-parameters.txt'
-parameterestimatesfilename = shortname + '-parest.txt'
-figurefilenameeps = shortname+'-fig.eps'
-figurefilenamepng = shortname+'-fig.png'
-chain = np.loadtxt(chainfilename)
+    if minmaxfile==None:
+        minmaxfile = chainfilename+'.minmax.txt'
 
-print "shortname = ", shortname
-print "parametersfilename = ", parametersfilename
-print "figurefilename = ", figurefilenameeps
-print "chainfilename = ", chainfilename
+    # Check if we are making MultiNest triplots (rescale the parameters, and use
+    # posterior weights
+    weights=None
+    if os.path.exists(minmaxfile):
+        minmax = np.loadtxt(minmaxfile)
+        for ii in range(chain.shape[1]-2):
+          chain[:,ii+2] = minmax[ii,0] + chain[:,ii+2] * (minmax[ii,1] - minmax[ii,0])
+        weights = chain[:,0]
 
-parfile = open(parametersfilename)
-lines=[line.strip() for line in parfile]
-parlabels=[]
-for i in range(len(lines)):
-	#lines[i]=lines[i].split(" ")
-	#parlabels.append(lines[i][1])
-	parlabels.append(lines[i])
+    #print "shortname = ", shortname
+    print "parametersfilename = ", parametersfilename
+    print "figurefilename = ", figurefilenameeps
+    print "chainfilename = ", chainfilename
 
-#print "Parameter labels", parlabels
+    # Read in the labels for all parameters from parametersfilename
+    parfile = open(parametersfilename)
+    lines=[line.strip() for line in parfile]
+    parlabels=[]
+    for i in range(len(lines)):
+        lines[i]=lines[i].split(" ")
+        if lines[i][0] >= 0:
+            # If the parameter has an index
+            parlabels.append(lines[i][5])
+        #parlabels.append(lines[i])
 
-# Plot all parameters
-numparameters = chain.shape[1]-2
-#parameters = [numparameters-3, numparameters-2, numparameters-1]
-parameters = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
-	
-# Create the plot array
-f, axarr = plt.subplots(nrows=len(parameters), ncols=len(parameters))
+    #print "Parameter labels", parlabels
 
-for i in range(len(parameters)):
-    # for j in len(parameters[np.where(i <= parameters)]:
-    for j in range(len(parameters)):
-        ii = i
-        jj = len(parameters) - j - 1
+    # Figure out which parameters to plot
+    fileparameters = chain.shape[1]-2
+    if plotparameters is None:
+        parameters = np.arange(fileparameters)
+    else:
+        parameters = plotparameters[plotparameters < fileparameters]
+        
 
-        xmajorLocator = matplotlib.ticker.MaxNLocator(nbins=4,prune='both')#LinearLocator(3)
-        ymajorLocator = matplotlib.ticker.MaxNLocator(nbins=4,prune='both')#LinearLocator(3)
+    # Create the plot array
 
-        if j <= len(parameters)-i-1:
-            axarr[jj][ii].xaxis.set_minor_locator(NullLocator())
-            axarr[jj][ii].yaxis.set_minor_locator(NullLocator())
-            axarr[jj][ii].xaxis.set_major_locator(NullLocator())
-            axarr[jj][ii].yaxis.set_major_locator(NullLocator())
+    # "plt.figure(figsize=(10,20))    # Resize the total figure\n",
+    f, axarr = plt.subplots(nrows=len(parameters), ncols=len(parameters), \
+            figsize=(15, 10))
 
-            axarr[jj][ii].xaxis.set_minor_formatter(NullFormatter())
-            axarr[jj][ii].yaxis.set_minor_formatter(NullFormatter())
-            axarr[jj][ii].xaxis.set_major_formatter(NullFormatter())
-            axarr[jj][ii].yaxis.set_major_formatter(NullFormatter())
-            xmajorFormatter = FormatStrFormatter('%g')
-            ymajorFormatter = FormatStrFormatter('%g')
+    for i in range(len(parameters)):
+        # for j in len(parameters[np.where(i <= parameters)]:
+        for j in range(len(parameters)):
+            ii = i
+            jj = len(parameters) - j - 1
 
-            if ii == jj:
-                # Make a 1D plot
-                makesubplot1d(axarr[ii][ii], chain[:,parameters[ii]+2])
-	    else:
-                # Make a 2D plot
-                makesubplot2d(axarr[jj][ii], chain[:,parameters[ii]+2], \
-                        chain[:,parameters[jj]+2])
+            xmajorLocator = matplotlib.ticker.MaxNLocator(nbins=4,prune='both')#LinearLocator(3)
+            ymajorLocator = matplotlib.ticker.MaxNLocator(nbins=4,prune='both')#LinearLocator(3)
 
-            axarr[jj][ii].xaxis.set_major_locator(xmajorLocator)
-            axarr[jj][ii].yaxis.set_major_locator(ymajorLocator)
-        else:
-            axarr[jj][ii].set_visible(False)
-            #axarr[jj][ii].axis('off')
-
-        if jj == len(parameters)-1:
-            axarr[jj][ii].xaxis.set_major_formatter(xmajorFormatter)
-            axarr[jj][ii].set_xlabel(parlabels[parameters[ii]])
-
-        if ii == 0:
-            if jj == 0:
+            if j <= len(parameters)-i-1:
+                axarr[jj][ii].xaxis.set_minor_locator(NullLocator())
+                axarr[jj][ii].yaxis.set_minor_locator(NullLocator())
+                axarr[jj][ii].xaxis.set_major_locator(NullLocator())
                 axarr[jj][ii].yaxis.set_major_locator(NullLocator())
-                axarr[jj][ii].set_ylabel('Post.')
+
+                axarr[jj][ii].xaxis.set_minor_formatter(NullFormatter())
+                axarr[jj][ii].yaxis.set_minor_formatter(NullFormatter())
+                axarr[jj][ii].xaxis.set_major_formatter(NullFormatter())
+                axarr[jj][ii].yaxis.set_major_formatter(NullFormatter())
+                xmajorFormatter = FormatStrFormatter('%g')
+                ymajorFormatter = FormatStrFormatter('%g')
+
+                if ii == jj:
+                    # Make a 1D plot
+                    makesubplot1d(axarr[ii][ii], chain[:,parameters[ii]+2], \
+                            weights=weights)
+                else:
+                    # Make a 2D plot
+                    makesubplot2d(axarr[jj][ii], chain[:,parameters[ii]+2], \
+                            chain[:,parameters[jj]+2], weights=weights)
+
+                axarr[jj][ii].xaxis.set_major_locator(xmajorLocator)
+                axarr[jj][ii].yaxis.set_major_locator(ymajorLocator)
             else:
-                axarr[jj][ii].yaxis.set_major_formatter(ymajorFormatter)
-                axarr[jj][ii].set_ylabel(parlabels[parameters[jj]])
+                axarr[jj][ii].set_visible(False)
+                #axarr[jj][ii].axis('off')
+
+            if jj == len(parameters)-1:
+                axarr[jj][ii].xaxis.set_major_formatter(xmajorFormatter)
+                axarr[jj][ii].set_xlabel(parlabels[parameters[ii]])
+
+            if ii == 0:
+                if jj == 0:
+                    axarr[jj][ii].yaxis.set_major_locator(NullLocator())
+                    axarr[jj][ii].set_ylabel('Post.')
+                else:
+                    axarr[jj][ii].yaxis.set_major_formatter(ymajorFormatter)
+                    axarr[jj][ii].set_ylabel(parlabels[parameters[jj]])
 
 
-f.suptitle(shortname[-10:])
+    #f.suptitle(shortname[-10:])
+    f.suptitle(chainfilename)
 
-#f.subplots_adjust(hspace=0)
-#plt.setp([a.get_xticklabels() for a in f.axes[:-0-2]], visible=False)
-#plt.tight_layout() # Or equivalently,  "plt.tight_layout()"
+    #f.subplots_adjust(hspace=0)
+    #plt.setp([a.get_xticklabels() for a in f.axes[:-0-2]], visible=False)
+    #plt.tight_layout() # Or equivalently,  "plt.tight_layout()"
 
-#plt.savefig('pulsar-' + str(psr) + '.png')
-plt.savefig(figurefilenameeps)
-plt.savefig(figurefilenamepng)
-#plt.show()
+    #plt.savefig('pulsar-' + str(psr) + '.png')
+    plt.savefig(figurefilenameeps)
+    plt.savefig(figurefilenamepng)
+    #plt.show()
 
-"""
-# Fine-tune figure: make subplots close to each other and hide x ticks for all
-# but the bottom plot
-# Also add some space for the legend below the plots
-f.subplots_adjust(bottom=0.22)
-f.subplots_adjust(hspace=0)
-plt.setp([a.get_xticklabels() for a in f.axes[:-0-2]], visible=False)
-"""
+    """
+    # Fine-tune figure: make subplots close to each other and hide x ticks for all
+    # but the bottom plot
+    # Also add some space for the legend below the plots
+    f.subplots_adjust(bottom=0.22)
+    f.subplots_adjust(hspace=0)
+    plt.setp([a.get_xticklabels() for a in f.axes[:-0-2]], visible=False)
+    """
