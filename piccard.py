@@ -43,6 +43,7 @@ import pytwalk                  # Internal module
 import pydnest                  # Internal module
 import anisotropygammas as ang  # Internal module
 import rjmcmchammer as rjemcee  # Internal module
+from triplot import *
 
 
 try:
@@ -214,7 +215,7 @@ class DataFile(object):
         uflags = list(set(t2pulsar.flags))
 
         # For every flag id, write the values for the TOAs
-        print "# For every flag id, write the values for the TOAs"
+        # print "# For every flag id, write the values for the TOAs"
         for flagid in uflags:
             #flaggroup.create_dataset(flagid, data=t2pulsar.flagvalue(flagid))
             flaggroup.create_dataset(flagid, data=t2pulsar.flags[flagid])
@@ -1060,7 +1061,7 @@ class ptaLikelihood(object):
     DGXr = None         #               mark4
 
 
-    def __init__(self):
+    def __init__(self, filename=None):
         self.ptapsrs = []
         self.ptasignals = []
 
@@ -1072,6 +1073,9 @@ class ptaLikelihood(object):
         self.pamplitudeind = None
         self.initialised = False
         self.likfunc = 'mark3'
+
+        if filename is not None:
+            self.initFromFile(filename)
 
     def initFromFile(self, filename):
         h5file = h5.File(filename, 'r+')
