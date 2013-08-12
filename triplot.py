@@ -166,6 +166,7 @@ def triplot(chainfilename, plotparameters=None, minmaxfile=None):
     parlabels=[]
     for i in range(len(lines)):
         lines[i]=lines[i].split(" ")
+
         if lines[i][0] >= 0:
             # If the parameter has an index
             parlabels.append(lines[i][5])
@@ -178,6 +179,7 @@ def triplot(chainfilename, plotparameters=None, minmaxfile=None):
     if plotparameters is None:
         parameters = np.arange(fileparameters)
     else:
+        plotparameters = np.array(plotparameters)
         parameters = plotparameters[plotparameters < fileparameters]
         
 
