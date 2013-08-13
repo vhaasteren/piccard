@@ -1145,13 +1145,9 @@ class ptaLikelihood(object):
                 newsignal.Nvec = self.ptapsrs[psrind].toaerrs**2
                 newsignal.Nvec[ind] = 0.0
 
-                newsignal.ntotpars = 1
-                if varyEfac:
-                    newsignal.npars = 1
-                    newsignal.bvary = np.array([1], dtype=np.bool)
-                else:
-                    newsignal.npars = 0
-                    newsignal.bvary = np.array([0], dtype=np.bool)
+                newsignal.bvary = np.array([varyEfac], dtype=np.bool)
+                newsignal.npars = np.sum(newsignal.bvary)
+                newsignal.ntotpars = len(newsignal.bvary)
 
                 newsignal.pmin = np.array([pmin])
                 newsignal.pmax = np.array([pmax])
@@ -1172,13 +1168,9 @@ class ptaLikelihood(object):
             newsignal.flagvalue = self.ptapsrs[psrind].name
             newsignal.Nvec = self.ptapsrs[psrind].toaerrs**2
 
-            newsignal.ntotpars = 1
-            if varyEfac:
-                newsignal.npars = 1
-                newsignal.bvary = np.array([1], dtype=np.bool)
-            else:
-                newsignal.npars = 0
-                newsignal.bvary = np.array([0], dtype=np.bool)
+            newsignal.bvary = np.array([varyEfac], dtype=np.bool)
+            newsignal.npars = np.sum(newsignal.bvary)
+            newsignal.ntotpars = len(newsignal.bvary)
 
             newsignal.pmin = np.array([pmin])
             newsignal.pmax = np.array([pmax])
@@ -1212,7 +1204,7 @@ class ptaLikelihood(object):
         self.ptasignals.append(newsignal)
 
     def addSignalRedNoise(self, psrind, index, Tmax, \
-            noiseModel, varyfc=False):
+            noiseModel, fc=None):
         newsignal = ptasignal()
         newsignal.pulsarind = psrind
 
@@ -1239,14 +1231,19 @@ class ptaLikelihood(object):
         elif noiseModel=='spectralModel':
             # A in sec^3, alpha unitless, fc in log10(yr^{-1})
             newsignal.stype = 'spectralModel'
-            newsignal.bvary = np.array([1, 1, 0], dtype=np.bool)
-            newsignal.npars = np.sum(newsignal.bvary)
-            newsignal.ntotpars = len(newsignal.bvary)
+            newsignal.bvary = np.array([1, 1, 1], dtype=np.bool)
 
             newsignal.pmin = np.array([-28., 0., -4.])
             newsignal.pmax = np.array([-14., 12., 2.])
             newsignal.pstart = np.array([-22., 2., -1.])
             newsignal.pwidth = np.array([-0.2, 0.1, 0.1])
+
+            if fc is not None:
+                newsignal.bvary[2] = False
+                newsignal.pstart[2] = fc
+
+            newsignal.npars = np.sum(newsignal.bvary)
+            newsignal.ntotpars = len(newsignal.bvary)
 
         newsignal.corr = 'single'
         newsignal.Tmax = Tmax
@@ -1270,9 +1267,9 @@ class ptaLikelihood(object):
             newsignal.pwidth = np.ones(newsignal.ntotpars) * 0.1
         elif dmModel=='powerlaw':
             newsignal.stype = 'dmpowerlaw'
-            newsignal.npars = 2
-            newsignal.ntotpars = 3
             newsignal.bvary = np.array([1, 1, 0], dtype=np.bool)
+            newsignal.npars = np.sum(newsignal.bvary)
+            newsignal.ntotpars = len(newsignal.bvary)
 
             newsignal.pmin = np.array([-14.0, 1.02, 1.0e-11])
             newsignal.pmax = np.array([5.0, 6.98, 3.0e-9])
@@ -1302,9 +1299,9 @@ class ptaLikelihood(object):
             newsignal.pwidth = np.ones(newsignal.ntotpars) * 0.1
         elif gwModel=='powerlaw':
             newsignal.stype = 'powerlaw'
-            newsignal.npars = 2
-            newsignal.ntotpars = 3
             newsignal.bvary = np.array([1, 1, 0], dtype=np.bool)
+            newsignal.npars = np.sum(newsignal.bvary)
+            newsignal.ntotpars = len(newsignal.bvary)
 
             newsignal.pmin = np.array([-17.0, 1.02, 1.0e-11])
             newsignal.pmax = np.array([-5.0, 6.98, 3.0e-9])
@@ -1366,9 +1363,9 @@ class ptaLikelihood(object):
             newsignal.pwidth = np.ones(newsignal.ntotpars) * 0.1
         elif dipoleModel=='powerlaw':
             newsignal.stype = 'powerlaw'
-            newsignal.npars = 2
-            newsignal.ntotpars = 3
             newsignal.bvary = np.array([1, 1, 0], dtype=np.bool)
+            newsignal.npars = np.sum(newsignal.bvary)
+            newsignal.ntotpars = len(newsignal.bvary)
 
             newsignal.pmin = np.array([-17.0, 1.02, 1.0e-11])
             newsignal.pmax = np.array([-5.0, 6.98, 3.0e-9])
@@ -1400,10 +1397,10 @@ class ptaLikelihood(object):
             newsignal.pwidth = np.ones(newsignal.ntotpars) * 0.1
         elif anigwbModel=='powerlaw':
             newsignal.stype = 'powerlaw'
-            newsignal.npars = nclm+2
-            newsignal.ntotpars = nclm+3
-            newsignal.bvary = np.array([1]*newsignal.ntotpars, dtype=np.bool)
+            newsignal.bvary = np.array([1]*(nclm+3), dtype=np.bool)
             newsignal.bvary[-1] = False
+            newsignal.npars = np.sum(newsignal.bvary)
+            newsignal.ntotpars = len(newsignal.bvary)
 
             newsignal.pmin = np.ones(newsignal.ntotpars) * -5.0
             newsignal.pmax = np.ones(newsignal.ntotpars) * 5.0
@@ -1529,7 +1526,7 @@ class ptaLikelihood(object):
 
     # Initialise the model
     def initModel(self, nfreqmodes=20, ndmfreqmodes=None, \
-            incRedNoise=False, noiseModel='powerlaw', \
+            incRedNoise=False, noiseModel='powerlaw', fc=None, \
             incDM=False, dmModel='powerlaw', \
             incClock=False, clockModel='powerlaw', \
             incGWB=False, gwbModel='powerlaw', \
@@ -1584,7 +1581,7 @@ class ptaLikelihood(object):
                 index += self.ptasignals[-1].npars
 
             if incRedNoise:
-                self.addSignalRedNoise(ii, index, Tmax, noiseModel)
+                self.addSignalRedNoise(ii, index, Tmax, noiseModel, fc)
                 index += self.ptasignals[-1].npars
 
             if incDM:
@@ -4444,6 +4441,9 @@ def makeresultsplot(likob, chainfilename, outputdir):
             #plt.getp(xtickNames)
             plt.setp(xtickNames, rotation=45, fontsize=8, ha='right')
 
+            for ii in range(len(efacnames)):
+                print str(efacnames[ii]) + ":  " + str(yval[ii]) + " +/- " + str(yerr[ii])
+
             plt.savefig(fileout+'.png')
             plt.savefig(fileout+'.eps')
 
@@ -4483,11 +4483,12 @@ def makeresultsplot(likob, chainfilename, outputdir):
         plt.savefig(fileout+'.eps')
 
     # Make a triplot of all the other parameters
-    indices = np.flatnonzero(np.array(dopar == True))
-    triplot(chainfilename, indices)
-    fileout = outputdir+'/triplot'
-    plt.savefig(fileout+'.png')
-    plt.savefig(fileout+'.eps')
+    if np.sum(dopar) > 0:
+        indices = np.flatnonzero(np.array(dopar == True))
+        triplot(chainfilename, indices)
+        fileout = outputdir+'/triplot'
+        plt.savefig(fileout+'.png')
+        plt.savefig(fileout+'.eps')
 
 
 
