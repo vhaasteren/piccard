@@ -167,7 +167,7 @@ def triplot(chainfilename, plotparameters=None, minmaxfile=None):
     for i in range(len(lines)):
         lines[i]=lines[i].split(" ")
 
-        if lines[i][0] >= 0:
+        if int(lines[i][0]) >= 0:
             # If the parameter has an index
             parlabels.append(lines[i][5])
         #parlabels.append(lines[i])

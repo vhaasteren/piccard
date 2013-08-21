@@ -900,13 +900,13 @@ class ptaPulsar(object):
 
     # Modify the design matrix in some general way. Either add DM derivatives,
     # or remove jumps, or ...
-    def modifyDesignMatrix(self, addDMQSD=False, removeJumps=False):
+    def getModifiedDesignMatrix(self, addDMQSD=False, removeJumps=False):
         # Which rows of Mmat to keep:
         indkeep = np.array([1]*self.Mmat.shape[1], dtype=np.bool)
-        dmadd = np.array([addDMQSD]*3, dtype=np.bool)
-        dmadddes = ['DM', 'DM1', 'DM2']
+        dmaddes = ['DM', 'DM1', 'DM2']
+        dmadd = np.array([addDMQSD]*len(dmaddes), dtype=np.bool)
         for ii in range(self.Mmat.shape[1]):
-            # Check up on jumps
+            # Check up on jumps.
             parlabel = self.ptmdescription[ii]
             firstfour = parlabel[:4]
             if removeJumps and firstfour.upper() == 'JUMP':
@@ -915,9 +915,50 @@ class ptaPulsar(object):
 
             # Check up on DM parameters
             if parlabel in dmaddes:
-                # Parameter in the list. Do
-                # CONTINUE HERE!!!
-                pass
+                # Parameter in the list, so mark as such
+                dmadd[dmaddes.index(parlabel)] = False
+
+        # Construct a new design matrix with/without the Jump parameters
+        tempM = self.Mmat[:, indkeep]
+        tempptmpars = self.ptmpars[indkeep]
+        tempptmdescription = []
+        for ii in range(len(self.ptmdescription)):
+            tempptmdescription.append(self.ptmdescription[ii])
+
+        # Construct the design matrix elements for the DM QSD if required, and
+        # add them to the new M matrix
+        if np.sum(dmadd) > 0:
+            # Construct the DM QSD matrix
+            dmqsdM = np.zeros((self.Mmat.shape[0], np.sum(dmadd)))
+            dmqsddes = []
+            dmqsdpars = np.zeros(np.sum(dmadd))
+            Dmatdiag = DMk / (self.freqs**2)
+            index = 0
+            for ii in range(len(dmaddes)):
+                if dmadd[ii]:
+                    dmqsdM[:, index] = Dmatdiag * (self.toas ** ii)
+                    if ii > 0:
+                        description = 'DM' + str(ii)
+                    else:
+                        description = 'DM'
+                    dmqsddes.append(description)
+                    dmqsdpars[index] = 0.0
+                    index += 1
+
+            newM = np.append(tempM, dmqsdM, axis=1)
+            newptmpars = np.append(tempptmpars, dmqsdpars)
+            newptmdescription = tempptmdescription + dmqsddes
+        else:
+            newM = tempM
+            newptmpars = tempptmpars
+            newptmdescription = tempptmdescription
+
+        # Construct the G-matrices
+        U, s, Vh = sl.svd(newM)
+        newG = U[:, (newM.shape[1]):].copy()
+        newGc = U[:, :(newM.shape[1])].copy()
+
+        return newM, newG, newGc, newptmpars, newptmdescription
 
 
 
@@ -926,6 +967,10 @@ class ptaPulsar(object):
     # TODO: Check if the DM is fit for in the design matrix. Use ptmdescription
     #       for that. It should have a field with 'DM' in it.
     def addDMQuadratic(self):
+        self.Mmat, self.Gmat, self.Gcmat, self.ptmpars, self.ptmdescription = \
+                self.getModifiedDesignMatrix(addDMQSD=True, removeJumps=False)
+
+        """
         if 'DM' in self.ptmdescription:
             # DM is included, do not include it again
             newM = np.zeros((self.Mmat.shape[0], self.Mmat.shape[1]+2))
@@ -956,6 +1001,9 @@ class ptaPulsar(object):
         U, s, Vh = sl.svd(self.Mmat)
         self.Gmat = U[:, (self.Mmat.shape[1]):].copy()
         self.Gcmat = U[:, :(self.Mmat.shape[1])].copy()
+        """
+
+
 
     # The number of frequencies is not the number of modes: model = 2*freqs
     def createAuxiliaries(self, Tmax, nfreqs, ndmfreqs, twoComponent=False):
@@ -4511,7 +4559,7 @@ pstart - starting position in parameter space
 pwidth - offset of starting position for second walker
 steps - number of MCMC walks to take
 """
-def Runtwalk(likob, steps, chainfilename, thin=1, analyse=False):
+def Runtwalk(likob, steps, chainfilename, initfile=None, thin=1, analyse=False):
     # Save the parameters to file
     likob.saveModelParameters(chainfilename + '.parameters.txt')
 
@@ -4519,8 +4567,30 @@ def Runtwalk(likob, steps, chainfilename, thin=1, analyse=False):
     def PtaSupp(x, xmin=likob.pmin, xmax=likob.pmax):
         return np.all(xmin <= x) and np.all(x <= xmax)
 
-    p0 = likob.pstart
-    p1 = likob.pstart + likob.pwidth 
+    if initfile is not None:
+        ndim = likob.dimensions
+        # Obtain starting position from file
+        print "Obtaining initial positions from '" + initfile + "'"
+        burnindata = np.loadtxt(initfile)
+        burnindata = burnindata[:,2:]
+        nsteps = burnindata.shape[0]
+        dim = burnindata.shape[1]
+        if(ndim != dim):
+          print "ERROR: burnin file not same dimensions!"
+          print "mismatch: ", ndim, dim
+          exit()
+
+        # Get starting position
+        indices = np.random.randint(0, nsteps, 1)
+        p0 = burnindata[indices[0]]
+        indices = np.random.randint(0, nsteps, 1)
+        p1 = burnindata[indices[0]]
+
+        del burnindata
+    else:
+        # Obtain starting position from pstart
+        p0 = likob.pstart
+        p1 = likob.pstart + likob.pwidth 
 
     # Initialise the twalk sampler
     #sampler = pytwalk.pytwalk(n=likob.dimensions, U=np_ns_WrapLL, Supp=PtaSupp)
@@ -4680,6 +4750,8 @@ def RunMetropolis(likob, steps, chainfilename, initfile=None, resize=0.088):
 
     # Estimate covariances as being the standarddeviation
     pwidth = resize * np.std(burnindata, axis=0)
+
+    del burnindata
   else:
     # Set the starting position of the random walker (add a small perturbation to
     # get away from a possible zero)
