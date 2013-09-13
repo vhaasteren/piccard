@@ -733,11 +733,15 @@ mark6loglikelihood: As mark4loglikelihood, but now the DM and red noise Fourier
 modes are integrated over simultaneously. Makes for a larger Phi matrix, but
 less computational hassle. About as fast as mark4.
 
-mark7loglikelihood: like mar3loglikelihood, but allows for RJMCMC Fourier mode
+mark7loglikelihood: like mark3loglikelihood, but allows for RJMCMC Fourier mode
 selection
 
-mark8loglikelihood: like mar6loglikelihood, but allows for RJMCMC Fourier mode
+mark8loglikelihood: like mark6loglikelihood, but allows for RJMCMC Fourier mode
 selection
+
+mark9loglikelihood: like mark3loglikelihood, but allows for an extra noise
+source, which models a single frequency-source with a variable frequency and
+amplitude
 """
 class ptaPulsar(object):
     raj = 0
