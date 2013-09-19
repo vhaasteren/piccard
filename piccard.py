@@ -1494,10 +1494,15 @@ class ptaLikelihood(object):
             newsignal.pmax = np.ones(newsignal.ntotpars) * 10.0
             newsignal.pstart = np.ones(newsignal.ntotpars) * -10.0
             newsignal.pwidth = np.ones(newsignal.ntotpars) * 0.1
+
+            newsignal.pmin[-nclm:] = -5.0
+            newsignal.pmax[-nclm:] = 5.0
+            newsignal.pstart[-nclm:] = 0.0
+            newsignal.pwidth[-nclm:] = 0.2
         elif anigwbModel=='powerlaw':
             newsignal.stype = 'powerlaw'
             newsignal.bvary = np.array([1]*(nclm+3), dtype=np.bool)
-            newsignal.bvary[-1] = False
+            newsignal.bvary[2] = False
             newsignal.npars = np.sum(newsignal.bvary)
             newsignal.ntotpars = len(newsignal.bvary)
 
@@ -1506,10 +1511,10 @@ class ptaLikelihood(object):
             newsignal.pstart = np.ones(newsignal.ntotpars) * 0.0
             newsignal.pwidth = np.ones(newsignal.ntotpars) * 0.2
 
-            newsignal.pmin[-3:] = np.array([-17.0, 1.02, 1.0e-11])
-            newsignal.pmax[-3:] = np.array([-5.0, 6.98, 3.0e-9])
-            newsignal.pstart[-3:] = np.array([-14.0, 2.01, 1.0e-10])
-            newsignal.pwidth[-3:] = np.array([0.1, 0.1, 5.0e-11])
+            newsignal.pmin[:3] = np.array([-17.0, 1.02, 1.0e-11])
+            newsignal.pmax[:3] = np.array([-5.0, 6.98, 3.0e-9])
+            newsignal.pstart[:3] = np.array([-14.0, 2.01, 1.0e-10])
+            newsignal.pwidth[:3] = np.array([0.1, 0.1, 5.0e-11])
 
         newsignal.corr = 'anisotropicgwb'
         newsignal.Tmax = Tmax
@@ -1747,7 +1752,16 @@ class ptaLikelihood(object):
                     flagname = 'frequency'
 
                     if jj >= len(self.ptapsrs[psrindex].Ffreqs)/2:
-                        flagvalue = 'Cxx'
+                        # clmind is index of clm's, plus one, since we do not
+                        # model the c_00 term explicitly like that (it is the
+                        # amplitude)
+                        #     0            l=0     m=0
+                        #   1 2 3          l=1     m=-1, 0, -1
+                        # 4 5 6 7 8 etc.   l=2     m=-2, -1, 0, 1, 2
+                        clmind = jj - len(self.ptapsrs[psrindex].Ffreqs)/2 + 1
+                        lani = int(np.sqrt(clmind))
+                        mani = clmind - lani*(lani+1)
+                        flagvalue = 'C_(' + str(lani) + ',' + str(mani) + ')'
                     else:
                         flagvalue = str(self.ptapsrs[psrindex].Ffreqs[2*jj])
                 elif sig.stype == 'dmspectrum':
@@ -1759,7 +1773,11 @@ class ptaLikelihood(object):
                     if jj < 3:
                         flagvalue = ['RN-Amplitude', 'RN-spectral-index', 'low-frequency-cutoff'][jj]
                     else:
-                        flagvalue = 'Cxx'
+                        # Index counting same as above
+                        clmind = jj - 3 + 1
+                        lani = int(np.sqrt(clmind))
+                        mani = clmind - lani*(lani+1)
+                        flagvalue = 'C_(' + str(lani) + ',' + str(mani) + ')'
                 elif sig.stype == 'dmpowerlaw':
                     flagname = 'dmpowerlaw'
                     flagvalue = ['DM-Amplitude', 'DM-spectral-index', 'low-frequency-cutoff'][jj]
