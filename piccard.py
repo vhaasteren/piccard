@@ -1042,6 +1042,53 @@ class ptaPulsar(object):
             self.AGD = np.dot(self.Amat.T, GtD)
             self.AGE = np.dot(self.Amat.T, GtE)
 
+    """
+    When we have a source included with a single frequency component with
+    variable frequency and amplitude, we need to be able to modify the
+    Fourier design matrix on-the-fly. Since we have defined Fmat as solely for
+    red-noise, created by fourierdesignmatrix, it is currently better do handle
+    it with a different set of auxiliary matrices. That is what is done here. We
+    are calling the matrix with the single-frequency components F2. The total of
+    Fmat and F2 is F3.
+    """
+    def createSingleFreqAuxiliaries(self, Tmax, nsources, twoComponent=False):
+        if nsources < 1:
+            return
+
+        self.F2 = np.zeros((len(self.toas), nsources))
+
+        (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
+        self.Gr = np.dot(self.Gmat.T, self.residuals)
+        self.GGr = np.dot(self.Gmat, self.Gr)
+        GtF = np.dot(self.Gmat.T, self.Fmat)
+        self.GGtF = np.dot(self.Gmat, GtF)
+
+        # For the DM stuff
+        (self.Fdmmat, self.Fdmfreqs) = fourierdesignmatrix(self.toas, 2*ndmfreqs, Tmax)
+        self.Dmat = np.diag(DMk / (self.freqs**2))
+        self.DF = np.dot(self.Dmat, self.Fdmmat)
+        GtD = np.dot(self.Gmat.T, self.DF)
+        self.GGtD = np.dot(self.Gmat, GtD)
+
+        # DM + Red noise stuff (mark6 needs this)
+        self.Emat = np.append(self.Fmat, self.DF, axis=1)
+        GtE = np.dot(self.Gmat.T, self.Emat)
+        self.GGtE = np.dot(self.Gmat, GtE)
+
+        # For a two-component noise model, we need some more stuff done
+        if twoComponent:
+            self.twoComponentNoise = True
+
+            # Diagonalise GtEfG
+            GtNeG = np.dot(self.Gmat.T, ((self.toaerrs**2) * self.Gmat.T).T)
+            self.Wvec, self.Amat = sl.eigh(GtNeG)
+
+            self.AGr = np.dot(self.Amat.T, self.Gr)
+            self.AGF = np.dot(self.Amat.T, GtF)
+            self.AGD = np.dot(self.Amat.T, GtD)
+            self.AGE = np.dot(self.Amat.T, GtE)
+
+
 
     # When doing Fourier mode selection, like in mark7/mark8, we need an adjusted
     # version of the E-matrix, which only includes certain columns. Select those
@@ -1698,13 +1745,21 @@ class ptaLikelihood(object):
                     flagvalue = 'equad'+sig.flagvalue
                 elif sig.stype == 'spectrum':
                     flagname = 'frequency'
-                    flagvalue = str(self.ptapsrs[psrindex].Ffreqs[2*jj])
+
+                    if jj >= len(self.ptapsrs[psrindex].Ffreqs)/2:
+                        flagvalue = 'Cxx'
+                    else:
+                        flagvalue = str(self.ptapsrs[psrindex].Ffreqs[2*jj])
                 elif sig.stype == 'dmspectrum':
                     flagname = 'dmfrequency'
                     flagvalue = str(self.ptapsrs[psrindex].Fdmfreqs[2*jj])
                 elif sig.stype == 'powerlaw':
                     flagname = 'powerlaw'
-                    flagvalue = ['RN-Amplitude', 'RN-spectral-index', 'low-frequency-cutoff'][jj]
+
+                    if jj < 3:
+                        flagvalue = ['RN-Amplitude', 'RN-spectral-index', 'low-frequency-cutoff'][jj]
+                    else:
+                        flagvalue = 'Cxx'
                 elif sig.stype == 'dmpowerlaw':
                     flagname = 'dmpowerlaw'
                     flagvalue = ['DM-Amplitude', 'DM-spectral-index', 'low-frequency-cutoff'][jj]
@@ -4157,6 +4212,8 @@ def makespectrumplot(chainfilename, parstart=1, numfreqs=10, freqs=None, \
 
     if plotlog:
         plt.errorbar(ufreqs, yval, yerr=yerr, fmt='.', c=lcolor)
+        # outmatrix = np.array([ufreqs, yval, yerr]).T
+        # np.savetxt('spectrumplot.txt', outmatrix)
 
         if Apl is not None and gpl is not None and Tmax is not None:
             Apl = 10**Apl
