@@ -591,9 +591,11 @@ class aniCorrelations(object):
                     neg_gamma_ml = []
                     gamma_ml = []
                     for mm in range(ll+1):
-                        intg_gamma = ang.int_Gamma_lm(mm, l, \
+                        intg_gamma = ang.int_Gamma_lm(mm, ll, \
                                 self.phiarr[aa], self.phiarr[bb], \
                                 self.thetaarr[aa],self.thetaarr[bb])
+
+
                         neg_intg_gamma= (-1)**(mm) * intg_gamma  # (-1)^m Gamma_ml
                         plus_gamma_ml.append(intg_gamma)     # all gammas
                         neg_gamma_ml.append(neg_intg_gamma)  # neg m gammas
@@ -603,7 +605,7 @@ class aniCorrelations(object):
                     gamma_ml = rev_neg_gamma_ml+plus_gamma_ml
 
                     # Fill the corrcur matrices for all m
-                    mindex = len(self.corr) - mmodes - 1    # Index first m mode
+                    mindex = len(self.corr) - mmodes    # Index first m mode
                     for mm in range(mmodes):
                         m = mm - ll
 
@@ -611,6 +613,25 @@ class aniCorrelations(object):
                                 ang.real_rotated_Gammas(m, ll, \
                                 self.phiarr[aa], self.phiarr[bb], \
                                 self.thetaarr[aa], self.thetaarr[bb], gamma_ml)
+
+                        """
+                        if aa == 0 and bb == 1:
+                            print "-----------------"
+                            print "pulsars: ", psrs[aa].name, psrs[bb].name
+                            print "phi: ", self.phiarr[aa], self.phiarr[bb]
+                            print "theta: ", self.thetaarr[aa], self.thetaarr[bb]
+                            print "(ll, mm) = ", ll, m
+                            print "indexlm = ", mindex+mm
+                            print "mindex = ", mindex
+                            print "-----------------"
+
+                            newnorm = 3./(8*np.pi)
+                            oldnorm = 3./(4*np.sqrt(np.pi))
+
+                            print "corr: ", ang.real_rotated_Gammas(m, ll, \
+                                self.phiarr[aa], self.phiarr[bb], \
+                                self.thetaarr[aa], self.thetaarr[bb], gamma_ml)
+                        """
 
                         if aa != bb:
                             self.corr[mindex+mm][bb, aa] = self.corr[mindex+mm][aa, bb]
@@ -657,10 +678,27 @@ class aniCorrelations(object):
             raise ValueError("ERROR: len(clm) != clmlength")
 
         corrreturn = self.corrhd.copy()
+        """
+        np.savetxt('corrmat_0_0.txt', corrreturn)
+        """
         index = 0
         for ll in range(1, self.l+1):
             for mm in range(-ll, ll+1):
-                corrreturn += clm[index] * self.corr[index]
+                corrreturn = clm[index] * self.corr[index]
+
+                """
+                if clm[index] != 0:
+                    print "\nIndex = " + str(index) + "   l, m = " + str(ll) + ',' + str(mm)
+                    print "clm[index] = " + str(clm[index])
+                """
+
+                """
+                # Write the matrices to file
+                filename = 'corrmat_' + str(ll) + '_' + str(mm) + '.txt'
+                np.savetxt(filename, self.corr[index])
+                print "Just saved '" + filename + "'"
+                """
+
                 index += 1
 
         return corrreturn
@@ -3401,7 +3439,7 @@ class ptaLikelihood(object):
     """
     def gensig(self, parameters=None, filename=None, timedomain=False):
         if parameters == None:
-            parameters = self.pstart
+            parameters = self.pstart.copy()
 
         npsrs = len(self.ptapsrs)
 
@@ -4025,7 +4063,7 @@ def ScanParameters(likob, scanfilename, par1=0, par2=1):
   lp1 = np.zeros(shape=(50,50))
   lp2 = np.zeros(shape=(50,50))
   llik = np.zeros(shape=(50,50))
-  parameters = likob.pstart
+  parameters = likob.pstart.copy()
   for i in range(50):
       for j in range(50):
           lp1[i,j] = p1[i]
@@ -4057,7 +4095,7 @@ def ScanParameter(likob, scanfilename, par1=0):
 
   lp1 = np.zeros(shape=(50))
   llik = np.zeros(shape=(50))
-  parameters = likob.pstart
+  parameters = likob.pstart.copy()
   for i in range(50):
       lp1[i] = p1[i]
       parameters[par1] = p1[i]
@@ -4668,7 +4706,7 @@ def Runtwalk(likob, steps, chainfilename, initfile=None, thin=1, analyse=False):
         del burnindata
     else:
         # Obtain starting position from pstart
-        p0 = likob.pstart
+        p0 = likob.pstart.copy()
         p1 = likob.pstart + likob.pwidth 
 
     # Initialise the twalk sampler
