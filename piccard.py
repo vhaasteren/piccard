@@ -684,7 +684,7 @@ class aniCorrelations(object):
         index = 0
         for ll in range(1, self.l+1):
             for mm in range(-ll, ll+1):
-                corrreturn = clm[index] * self.corr[index]
+                corrreturn += clm[index] * self.corr[index]
 
                 """
                 if clm[index] != 0:
