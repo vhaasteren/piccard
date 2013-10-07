@@ -1156,11 +1156,11 @@ class ptaPulsar(object):
                 self.lAGF = self.AGF[:,bf]
             else:
                 self.lEmat = np.append(self.Fmat[:,bf], self.DF[:,bfdm], axis=1)
-                self.lGGtE = np.append(self.GGtF[:,bf], self.GGtD[:,bfdm], axis=1)
+                self.lGGtE = np.append(self.GGtF[:,bf], self.GGtD[:,bfdm], axis=1) # Not used
 
                 # For mark7
                 self.lFmat = self.Fmat[:,bf]
-                self.lGGtF = self.GGtF[:,bf]
+                self.lGGtF = self.GGtF[:,bf]  # Not used
 
     # Just like 'setLimitedModeAuxiliaries', but now with a number as an argument
     def setLimitedModeNumber(self, nbf, nbfdm):
@@ -1675,6 +1675,10 @@ class ptaLikelihood(object):
             incDipole=False, dipoleModel='powerlaw', \
             incAniGWB=False, anigwbModel='powerlaw', lAniGWB=1, \
             varyEfac=False, incEquad=False, separateEfacs=False, \
+            incSinglePulsarSingleFreqNoise=False, \     # True
+            incMultiplePulsarSingleFreqNoise=False, \   # True
+            singlePulsarMultipleFreqNoise=None, \       # [True, ..., False]
+            multiplePulsarMultipleFreqNoise=None, \     # [0, 3, 2, ..., 4]
             likfunc='mark3'):
         # For every pulsar, construct the auxiliary quantities like the Fourier
         # design matrix etc
