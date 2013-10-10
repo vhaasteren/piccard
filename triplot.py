@@ -109,7 +109,39 @@ def makesubplot2d(ax, samples1, samples2, weights=None):
     c1 = ax.contour(xedges,yedges,hist2d.T,contourlevels, \
             colors=contourcolors, linestyles=contourlinestyles, \
             linewidths=contourlinewidths, zorder=2)
-    
+
+def makesubplot2denh(ax, samples1, samples2, weights=None):
+    bins = 50
+
+    xmin = np.min(samples1)
+    xmax = np.max(samples1)
+    ymin = np.min(samples2)
+    ymax = np.max(samples2)
+    hrange = [[xmin, xmax], [ymin, ymax]]
+
+    [h, xs, ys] = np.histogram2d(samples1, samples2, bins=bins, normed=True, range=hrange)
+
+    ax.contourf(0.5*(xs[1:]+xs[:-1]),0.5*(ys[1:]+ys[:-1]),h.T,cmap=plt.get_cmap('YlOrBr'))
+    #ax.contourf(0.5*(xs[1:]+xs[:-1]),0.5*(ys[1:]+ys[:-1]),h.T,cmap=plt.get_cmap('jet'))
+    plt.hold(True)
+
+    H,tmp1,tmp2 = np.histogram2d(samples1, samples2 ,bins=bins, range=hrange)
+
+    import scipy.ndimage.filters as SNF
+    H = SNF.gaussian_filter(H,sigma=1.5)
+
+    H = H / len(samples1)           # this is not correct with weights!
+    Hflat = -np.sort(-H.flatten())  # sort highest to lowest
+    cumprob = np.cumsum(Hflat)      # sum cumulative probability
+
+    levels = [np.interp(level, cumprob, Hflat) for level in (0.6826,0.9547,0.9973)]
+
+    xs = np.linspace(hrange[0][0], hrange[0][1], bins)
+    ys = np.linspace(hrange[1][0], hrange[1][1], bins)
+
+    ax.contour(xs,ys,H.T,levels,colors='k',linestyles=('-','--','-.'),linewidths=2)
+    plt.hold(False)
+
     
 def makesubplot1d(ax, samples, weights=None):
     bins = 100
@@ -139,6 +171,7 @@ def triplot(chainfilename, plotparameters=None, minmaxfile=None):
     #shortname=options.root
     chainfilename = chainfilename
     parametersfilename = chainfilename+'.parameters.txt'
+    mnparametersfilename = chainfilename+'.mnparameters.txt'
     figurefilenameeps = chainfilename+'.fig.eps'
     figurefilenamepng = chainfilename+'.fig.png'
     chain = np.loadtxt(chainfilename)
@@ -149,33 +182,39 @@ def triplot(chainfilename, plotparameters=None, minmaxfile=None):
     # Check if we are making MultiNest triplots (rescale the parameters, and use
     # posterior weights
     weights=None
+    """
     if os.path.exists(minmaxfile):
         minmax = np.loadtxt(minmaxfile)
         #for ii in range(chain.shape[1]-2):
         #  chain[:,ii+2] = minmax[ii,0] + chain[:,ii+2] * (minmax[ii,1] - minmax[ii,0])
         weights = chain[:,0]
+    """
 
     #print "shortname = ", shortname
-    print "parametersfilename = ", parametersfilename
+    print "parametersfilename = ", parametersfilename, " (for MCMC)"
+    print "mnparametersfilename = ", mnparametersfilename, " (for MultiNest)"
     print "figurefilename = ", figurefilenameeps
     print "chainfilename = ", chainfilename
 
     # Read in the labels for all parameters from parametersfilename
+    if os.path.exists(mnparametersfilename):
+        parametersfilename = mnparametersfilename
+        samples = chain[:, :-1]
+    elif os.path.exists(parametersfilename):
+        samples = chain[:, 2:]
+
     parfile = open(parametersfilename)
     lines=[line.strip() for line in parfile]
     parlabels=[]
     for i in range(len(lines)):
-        lines[i]=lines[i].split(" ")
+        lines[i]=lines[i].split()
 
         if int(lines[i][0]) >= 0:
             # If the parameter has an index
             parlabels.append(lines[i][5])
-        #parlabels.append(lines[i])
-
-    #print "Parameter labels", parlabels
 
     # Figure out which parameters to plot
-    fileparameters = chain.shape[1]-2
+    fileparameters = samples.shape[1]
     if plotparameters is None:
         parameters = np.arange(fileparameters)
     else:
@@ -213,12 +252,12 @@ def triplot(chainfilename, plotparameters=None, minmaxfile=None):
 
                 if ii == jj:
                     # Make a 1D plot
-                    makesubplot1d(axarr[ii][ii], chain[:,parameters[ii]+2], \
+                    makesubplot1d(axarr[ii][ii], samples[:,parameters[ii]],
                             weights=weights)
                 else:
                     # Make a 2D plot
-                    makesubplot2d(axarr[jj][ii], chain[:,parameters[ii]+2], \
-                            chain[:,parameters[jj]+2], weights=weights)
+                    makesubplot2denh(axarr[jj][ii], samples[:,parameters[ii]], \
+                            samples[:,parameters[jj]], weights=weights)
 
                 axarr[jj][ii].xaxis.set_major_locator(xmajorLocator)
                 axarr[jj][ii].yaxis.set_major_locator(ymajorLocator)

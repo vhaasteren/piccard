@@ -34,7 +34,7 @@ from __future__ import division
 
 import numpy as np
 import math
-import scipy.linalg as sl, scipy.special as ss
+import scipy.linalg as sl, scipy.special as ss, scipy as sp
 import h5py as h5
 import matplotlib.pyplot as plt
 import os as os
@@ -823,6 +823,7 @@ class ptaPulsar(object):
     DF = None
     Ffreqs = None       # Frequencies of the red noise
     SFfreqs = None      # Single modelled frequencies
+    frequencyLinesAdded = 0      # Whether we have > 1 single frequency line
     Fdmfreqs = None
     Emat = None
     EEmat = None
@@ -1108,6 +1109,8 @@ class ptaPulsar(object):
             self.GGtE = np.dot(self.Gmat, GtE)
 
         if likfunc in ['mark9', 'mark10']:
+            self.frequencyLinesAdded = nSingleFreqs
+
             # Initialise the single frequency with a frequency of 10 / yr
             spd = 24 * 3600.0
             spy = 365.25 * spd
@@ -1231,6 +1234,10 @@ class ptaLikelihood(object):
     # What likelihood function to use
     likfunc = 'mark3'
 
+    # Whether we use the option of forcing the frequency lines to be ordered in
+    # the prior
+    orderFrequencyLines = False
+
     # Additional informative quantities (reset after RJMCMC jump)
     npf = None      # Number of frequencies per pulsar (red noise/signal)
     npff = None     # Number of frequencies per pulsar (single-freq components)
@@ -1273,6 +1280,7 @@ class ptaLikelihood(object):
         self.pamplitudeind = None
         self.initialised = False
         self.likfunc = 'mark3'
+        self.orderFrequencyLines = False
 
         if filename is not None:
             self.initFromFile(filename)
@@ -1381,7 +1389,6 @@ class ptaLikelihood(object):
         self.ptasignals.append(newsignal)
 
     def addSignalNoiseFrequencyLine(self, psrind, index, freqindex):
-        # Continue here
         newsignal = ptasignal()
         newsignal.pulsarind = psrind
 
@@ -1391,10 +1398,10 @@ class ptaLikelihood(object):
         newsignal.bvary = np.array([True, True], dtype=np.bool)
         newsignal.npsrfreqindex = freqindex
 
-        # 0 = amplitude, 1 = frequency
-        newsignal.pmin = np.array([-18, -9.0])
-        newsignal.pmax = np.array([-7, -4.0])
-        newsignal.pstart = np.array([-10, -7.0])
+        # 1 = frequency, 1 = amplitude
+        newsignal.pmin = np.array([-9.0, -18])
+        newsignal.pmax = np.array([-4.0, -7.0])
+        newsignal.pstart = np.array([-7, -10.0])
         newsignal.pwidth = np.array([0.1, 0.1])
 
         newsignal.corr = 'single'
@@ -1767,6 +1774,7 @@ class ptaLikelihood(object):
                                         # [True, ..., False]
             multiplePulsarMultipleFreqNoise=None, \
                                         # [0, 3, 2, ..., 4]
+            orderFrequencyLines=False, \
             likfunc='mark3'):
         # For every pulsar, construct the auxiliary quantities like the Fourier
         # design matrix etc
@@ -1776,6 +1784,7 @@ class ptaLikelihood(object):
         Tstart = np.min(self.ptapsrs[0].toas)
         Tfinish = np.max(self.ptapsrs[0].toas)
         self.likfunc = likfunc
+        self.orderFrequencyLines = orderFrequencyLines
 
         for m2psr in self.ptapsrs:
             Tstart = np.min([np.min(self.ptapsrs[0].toas), Tstart])
@@ -1939,7 +1948,7 @@ class ptaLikelihood(object):
                     flagvalue = ['SM-Amplitude', 'SM-spectral-index', 'SM-corner-frequency'][jj]
                 elif sig.stype == 'frequencyline':
                     flagname = 'frequencyline'
-                    flagvalue = ['Line-Ampl', 'Line-Freq'][jj]
+                    flagvalue = ['Line-Freq', 'Line-Ampl'][jj]
                 else:
                     flagname = 'none'
                     flagvalue = 'none'
@@ -2325,7 +2334,7 @@ class ptaLikelihood(object):
                     findex = np.sum(self.npff[:m2signal.pulsarind]) + \
                             self.npf[m2signal.pulsarind] + 2*m2signal.npsrfreqindex
 
-                    pcdoubled = np.array([sparameters[0], sparameters[0]])
+                    pcdoubled = np.array([sparameters[1], sparameters[1]])
                     di = np.diag_indices(2)
 
                     self.Phi[findex:findex+2, findex:findex+2][di] += 10**pcdoubled
@@ -2569,19 +2578,23 @@ class ptaLikelihood(object):
     matrices at every likelihood step. That is done in this function.
     """
     def updateSpectralLines(self, parameters):
-        checkLineAdded = np.array([False]*len(self.ptapsrs), dtype=np.bool)
+        #checkLineAdded = np.array([False]*len(self.ptapsrs), dtype=np.bool)
 
         # Loop over all signals, and obtain the new frequencies of the lines
         for ss in range(len(self.ptasignals)):
             m2signal = self.ptasignals[ss]
             if m2signal.stype == 'frequencyline':
-                self.ptapsrs[m2signal.pulsarind].SFfreqs[2*m2signal.npsrfreqindex:2*m2signal.npsrfreqindex+1] = parameters[m2signal.nindex+1]
-                checkLineAdded[m2signal.pulsarind] = True
+                self.ptapsrs[m2signal.pulsarind].SFfreqs[2*m2signal.npsrfreqindex:2*m2signal.npsrfreqindex+2] = parameters[m2signal.nindex]
+                #checkLineAdded[m2signal.pulsarind] = True
+
+        #for ii in range(len(self.ptapsrs)):
+        #    if not self.ptapsrs[ii].frequencyLinesAdded > 0 == checkLineAdded[ii]:
+        #        print "ERROR:", self.ptapsrs[ii].frequencyLinesAdded, checkLineAdded[ii]
 
         for pindex in range(len(self.ptapsrs)):
             m2psr = self.ptapsrs[pindex]
-            if checkLineAdded[pindex]:
-                m2psr.SFmat = singleFreqFourierModes(m2psr.toas, m2psr.SFfreqs[::2])
+            if m2psr.frequencyLinesAdded > 0:
+                m2psr.SFmat = singleFreqFourierModes(m2psr.toas, 10**m2psr.SFfreqs[::2])
                 m2psr.FFmat = np.append(m2psr.Fmat, m2psr.SFmat, axis=1)
                 GtFF = np.dot(m2psr.Gmat.T, m2psr.FFmat)
                 m2psr.GGtFF = np.dot(m2psr.Gmat, GtFF)
@@ -3504,6 +3517,21 @@ class ptaLikelihood(object):
         return self.mark7logprior(parameters, psrbfinc, psrbfdminc, \
                 psrnfinc, psrnfdminc)
 
+    def mark9logprior(self, parameters):
+        lp = self.mark4logprior(parameters)
+
+        # Check if we have frequency ordering
+        if lp > -1e98:
+            if self.orderFrequencyLines:
+                for m2psr in self.ptapsrs:
+                    if m2psr.frequencyLinesAdded > 0:
+                        if all(m2psr.SFfreqs[i] < m2psr.SFfreqs[i+1] for i in xrange(len(m2psr.SFfreqs)-1)):
+                            lp += np.log(sp.factorial(m2psr.frequencyLinesAdded))
+                        else:
+                            lp = -1.0e99
+
+        return lp
+
     def mark7logposterior(self, parameters, psrbfinc=None, psrbfdminc=None, \
             psrnfinc=None, psrnfdminc=None):
         lp = -1.0e99
@@ -3545,7 +3573,7 @@ class ptaLikelihood(object):
             elif self.likfunc == 'mark8':  # Mark8 ''
                 lp = self.mark8logprior(parameters)
             elif self.likfunc == 'mark9':  # Mark9 ''
-                lp = self.mark4logprior(parameters)
+                lp = self.mark9logprior(parameters)
         else:
             lp = -1e99
 
@@ -5157,9 +5185,9 @@ Run a MultiNest algorithm on the likelihood
 Implementation from "pyMultinest"
 
 """
-def RunMultiNest(likob, chainroot, rseed=16):
+def RunMultiNest(likob, chainroot, rseed=16, resume=False):
     # Save the parameters to file
-    likob.saveModelParameters(chainroot + '.txt.parameters.txt')
+    likob.saveModelParameters(chainroot + 'post_equal_weights.dat.mnparameters.txt')
 
     ndim = likob.dimensions
 
@@ -5181,39 +5209,34 @@ def RunMultiNest(likob, chainroot, rseed=16):
     seed = rseed        # seed for random numbers
     periodic = np.ones(ndims)    # period conditions
     fb = True           # output status updates?
-    resume = False      # resume from previous run?
 
+    # Minmax not necessary anymore with the newer multinest version
+    """
     # Save the min and max values for the hypercube transform
     cols = np.array([likob.pmin, likob.pmax]).T
     np.savetxt(root+".txt.minmax.txt", cols)
+    """
 
-    def mnlogprior(cube, ndim, nparams):
-        return 1.0
-
+    # Old MultiNest call
 #    pymultinest.nested.nestRun(mmodal, ceff, nlive, tol, efr, ndims, nPar, nClsPar, maxModes, updInt, Ztol, root, seed, periodic, fb, resume, likob.logposteriorhc, 0)
 
-    #progress = pymultinest.ProgressPlotter(n_params = n_params); progress.start()
-    #threading.Timer(2, show, ["chains/1-phys_live.points.pdf"]).start() # delayed opening
-    #pymultinest.run(likob.logposteriorhc, mnlogprior, ndims, \
-    #        sampling_efficiency=efr, multimodal=False, \
-    #        importance_nested_sampling=True, const_efficiency_mode=True, \
-    #        n_live_points = nlive, evidence_tolerance = tol, seed=seed, \
-    #        outputfiles_basename=root, verbose=True, resume=False)
-    #progress.stop()
-            
-    #pymultinest.run(myloglike, myprior, 2, importance_nested_sampling = True, resume = True, verbose = True, sampling_efficiency = 0.3)
-    #pymultinest.run(myloglike, myprior, ndims, importance_nested_sampling = False, resume = True, verbose = True, sampling_efficiency = 0.3)
 
     pymultinest.run(likob.logposteriorhc, likob.samplefromprior, ndims,
             importance_nested_sampling = False,
-            resume = False,
-            verbose = True,
-            n_live_points = nlive,
+            const_efficiency_mode=False,
+            n_clustering_params = None,
+            resume = resume,
+            verbose = False,
+            n_live_points = 500,
             init_MPI = False,
             multimodal = True,
             outputfiles_basename=root,
+            n_iter_before_update=100,
+            seed=rseed,
+            max_modes=100,
+            evidence_tolerance=0.5,
+            write_output=True,
             sampling_efficiency = 0.3)
-            
 
     sys.stdout.flush()
 
