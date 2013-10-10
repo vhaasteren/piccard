@@ -151,8 +151,8 @@ def triplot(chainfilename, plotparameters=None, minmaxfile=None):
     weights=None
     if os.path.exists(minmaxfile):
         minmax = np.loadtxt(minmaxfile)
-        for ii in range(chain.shape[1]-2):
-          chain[:,ii+2] = minmax[ii,0] + chain[:,ii+2] * (minmax[ii,1] - minmax[ii,0])
+        #for ii in range(chain.shape[1]-2):
+        #  chain[:,ii+2] = minmax[ii,0] + chain[:,ii+2] * (minmax[ii,1] - minmax[ii,0])
         weights = chain[:,0]
 
     #print "shortname = ", shortname
