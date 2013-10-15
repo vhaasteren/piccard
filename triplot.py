@@ -13,6 +13,7 @@ from matplotlib.ticker import FormatStrFormatter, LinearLocator, NullFormatter, 
 import matplotlib as mpl
 import matplotlib.ticker
 import os as os
+import scipy.ndimage.filters as snf
 
 """
 font = {'family' : 'serif',
@@ -123,12 +124,11 @@ def makesubplot2denh(ax, samples1, samples2, weights=None):
 
     ax.contourf(0.5*(xs[1:]+xs[:-1]),0.5*(ys[1:]+ys[:-1]),h.T,cmap=plt.get_cmap('YlOrBr'))
     #ax.contourf(0.5*(xs[1:]+xs[:-1]),0.5*(ys[1:]+ys[:-1]),h.T,cmap=plt.get_cmap('jet'))
-    plt.hold(True)
+    #plt.hold(True)
 
     H,tmp1,tmp2 = np.histogram2d(samples1, samples2 ,bins=bins, range=hrange)
 
-    import scipy.ndimage.filters as SNF
-    H = SNF.gaussian_filter(H,sigma=1.5)
+    H = snf.gaussian_filter(H,sigma=1.5)
 
     H = H / len(samples1)           # this is not correct with weights!
     Hflat = -np.sort(-H.flatten())  # sort highest to lowest
@@ -140,7 +140,7 @@ def makesubplot2denh(ax, samples1, samples2, weights=None):
     ys = np.linspace(hrange[1][0], hrange[1][1], bins)
 
     ax.contour(xs,ys,H.T,levels,colors='k',linestyles=('-','--','-.'),linewidths=2)
-    plt.hold(False)
+    #plt.hold(False)
 
     
 def makesubplot1d(ax, samples, weights=None):
