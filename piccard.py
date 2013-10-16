@@ -808,6 +808,8 @@ mark1loglikelihood: The red noise Fourier modes are included numerically. Larger
 dimensional space, but quicker evaluation. At his point, the inversion of the
 Phi matrix is only fast if phi is diagonal.
 
+mark2loglikelihood: only efac + equad signals
+
 mark3loglikelihood: analytically integrated over the red noise Fourier modes. DM
 variations are projected on these modes, which is very suboptimal. Do not use
 with DM variations. The Phi matrix inversion is not optimised per frequency. At
@@ -1125,6 +1127,20 @@ class ptaPulsar(object):
     def createAuxiliaries(self, Tmax, nfreqs, ndmfreqs, twoComponent=False, \
             nSingleFreqs=0, nSingleDMFreqs=0, likfunc='mark3'): 
 
+        if likfunc == 'mark2':
+            self.Gr = np.dot(self.Gmat.T, self.residuals)
+            self.GGr = np.dot(self.Gmat, self.Gr)
+
+            if twoComponent:
+                self.twoComponentNoise = True
+
+                # Diagonalise GtEfG
+                GtNeG = np.dot(self.Gmat.T, ((self.toaerrs**2) * self.Gmat.T).T)
+                self.Wvec, self.Amat = sl.eigh(GtNeG)
+
+                self.AGr = np.dot(self.Amat.T, self.Gr)
+                self.AG = np.dot(self.Amat.T, self.Gmat.T)
+
         if likfunc == 'mark3' or likfunc == 'mark3fa':
             (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
             self.Gr = np.dot(self.Gmat.T, self.residuals)
@@ -1408,7 +1424,7 @@ class ptaPulsar(object):
                 #       advanced indexing
                 self.lAGF = self.AGF[:,bf]
 
-                if not likfunc in ['mark3', 'mark3fa', 'mark4', 'mark7', 'mark9']:
+                if not likfunc in ['mark2', 'mark3', 'mark3fa', 'mark4', 'mark7', 'mark9']:
                     self.lAGE = np.append(self.AGE[:,bf], self.AGD[:,bfdm], axis=1)
 
                 if likfunc in ['mark9', 'mark10']:
@@ -1423,7 +1439,7 @@ class ptaPulsar(object):
                 self.lFmat = self.Fmat[:,bf]
                 #self.lGGtF = self.GGtF[:,bf]  # Not used
 
-                if not likfunc in ['mark3', 'mark3fa', 'mark4', 'mark7', 'mark9']:
+                if not likfunc in ['mark2', 'mark3', 'mark3fa', 'mark4', 'mark7', 'mark9']:
                     self.lEmat = np.append(self.Fmat[:,bf], self.DF[:,bfdm], axis=1)
                     #self.lGGtE = np.append(self.GGtF[:,bf], self.GGtD[:,bfdm], axis=1) # Not used
 
@@ -1594,7 +1610,7 @@ class ptaLikelihood(object):
             self.ptasignals.append(newsignal)
 
     def addSignalEquad(self, psrind, index, \
-            pmin=-10.0, pmax=-2.0, pwidth=0.1, pstart=-8.0):
+            pmin=-8.8, pmax=-2.0, pwidth=0.1, pstart=-8.0):
         newsignal = ptasignal()
         newsignal.pulsarind = psrind
         newsignal.stype = 'equad'
@@ -1945,8 +1961,10 @@ class ptaLikelihood(object):
         self.npobs = np.zeros(npsrs, dtype=np.int)
         self.npgs = np.zeros(npsrs, dtype=np.int)
         for ii in range(npsrs):
-            self.npf[ii] = len(self.ptapsrs[ii].Ffreqs)
-            self.npff[ii] = self.npf[ii]
+            if not self.likfunc in ['mark2']:
+                self.npf[ii] = len(self.ptapsrs[ii].Ffreqs)
+                self.npff[ii] = self.npf[ii]
+
             if self.likfunc in ['mark4ln', 'mark9', 'mark10']:
                 self.npff[ii] += len(self.ptapsrs[ii].SFfreqs)
 
@@ -1973,6 +1991,9 @@ class ptaLikelihood(object):
             self.rGFa = np.zeros(npsrs)
             self.aFGFa = np.zeros(npsrs)
             self.avec = np.zeros(np.sum(self.npf))
+        elif self.likfunc == 'mark2':
+            self.GNGldet = np.zeros(npsrs)
+            self.rGr = np.zeros(npsrs)
         elif self.likfunc == 'mark3' or self.likfunc == 'mark7' \
                 or self.likfunc == 'mark3fa':
             self.Phi = np.zeros((np.sum(self.npf), np.sum(self.npf)))
@@ -2991,6 +3012,51 @@ class ptaLikelihood(object):
 
 
 
+    """
+    mark2 loglikelihood of the pta model/likelihood implementation
+
+    This likelihood can only deal with efac/equad signals
+    """
+    def mark2loglikelihood(self, parameters):
+        npsrs = len(self.ptapsrs)
+
+        # MARK A
+
+        self.setPsrNoise(parameters)
+
+        # MARK C
+
+        # Armed with the Noise (and it's inverse), we'll construct the
+        # auxiliaries for all pulsars
+        for ii in range(npsrs):
+            findex = np.sum(self.npf[:ii])
+            nfreq = int(self.npf[ii]/2)
+
+            if self.ptapsrs[ii].twoComponentNoise:
+                # This is equivalent to np.dot(np.diag(1.0/Nwvec, AGF))
+                self.rGr[ii] = np.sum(self.ptapsrs[ii].AGr ** 2 / self.ptapsrs[ii].Nwvec)
+                self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nwvec))
+            else:
+                Nir = self.ptapsrs[ii].residuals / self.ptapsrs[ii].Nvec
+                NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Gcmat.T).T
+                GcNiGc = np.dot(self.ptapsrs[ii].Gcmat.T, NiGc)
+                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].residuals)
+
+                try:
+                    cf = sl.cho_factor(GcNiGc)
+                    self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nvec)) + \
+                            2*np.sum(np.log(np.diag(cf[0])))
+                    GcNiGcr = sl.cho_solve(cf, GcNir)
+                except np.linalg.LinAlgError:
+                    print "MAJOR ERROR"
+
+                self.rGr[ii] = np.dot(self.ptapsrs[ii].residuals, Nir) \
+                        - np.dot(GcNir, GcNiGcr)
+
+        # Now we are ready to return the log-likelihood
+        return -0.5*np.sum(self.npgs)*np.log(2*np.pi) \
+                -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet)
+
 
 
     """
@@ -3113,7 +3179,9 @@ class ptaLikelihood(object):
         # Mark F
 
         # Now we are ready to return the log-likelihood
-        return -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) + 0.5*rGSigmaGr - 0.5*PhiLD - 0.5*SigmaLD
+        return -0.5*np.sum(self.npgs)*np.log(2*np.pi) \
+                -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) \
+                + 0.5*rGSigmaGr - 0.5*PhiLD - 0.5*SigmaLD
 
 
     """
@@ -3227,8 +3295,9 @@ class ptaLikelihood(object):
                         rGFSigma[findexj:findexj+2*nfreqj]))
 
         # Now we are ready to return the log-likelihood
-        return -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) + \
-                0.5*rGSigmaGr - 0.5*PhiaLD - 0.5*SigmaLD + rScr
+        return -0.5*np.sum(self.npgs)*np.log(2*np.pi) \
+                -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) \
+                +0.5*rGSigmaGr - 0.5*PhiaLD - 0.5*SigmaLD + rScr
 
 
 
@@ -3236,7 +3305,7 @@ class ptaLikelihood(object):
     """
     mark4 loglikelihood of the pta model/likelihood implementation
 
-    implements coarse-graining
+    implements coarse-graining, without added frequency lines
 
     """
     def mark4loglikelihood(self, parameters):
@@ -3306,8 +3375,22 @@ class ptaLikelihood(object):
             UPhiU = np.dot(self.ptapsrs[0].UtF, np.dot(self.Phi, self.ptapsrs[0].UtF.T))
             Phi = UPhiU + self.ptapsrs[0].Qamp * np.eye(len(self.ptapsrs[0].avetoas))
 
-            PhiLD = np.sum(np.log(np.diag(Phi)))
-            Phiinv = np.diag(1.0 / np.diag(Phi))
+            #PhiLD = np.sum(np.log(np.diag(Phi)))
+            #Phiinv = np.diag(1.0 / np.diag(Phi))
+            try:
+                cf = sl.cho_factor(Phi)
+                PhiLD = 2*np.sum(np.log(np.diag(cf[0])))
+                Phiinv = sl.cho_solve(cf, np.identity(Phi.shape[0]))
+            except np.linalg.LinAlgError:
+                U, s, Vh = sl.svd(Phi)
+                if not np.all(s > 0):
+                    raise ValueError("ERROR: Phi singular according to SVD")
+                PhiLD = np.sum(np.log(s))
+                Phiinv = np.dot(Vh.T, np.dot(np.diag(1.0/s), U.T))
+
+                #print "Fallback to SVD for Phi"
+
+        """
         else:
             try:
                 cf = sl.cho_factor(Phi)
@@ -3321,6 +3404,7 @@ class ptaLikelihood(object):
                 Phiinv = np.dot(Vh.T, np.dot(np.diag(1.0/s), U.T))
 
                 print "Fallback to SVD for Phi"
+        """
 
         # MARK E
 
@@ -3339,7 +3423,9 @@ class ptaLikelihood(object):
         # Mark F
 
         # Now we are ready to return the log-likelihood
-        return -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) + 0.5*rGSigmaGr - 0.5*PhiLD - 0.5*SigmaLD
+        return -0.5*np.sum(self.npgs)*np.log(2*np.pi) \
+                -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) \
+                + 0.5*rGSigmaGr - 0.5*PhiLD - 0.5*SigmaLD
 
 
     """
@@ -3416,8 +3502,21 @@ class ptaLikelihood(object):
             UPhiU = np.dot(self.ptapsrs[0].UtFF, np.dot(self.Phi, self.ptapsrs[0].UtFF.T))
             Phi = UPhiU + self.ptapsrs[0].Qamp * np.eye(len(self.ptapsrs[0].avetoas))
 
-            PhiLD = np.sum(np.log(np.diag(Phi)))
-            Phiinv = np.diag(1.0 / np.diag(Phi))
+            #PhiLD = np.sum(np.log(np.diag(Phi)))
+            #Phiinv = np.diag(1.0 / np.diag(Phi))
+            try:
+                cf = sl.cho_factor(Phi)
+                PhiLD = 2*np.sum(np.log(np.diag(cf[0])))
+                Phiinv = sl.cho_solve(cf, np.identity(Phi.shape[0]))
+            except np.linalg.LinAlgError:
+                U, s, Vh = sl.svd(Phi)
+                if not np.all(s > 0):
+                    raise ValueError("ERROR: Phi singular according to SVD")
+                PhiLD = np.sum(np.log(s))
+                Phiinv = np.dot(Vh.T, np.dot(np.diag(1.0/s), U.T))
+
+                #print "Fallback to SVD for Phi"
+        """
         else:
             try:
                 cf = sl.cho_factor(Phi)
@@ -3431,6 +3530,7 @@ class ptaLikelihood(object):
                 Phiinv = np.dot(Vh.T, np.dot(np.diag(1.0/s), U.T))
 
                 print "Fallback to SVD for Phi"
+        """
 
         # MARK E
 
@@ -3449,7 +3549,9 @@ class ptaLikelihood(object):
         # Mark F
 
         # Now we are ready to return the log-likelihood
-        return -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) + 0.5*rGSigmaGr - 0.5*PhiLD - 0.5*SigmaLD
+        return -0.5*np.sum(self.npgs)*np.log(2*np.pi) \
+                -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) \
+                + 0.5*rGSigmaGr - 0.5*PhiLD - 0.5*SigmaLD
 
 
 
@@ -3586,7 +3688,9 @@ class ptaLikelihood(object):
             rGSigmaGr = np.dot(self.rGE, np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, self.rGE))))
 
         # Now we are ready to return the log-likelihood
-        return -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) + 0.5*rGSigmaGr - 0.5*PhiLD - 0.5*SigmaLD - 0.5*ThetaLD
+        return -0.5*np.sum(self.npgs)*np.log(2*np.pi) \
+                -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) \
+                + 0.5*rGSigmaGr - 0.5*PhiLD - 0.5*SigmaLD - 0.5*ThetaLD
 
 
     """
@@ -3713,9 +3817,10 @@ class ptaLikelihood(object):
                 rGSigmaGr, PhiaLD, SigmaLD, ThetaLD, rScr
 
         # Now we are ready to return the log-likelihood
-        return -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) + \
-                0.5*rGSigmaGr - 0.5*PhiaLD - 0.5*SigmaLD - 0.5*ThetaLD + \
-                rScr
+        return -0.5*np.sum(self.npgs)*np.log(2*np.pi) \
+                -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) \
+                +0.5*rGSigmaGr - 0.5*PhiaLD - 0.5*SigmaLD - 0.5*ThetaLD \
+                +rScr
 
 
 
@@ -3840,7 +3945,9 @@ class ptaLikelihood(object):
             rGSigmaGr = np.dot(self.rGF[:lenphi], np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, self.rGF[:lenphi]))))
 
         # Now we are ready to return the log-likelihood
-        return -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) + 0.5*rGSigmaGr - 0.5*PhiLD - 0.5*SigmaLD
+        return -0.5*np.sum(self.npgs)*np.log(2*np.pi) \
+                -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) \
+                +0.5*rGSigmaGr - 0.5*PhiLD - 0.5*SigmaLD
 
 
 
@@ -4003,7 +4110,9 @@ class ptaLikelihood(object):
         # MARK H
 
         # Now we are ready to return the log-likelihood
-        return -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) + 0.5*rGSigmaGr - 0.5*PhiLD - 0.5*SigmaLD - 0.5*ThetaLD
+        return -0.5*np.sum(self.npgs)*np.log(2*np.pi) \
+                -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) \
+                +0.5*rGSigmaGr - 0.5*PhiLD - 0.5*SigmaLD - 0.5*ThetaLD
 
 
 
@@ -4108,7 +4217,9 @@ class ptaLikelihood(object):
         # Mark F
 
         # Now we are ready to return the log-likelihood
-        return -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) + 0.5*rGSigmaGr - 0.5*PhiLD - 0.5*SigmaLD
+        return -0.5*np.sum(self.npgs)*np.log(2*np.pi) \
+                -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) \
+                +0.5*rGSigmaGr - 0.5*PhiLD - 0.5*SigmaLD
 
 
     """
@@ -4206,7 +4317,9 @@ class ptaLikelihood(object):
             rGSigmaGr = np.dot(self.rGE, np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, self.rGE))))
 
         # Now we are ready to return the log-likelihood
-        return -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) + 0.5*rGSigmaGr - 0.5*PhiLD - 0.5*SigmaLD - 0.5*ThetaLD
+        return -0.5*np.sum(self.npgs)*np.log(2*np.pi) \
+                -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) \
+                +0.5*rGSigmaGr - 0.5*PhiLD - 0.5*SigmaLD - 0.5*ThetaLD
 
 
 
@@ -4221,6 +4334,8 @@ class ptaLikelihood(object):
         if(np.all(self.pmin <= parameters) and np.all(parameters <= self.pmax)):
             if self.likfunc == 'mark1':
                 ll = self.mark1loglikelihood(parameters)
+            elif self.likfunc == 'mark2':
+                ll = self.mark2loglikelihood(parameters)
             elif self.likfunc == 'mark3':
                 ll = self.mark3loglikelihood(parameters)
             elif self.likfunc == 'mark3fa':
@@ -4381,6 +4496,8 @@ class ptaLikelihood(object):
 
         if(np.all(self.pmin <= parameters) and np.all(parameters <= self.pmax)):
             if self.likfunc == 'mark1':
+                lp = self.mark4logprior(parameters)
+            elif self.likfunc == 'mark2':
                 lp = self.mark4logprior(parameters)
             elif self.likfunc == 'mark3':
                 lp = self.mark4logprior(parameters)
