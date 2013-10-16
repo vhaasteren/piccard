@@ -1141,6 +1141,7 @@ class ptaPulsar(object):
 
                 self.AGr = np.dot(self.Amat.T, self.Gr)
                 self.AGF = np.dot(self.Amat.T, self.GtF)
+                self.AG = np.dot(self.Amat.T, self.Gmat.T)
 
         if likfunc == 'mark4':
             (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
@@ -1316,6 +1317,8 @@ class ptaPulsar(object):
                 self.AGr = np.dot(self.Amat.T, self.Gr)
                 self.AGF = np.dot(self.Amat.T, self.GtF)
                 self.AGFF = np.dot(self.Amat.T, GtFF)
+
+                self.AG = np.dot(self.Amat.T, self.Gmat.T)
 
         if likfunc == 'mark10':
             (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
@@ -2899,12 +2902,14 @@ class ptaLikelihood(object):
                     #m2psr.GGtFF = np.dot(m2psr.Gmat, GtFF)
 
                     if m2psr.twoComponentNoise:
-                        GtSF = np.dot(m2psr.Gmat.T, m2psr.SFmat)
+                        #GtSF = np.dot(m2psr.Gmat.T, m2psr.SFmat)
+                        AGSF = np.dot(m2psr.AG, m2psr.SFmat)
+                        m2psr.AGFF = np.append(m2psr.AGF, AGSF, axis=1)
 
                         #GtFF = np.dot(m2psr.Gmat.T, m2psr.FFmat)
-                        GtFF = np.append(m2psr.GtF, GtSF, axis=1)
+                        #GtFF = np.append(m2psr.GtF, GtSF, axis=1)
 
-                        m2psr.AGFF = np.dot(m2psr.Amat.T, GtFF)
+                        #m2psr.AGFF = np.dot(m2psr.Amat.T, GtFF)
 
             if m2psr.dmfrequencyLinesAdded > 0:
                 m2psr.SFdmmat = singleFreqFourierModes(m2psr.toas, 10**m2psr.SFdmfreqs[::2])
