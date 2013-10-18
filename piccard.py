@@ -884,7 +884,6 @@ class ptaPulsar(object):
 
     # Auxiliaries used in the likelihood
     twoComponentNoise = False       # Whether we use the 2-component noise model
-    coarseGrainedEquad = False      # Whether we coarse-grain the equad
     Nvec = None             # The total white noise (eq^2 + ef^2*err)
     Wvec = None             # The weights in 2-component noise
     Nwvec = None            # Total noise in 2-component basis (eq^2 + ef^2*Wvec)
@@ -1175,7 +1174,6 @@ class ptaPulsar(object):
             #self.GGtF = np.dot(self.Gmat, self.GtF)
             self.avetoas, self.U = dailyaveragequantities(self.toas)
             GtU = np.dot(self.Gmat.T, self.U)
-            self.coarseGrainedEquad = True
 
             self.UtF = np.dot(self.U.T, self.Fmat)
             self.Qamp = 1.0
@@ -1198,7 +1196,6 @@ class ptaPulsar(object):
             #self.GGtF = np.dot(self.Gmat, self.GtF)
             self.avetoas, self.U = dailyaveragequantities(self.toas)
             GtU = np.dot(self.Gmat.T, self.U)
-            self.coarseGrainedEquad = True
 
             self.UtF = np.dot(self.U.T, self.Fmat)
             self.Qamp = 1.0
@@ -1619,10 +1616,14 @@ class ptaLikelihood(object):
             self.ptasignals.append(newsignal)
 
     def addSignalEquad(self, psrind, index, \
-            pmin=-8.8, pmax=-2.0, pwidth=0.1, pstart=-8.0):
+            pmin=-9.0, pmax=-4.0, pwidth=0.1, pstart=-8.0, \
+            coarsegrained=False):
         newsignal = ptasignal()
         newsignal.pulsarind = psrind
-        newsignal.stype = 'equad'
+        if coarsegrained:
+            newsignal.stype = 'cequad'
+        else:
+            newsignal.stype = 'equad'
         newsignal.corr = 'single'
         newsignal.flagname = 'pulsarname'
         newsignal.flagvalue = self.ptapsrs[psrind].name
@@ -2067,6 +2068,7 @@ class ptaLikelihood(object):
             incDipole=False, dipoleModel='powerlaw', \
             incAniGWB=False, anigwbModel='powerlaw', lAniGWB=1, \
             varyEfac=False, incEquad=False, separateEfacs=False, \
+            incCEquad=False, \
             incSingleFreqNoise=False, \
                                         # True
             singlePulsarMultipleFreqNoise=None, \
@@ -2149,6 +2151,10 @@ class ptaLikelihood(object):
 
             if incEquad:
                 self.addSignalEquad(ii, index)
+                index += self.ptasignals[-1].npars
+                
+            if incCEquad:
+                self.addSignalEquad(ii, index, coarsegrained=True)
                 index += self.ptasignals[-1].npars
 
             if incRedNoise:
@@ -2441,8 +2447,7 @@ class ptaLikelihood(object):
                 #else:
                 #    pefac = parameters[m2signal.ntotindex]
                 #self.ptapsrs[m2signal.pulsarind].Nvec += m2signal.Nvec * pefac**2
-            elif m2signal.stype == 'equad' and \
-                    not self.ptapsrs[m2signal.pulsarind].coarseGrainedEquad:
+            elif m2signal.stype == 'equad':
                 if m2signal.npars == 1:
                     pequadsqr = 10**(2*parameters[m2signal.nindex])
                 else:
@@ -2452,8 +2457,7 @@ class ptaLikelihood(object):
                     self.ptapsrs[m2signal.pulsarind].Nwvec += pequadsqr
                 #else:
                 self.ptapsrs[m2signal.pulsarind].Nvec += m2signal.Nvec * pequadsqr
-            elif m2signal.stype == 'equad' and \
-                    self.ptapsrs[m2signal.pulsarind].coarseGrainedEquad:
+            elif m2signal.stype == 'cequad':
                 if m2signal.npars == 1:
                     pequadsqr = 10**(2*parameters[m2signal.nindex])
                 else:
