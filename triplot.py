@@ -14,6 +14,7 @@ import matplotlib as mpl
 import matplotlib.ticker
 import os as os
 import scipy.ndimage.filters as snf
+from distutils.version import LooseVersion
 
 """
 font = {'family' : 'serif',
@@ -148,7 +149,11 @@ def makesubplot1d(ax, samples, weights=None):
     xmin = np.min(samples)
     xmax = np.max(samples)
 
-    hist, xedges = np.histogram(samples[:], bins=bins, range=(xmin,xmax), weights=weights, density=True)
+    if LooseVersion(np.__version__) >= LooseVersion('1.6.1'):
+        hist, xedges = np.histogram(samples[:], bins=bins, range=(xmin,xmax), weights=weights, density=True)
+    else:
+        hist, xedges = np.histogram(samples[:], bins=bins, range=(xmin,xmax), weights=weights)
+
     x = np.delete(xedges, -1) + 1.5*(xedges[1] - xedges[0])     # This should be 0.5*, but turns out this is a bug plotting of 'stepstyle' in matplotlib
 
     ax.plot(x, hist, 'k-', drawstyle='steps', linewidth=2.0)
@@ -175,6 +180,10 @@ def triplot(chainfilename, plotparameters=None, minmaxfile=None):
     figurefilenameeps = chainfilename+'.fig.eps'
     figurefilenamepng = chainfilename+'.fig.png'
     chain = np.loadtxt(chainfilename)
+
+    if len(chain.shape) <= 1:
+        print "ERROR: ", chainfilename, " run not finished"
+        return
 
     if minmaxfile==None:
         minmaxfile = chainfilename+'.minmax.txt'

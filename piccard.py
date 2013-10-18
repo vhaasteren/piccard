@@ -45,6 +45,14 @@ import anisotropygammas as ang  # Internal module
 import rjmcmchammer as rjemcee  # Internal module
 from triplot import *
 
+"""
+# Set the environment variables for MultiNest and other stuff
+ldlibpath = os.getenv('LD_LIBRARY_PATH')
+if ldlibpath == None:
+    ldlibpath = ''
+ldlibpath += ':/home/haasteren/local/lib'
+os.environ['LD_LIBRARY_PATH'] = ldlibpath
+"""
 
 try:
     import statsmodels.api as smapi
