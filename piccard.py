@@ -1565,6 +1565,7 @@ class ptaLikelihood(object):
             #newpsr.readFromImagination(filename, psrname)
             self.ptapsrs.append(newpsr)
 
+    # TODO: make prior flat in log?
     def addSignalEfac(self, psrind, index, separateEfacs=False, \
             varyEfac=True, pmin=0.001, pmax=1000.0, pwidth=0.1, pstart=1.0):
         if separateEfacs:
@@ -1702,7 +1703,7 @@ class ptaLikelihood(object):
             newsignal.npars = np.sum(newsignal.bvary)
             newsignal.ntotpars = len(newsignal.bvary)
 
-            newsignal.pmin = np.array([-16.0, 1.02, 1.0e-11])
+            newsignal.pmin = np.array([-16.0, 0.02, 1.0e-11])
             newsignal.pmax = np.array([-5.0, 6.98, 3.0e-9])
             newsignal.pstart = np.array([-14.0, 2.01, 1.0e-10])
             newsignal.pwidth = np.array([0.1, 0.1, 5.0e-11])
@@ -1749,7 +1750,7 @@ class ptaLikelihood(object):
             newsignal.npars = np.sum(newsignal.bvary)
             newsignal.ntotpars = len(newsignal.bvary)
 
-            newsignal.pmin = np.array([-14.0, 1.02, 1.0e-11])
+            newsignal.pmin = np.array([-14.0, 0.02, 1.0e-11])
             newsignal.pmax = np.array([5.0, 6.98, 3.0e-9])
             newsignal.pstart = np.array([-13.0, 2.01, 1.0e-10])
             newsignal.pwidth = np.array([0.1, 0.1, 5.0e-11])
