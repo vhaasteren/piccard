@@ -2229,6 +2229,9 @@ class ptaLikelihood(object):
                 elif sig.stype == 'equad':
                     flagname = sig.flagname
                     flagvalue = 'equad'+sig.flagvalue
+                elif sig.stype == 'cequad':
+                    flagname = sig.flagname
+                    flagvalue = 'cequad'+sig.flagvalue
                 elif sig.stype == 'spectrum':
                     flagname = 'frequency'
 
