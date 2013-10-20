@@ -20,7 +20,8 @@ size3, size4, size5 = h/2, h/4, h/6
 # the figures in a single file
 pngfiles = glob.glob(os.path.join('./', '*.png'))
 pulsars = list(set([pngfile[2:7] for pngfile in pngfiles]))
-models = ['efacequad', 'cont0', 'cont0coarse', 'cont1', 'cont1coarse', 'cont2', 'cont2coarse']
+#models = ['efacequad', 'cont0', 'cont0coarse', 'cont1', 'cont1coarse', 'cont2', 'cont2coarse']
+models = ['FQ', 'FQP', 'FCP', 'FQCP', 'FQP1', 'FCP1', 'FQCP1']
 
 figx = ['']*len(models)
 figy = ['']*len(models)
@@ -63,7 +64,7 @@ for psr in pulsars:
     for ind in sortind[::-1]:
         c.setFont("Courier",14)
         #c.drawString(col2, h-15-16*(ii+1), models[ii]+': ' + str(evidences[ii]))
-        c.drawString(1.2*col2, h-25-16*(lineind+1), "{0:>12}: {1}".format(models[ind], str(evidences[ind])))
+        c.drawString(1.2*col2, h-25-16*(lineind+1), "{0:>7}: {1}".format(models[ind], str(evidences[ind])))
         lineind += 1
 
     c.save()
