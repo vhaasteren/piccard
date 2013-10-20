@@ -39,11 +39,12 @@ import h5py as h5
 import matplotlib.pyplot as plt
 import os as os
 import sys
-import pytwalk                  # Internal module
-import pydnest                  # Internal module
-import anisotropygammas as ang  # Internal module
-import rjmcmchammer as rjemcee  # Internal module
-from triplot import *
+
+from . import pytwalk                  # Internal module
+from . import pydnest                  # Internal module
+from . import anisotropygammas as ang  # Internal module
+from . import rjmcmchammer as rjemcee  # Internal module
+from .triplot import *
 
 """
 # Set the environment variables for MultiNest and other stuff
