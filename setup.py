@@ -17,7 +17,7 @@ if sys.argv[-1] == "publish":
 
 setup(
     name="piccard",
-    version=emcee.__version__,
+    version=piccard.__version__,
     author="Rutger van Haasteren",
     author_email="vhaasteren@gmail.com",
     packages=["piccard"],
@@ -27,7 +27,7 @@ setup(
     long_description=open("README.md").read() + "\n\n"
                     + "Changelog\n"
                     + "---------\n\n"
-                    + open("HISTORY.rst").read(),
+                    + open("HISTORY.md").read(),
     package_data={"": ["LICENSE", "AUTHORS.md"]},
     include_package_data=True,
     install_requires=["numpy", "scipy"],
