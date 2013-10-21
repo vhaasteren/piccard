@@ -1569,7 +1569,7 @@ class ptaLikelihood(object):
 
     # TODO: make prior flat in log?
     def addSignalEfac(self, psrind, index, separateEfacs=False, \
-            varyEfac=True, pmin=0.001, pmax=50.0, pwidth=0.1, pstart=1.0):
+            varyEfac=True, pmin=0.001, pmax=5.0, pwidth=0.1, pstart=1.0):
         if separateEfacs:
             uflagvals = list(set(self.ptapsrs[psrind].flags))   # uniques
             for flagval in uflagvals:
@@ -1621,7 +1621,7 @@ class ptaLikelihood(object):
             self.ptasignals.append(newsignal)
 
     def addSignalEquad(self, psrind, index, \
-            pmin=-9.0, pmax=-4.0, pwidth=0.1, pstart=-8.0, \
+            pmin=-10.0, pmax=-5.0, pwidth=0.1, pstart=-8.0, \
             coarsegrained=False):
         newsignal = ptasignal()
         newsignal.pulsarind = psrind
@@ -1658,7 +1658,7 @@ class ptaLikelihood(object):
 
         # 1 = frequency, 1 = amplitude
         newsignal.pmin = np.array([-9.0, -18])
-        newsignal.pmax = np.array([-4.0, -7.0])
+        newsignal.pmax = np.array([-5.0, -9.0])
         newsignal.pstart = np.array([-7, -10.0])
         newsignal.pwidth = np.array([0.1, 0.1])
 
@@ -1709,8 +1709,8 @@ class ptaLikelihood(object):
             newsignal.npars = np.sum(newsignal.bvary)
             newsignal.ntotpars = len(newsignal.bvary)
 
-            newsignal.pmin = np.array([-16.0, 0.02, 1.0e-11])
-            newsignal.pmax = np.array([-5.0, 6.98, 3.0e-9])
+            newsignal.pmin = np.array([-20.0, 0.02, 1.0e-11])
+            newsignal.pmax = np.array([-10.0, 6.98, 3.0e-9])
             newsignal.pstart = np.array([-14.0, 2.01, 1.0e-10])
             newsignal.pwidth = np.array([0.1, 0.1, 5.0e-11])
         elif noiseModel=='spectralModel':
@@ -2234,6 +2234,9 @@ class ptaLikelihood(object):
                 elif sig.stype == 'equad':
                     flagname = sig.flagname
                     flagvalue = 'equad'+sig.flagvalue
+                elif sig.stype == 'cequad':
+                    flagname = sig.flagname
+                    flagvalue = 'cequad'+sig.flagvalue
                 elif sig.stype == 'spectrum':
                     flagname = 'frequency'
 
