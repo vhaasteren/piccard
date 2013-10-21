@@ -232,13 +232,16 @@ class DataFile(object):
 
         if not "efacequad" in flaggroup:
             # Check if the sys-flag is present in this set. If it is, add an
-            # efacequad flag with pulsarname+content of the sys-flag. If it isn't, add an
+            # efacequad flag with pulsarname+content of the sys-flag. If it
+            # isn't, check for a be-flag and try the same. Otherwise, add an
             # efacequad flag with the pulsar name as it's elements.
             efacequad = []
             nobs = len(t2pulsar.toas())
             pulsarname = map(str, [t2pulsar.name] * nobs)
             if "sys" in flaggroup:
                 efacequad = map('-'.join, zip(pulsarname, flaggroup['sys']))
+            elif "be" in flaggroup:
+                efacequad = map('-'.join, zip(pulsarname, flaggroup['be']))
             else:
                 efacequad = pulsarname
 
@@ -1043,7 +1046,8 @@ class ptaPulsar(object):
         tempptmpars = self.ptmpars[indkeep]
         tempptmdescription = []
         for ii in range(len(self.ptmdescription)):
-            tempptmdescription.append(self.ptmdescription[ii])
+            if indkeep[ii]:
+                tempptmdescription.append(self.ptmdescription[ii])
 
         # Construct the design matrix elements for the DM QSD if required, and
         # add them to the new M matrix
@@ -1565,7 +1569,7 @@ class ptaLikelihood(object):
 
     # TODO: make prior flat in log?
     def addSignalEfac(self, psrind, index, separateEfacs=False, \
-            varyEfac=True, pmin=0.001, pmax=1000.0, pwidth=0.1, pstart=1.0):
+            varyEfac=True, pmin=0.001, pmax=50.0, pwidth=0.1, pstart=1.0):
         if separateEfacs:
             uflagvals = list(set(self.ptapsrs[psrind].flags))   # uniques
             for flagval in uflagvals:
