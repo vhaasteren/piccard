@@ -1626,7 +1626,7 @@ class ptaLikelihood(object):
         newsignal = ptasignal()
         newsignal.pulsarind = psrind
         if coarsegrained:
-            newsignal.stype = 'cequad'
+            newsignal.stype = 'jitter'
         else:
             newsignal.stype = 'equad'
         newsignal.corr = 'single'
@@ -2234,6 +2234,9 @@ class ptaLikelihood(object):
                 elif sig.stype == 'equad':
                     flagname = sig.flagname
                     flagvalue = 'equad'+sig.flagvalue
+                elif sig.stype == 'jitter':
+                    flagname = sig.flagname
+                    flagvalue = 'jitter'+sig.flagvalue
                 elif sig.stype == 'spectrum':
                     flagname = 'frequency'
 
@@ -2462,7 +2465,7 @@ class ptaLikelihood(object):
                     self.ptapsrs[m2signal.pulsarind].Nwvec += pequadsqr
                 #else:
                 self.ptapsrs[m2signal.pulsarind].Nvec += m2signal.Nvec * pequadsqr
-            elif m2signal.stype == 'cequad':
+            elif m2signal.stype == 'jitter':
                 if m2signal.npars == 1:
                     pequadsqr = 10**(2*parameters[m2signal.nindex])
                 else:
@@ -3406,7 +3409,7 @@ class ptaLikelihood(object):
                 PhiLD = np.sum(np.log(s))
                 Phiinv = np.dot(Vh.T, np.dot(np.diag(1.0/s), U.T))
 
-                #print "Fallback to SVD for Phi"
+                #print "Fallback to SVD for Phi", parameters
 
         """
         else:
@@ -3438,6 +3441,8 @@ class ptaLikelihood(object):
                 raise ValueError("ERROR: Sigma singular according to SVD")
             SigmaLD = np.sum(np.log(s))
             rGSigmaGr = np.dot(self.rGU, np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, self.rGU))))
+
+            #print "Fallback to SVD for Sigma", parameters
         # Mark F
 
         # Now we are ready to return the log-likelihood
@@ -4548,6 +4553,15 @@ class ptaLikelihood(object):
 
     def nlogposterior(self, parameters):
         return -self.logposterior(parameters)
+
+    def loglikelihoodhc(self, cube, ndim, nparams):
+        acube = np.zeros(ndim)
+
+        for ii in range(ndim):
+            acube[ii] = cube[ii]
+
+        return self.loglikelihood(acube)
+
 
     def logposteriorhc(self, cube, ndim, nparams):
         acube = np.zeros(ndim)
@@ -6278,7 +6292,7 @@ def RunMultiNest(likob, chainroot, rseed=16, resume=False):
 #    pymultinest.nested.nestRun(mmodal, ceff, nlive, tol, efr, ndims, nPar, nClsPar, maxModes, updInt, Ztol, root, seed, periodic, fb, resume, likob.logposteriorhc, 0)
 
 
-    pymultinest.run(likob.logposteriorhc, likob.samplefromprior, ndim,
+    pymultinest.run(likob.loglikelihoodhc, likob.samplefromprior, ndim,
             importance_nested_sampling = False,
             const_efficiency_mode=False,
             n_clustering_params = None,
