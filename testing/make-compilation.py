@@ -20,8 +20,8 @@ size3, size4, size5 = h/2, h/4, h/6
 # the figures in a single file
 pngfiles = glob.glob(os.path.join('./', '*.png'))
 pulsars = list(set([pngfile[2:7] for pngfile in pngfiles]))
-#models = ['efacequad', 'cont0', 'cont0coarse', 'cont1', 'cont1coarse', 'cont2', 'cont2coarse']
-models = ['FQ', 'FQP', 'FCP', 'FQCP', 'FQP1', 'FCP1', 'FQCP1']
+models = ['efacequad', 'cont0', 'cont0coarse', 'cont1', 'cont1coarse', 'cont2', 'cont2coarse']
+#models = ['FQ', 'FQP', 'FCP', 'FQCP', 'FQP1', 'FCP1', 'FQCP1']
 
 figx = ['']*len(models)
 figy = ['']*len(models)
