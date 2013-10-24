@@ -823,7 +823,7 @@ def bwmsignal(parameters, raj, decj, t):
     heaviside = lambda x: 0.5 * (np.sign(x) + 1)
 
     # Return the time series
-    return ap * (10**parameters[1]) * heaviside(t - parameters[0])
+    return ap * (10**parameters[1]) * heaviside(t - parameters[0]) * (t - parameters[0])
 
 
 
@@ -1553,6 +1553,7 @@ class ptaLikelihood(object):
     pamplitudeind = None
     initialised = False
     pardes = None
+    haveStochSources = False
     haveDetSources = False
 
     # What likelihood function to use
@@ -1601,6 +1602,7 @@ class ptaLikelihood(object):
         self.initialised = False
         self.likfunc = 'mark3'
         self.orderFrequencyLines = False
+        self.haveStochSources = False
         self.haveDetSources = False
 
         if filename is not None:
@@ -2262,34 +2264,42 @@ class ptaLikelihood(object):
             if incRedNoise:
                 self.addSignalRedNoise(ii, index, Tmax, noiseModel, fc)
                 index += self.ptasignals[-1].npars
+                self.haveStochSources = True
 
             if incDM:
                 self.addSignalDMV(ii, index, Tmax, dmModel)
                 index += self.ptasignals[-1].npars
+                self.haveStochSources = True
 
             for jj in range(psrSingleFreqNoiseModes[ii]):
                 self.addSignalNoiseFrequencyLine(ii, index, jj)
                 index += self.ptasignals[-1].npars
+                self.haveStochSources = True
 
             for jj in range(psrSingleDMFreqNoiseModes[ii]):
                 self.addSignalDMFrequencyLine(ii, index, jj)
                 index += self.ptasignals[-1].npars
+                self.haveStochSources = True
 
         if incGWB:
             self.addSignalGWB(index, Tmax, gwbModel)
             index += self.ptasignals[-1].npars
+            self.haveStochSources = True
 
         if incClock:
             self.addSignalGWB(index, Tmax, clockModel)
             index += self.ptasignals[-1].npars
+            self.haveStochSources = True
 
         if incDipole:
             self.addSignalDipole(index, Tmax, dipoleModel)
             index += self.ptasignals[-1].npars
+            self.haveStochSources = True
 
         if incAniGWB:
             self.addSignalAniGWB(index, Tmax, anigwbModel, lAniGWB)
             index += self.ptasignals[-1].npars
+            self.haveStochSources = True
 
         if incBWM:
             self.addSignalBWM(-1, index)
@@ -4757,7 +4767,8 @@ class ptaLikelihood(object):
 
         self.setPsrNoise(parameters)
 
-        self.constructPhiAndTheta(parameters)
+        if self.haveStochSources:
+            self.constructPhiAndTheta(parameters)
 
         # The time-domain matrices for red noise and DM variations
         Cr = np.zeros((np.sum(self.npobs), np.sum(self.npobs)))     # Time domain red signals
@@ -4844,17 +4855,29 @@ class ptaLikelihood(object):
         xi = np.random.randn(GCG.shape[0])
         ygen = np.dot(totG, np.dot(cf, xi))
 
-        # Display the data
-        plt.errorbar(tottoas, ygen, yerr=tottoaerrs, fmt='.', c='blue')
-        plt.grid(True)
-        plt.show()
-
         # Save the data
         tindex = 0
         for ii in range(len(self.ptapsrs)):
             nobs = len(self.ptapsrs[ii].residuals)
             self.ptapsrs[ii].residuals = ygen[tindex:tindex+nobs]
             tindex += nobs
+
+        # Add the deterministic sources:
+        if self.haveDetSources:
+            self.updateDetSources(parameters)
+
+            for psr in self.ptapsrs:
+                psr.residuals = 2 * psr.residuals - psr.detresiduals
+
+        # Display the data
+        #plt.errorbar(tottoas, ygen, yerr=tottoaerrs, fmt='.', c='blue')
+        plt.errorbar(self.ptapsrs[0].toas, \
+                self.ptapsrs[0].residuals, \
+                yerr=self.ptapsrs[0].toaerrs, fmt='.', c='blue')
+                
+        plt.grid(True)
+        plt.show()
+
 
         if filename != None:
             h5file = h5.File(filename, 'a')
