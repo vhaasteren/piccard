@@ -1035,6 +1035,7 @@ class ptaPulsar(object):
         self.toas = np.array(pulsarsgroup[psrname]['TOAs'])
         self.toaerrs = np.array(pulsarsgroup[psrname]['toaErr'])
         self.residuals = np.array(pulsarsgroup[psrname]['prefitRes'])
+        self.detresiduals = np.array(pulsarsgroup[psrname]['prefitRes'])
         self.freqs = np.array(pulsarsgroup[psrname]['freq'])
         self.Mmat = np.array(pulsarsgroup[psrname]['designmatrix'])
 
@@ -1070,6 +1071,7 @@ class ptaPulsar(object):
         self.toas = np.linspace(0, 10*365.25*3600*24, 300)
         self.toaerrs = np.array([1.0e-7]*len(self.toas))
         self.residuals = np.array([0.0e-7]*len(self.toas))
+        self.detresiduals = np.array([0.0e-7]*len(self.toas))
         self.freqs = np.array([
                 np.array([720]*int(len(self.toas)/3)), \
                 np.array([1440]*int(len(self.toas)/3)), \
@@ -3195,10 +3197,10 @@ class ptaLikelihood(object):
                 self.rGr[ii] = np.sum(self.ptapsrs[ii].AGr ** 2 / self.ptapsrs[ii].Nwvec)
                 self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nwvec))
             else:
-                Nir = self.ptapsrs[ii].residuals / self.ptapsrs[ii].Nvec
+                Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
                 NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Gcmat.T).T
                 GcNiGc = np.dot(self.ptapsrs[ii].Gcmat.T, NiGc)
-                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].residuals)
+                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].detresiduals)
 
                 try:
                     cf = sl.cho_factor(GcNiGc)
@@ -3208,7 +3210,7 @@ class ptaLikelihood(object):
                 except np.linalg.LinAlgError:
                     print "MAJOR ERROR"
 
-                self.rGr[ii] = np.dot(self.ptapsrs[ii].residuals, Nir) \
+                self.rGr[ii] = np.dot(self.ptapsrs[ii].detresiduals, Nir) \
                         - np.dot(GcNir, GcNiGcr)
 
         # Now we are ready to return the log-likelihood
@@ -3276,11 +3278,11 @@ class ptaLikelihood(object):
                 self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nwvec))
                 self.FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].AGF.T, NGGF)
             else:
-                Nir = self.ptapsrs[ii].residuals / self.ptapsrs[ii].Nvec
+                Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
                 NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Gcmat.T).T
                 GcNiGc = np.dot(self.ptapsrs[ii].Gcmat.T, NiGc)
                 NiF = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Fmat.T).T
-                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].residuals)
+                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].detresiduals)
                 GcNiF = np.dot(NiGc.T, self.ptapsrs[ii].Fmat)
 
                 try:
@@ -3292,9 +3294,9 @@ class ptaLikelihood(object):
                 except np.linalg.LinAlgError:
                     print "MAJOR ERROR"
 
-                self.rGr[ii] = np.dot(self.ptapsrs[ii].residuals, Nir) \
+                self.rGr[ii] = np.dot(self.ptapsrs[ii].detresiduals, Nir) \
                         - np.dot(GcNir, GcNiGcr)
-                self.rGF[findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].residuals, NiF) \
+                self.rGF[findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].detresiduals, NiF) \
                         - np.dot(GcNir, GcNiGcF)
                 self.FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = \
                         np.dot(NiF.T, self.ptapsrs[ii].Fmat) - np.dot(GcNiF.T, GcNiGcF)
@@ -3383,11 +3385,11 @@ class ptaLikelihood(object):
                 self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nwvec))
                 self.FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].AGF.T, NGGF)
             else:
-                Nir = self.ptapsrs[ii].residuals / self.ptapsrs[ii].Nvec
+                Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
                 NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Gcmat.T).T
                 GcNiGc = np.dot(self.ptapsrs[ii].Gcmat.T, NiGc)
                 NiF = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Fmat.T).T
-                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].residuals)
+                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].detresiduals)
                 GcNiF = np.dot(NiGc.T, self.ptapsrs[ii].Fmat)
 
                 try:
@@ -3399,9 +3401,9 @@ class ptaLikelihood(object):
                 except np.linalg.LinAlgError:
                     print "MAJOR ERROR"
 
-                self.rGr[ii] = np.dot(self.ptapsrs[ii].residuals, Nir) \
+                self.rGr[ii] = np.dot(self.ptapsrs[ii].detresiduals, Nir) \
                         - np.dot(GcNir, GcNiGcr)
-                self.rGF[findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].residuals, NiF) \
+                self.rGF[findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].detresiduals, NiF) \
                         - np.dot(GcNir, GcNiGcF)
                 self.FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = \
                         np.dot(NiF.T, self.ptapsrs[ii].Fmat) - np.dot(GcNiF.T, GcNiGcF)
@@ -3505,11 +3507,11 @@ class ptaLikelihood(object):
                 self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nwvec))
                 self.UGGNGGU[uindex:uindex+nus, uindex:uindex+nus] = np.dot(self.ptapsrs[ii].AGU.T, NGGU)
             else:
-                Nir = self.ptapsrs[ii].residuals / self.ptapsrs[ii].Nvec
+                Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
                 NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Gcmat.T).T
                 GcNiGc = np.dot(self.ptapsrs[ii].Gcmat.T, NiGc)
                 NiU = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].U.T).T
-                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].residuals)
+                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].detresiduals)
                 GcNiU = np.dot(NiGc.T, self.ptapsrs[ii].Umat)
 
                 try:
@@ -3521,9 +3523,9 @@ class ptaLikelihood(object):
                 except np.linalg.LinAlgError:
                     print "MAJOR ERROR"
 
-                self.rGr[ii] = np.dot(self.ptapsrs[ii].residuals, Nir) \
+                self.rGr[ii] = np.dot(self.ptapsrs[ii].detresiduals, Nir) \
                         - np.dot(GcNir, GcNiGcr)
-                self.rGU[uindex:uindex+nus] = np.dot(self.ptapsrs[ii].residuals, NiU) \
+                self.rGU[uindex:uindex+nus] = np.dot(self.ptapsrs[ii].detresiduals, NiU) \
                         - np.dot(GcNir, GcNiGcU)
                 self.UGGNGGU[uindex:uindex+nus, uindex:uindex+nus] = \
                         np.dot(NiU.T, self.ptapsrs[ii].U) - np.dot(GcNiU.T, GcNiGcU)
@@ -3637,11 +3639,11 @@ class ptaLikelihood(object):
                 self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nwvec))
                 self.UGGNGGU[uindex:uindex+nus, uindex:uindex+nus] = np.dot(self.ptapsrs[ii].AGU.T, NGGU)
             else:
-                Nir = self.ptapsrs[ii].residuals / self.ptapsrs[ii].Nvec
+                Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
                 NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Gcmat.T).T
                 GcNiGc = np.dot(self.ptapsrs[ii].Gcmat.T, NiGc)
                 NiU = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].U.T).T
-                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].residuals)
+                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].detresiduals)
                 GcNiU = np.dot(NiGc.T, self.ptapsrs[ii].Umat)
 
                 try:
@@ -3653,9 +3655,9 @@ class ptaLikelihood(object):
                 except np.linalg.LinAlgError:
                     print "MAJOR ERROR"
 
-                self.rGr[ii] = np.dot(self.ptapsrs[ii].residuals, Nir) \
+                self.rGr[ii] = np.dot(self.ptapsrs[ii].detresiduals, Nir) \
                         - np.dot(GcNir, GcNiGcr)
-                self.rGU[uindex:uindex+nus] = np.dot(self.ptapsrs[ii].residuals, NiU) \
+                self.rGU[uindex:uindex+nus] = np.dot(self.ptapsrs[ii].detresiduals, NiU) \
                         - np.dot(GcNir, GcNiGcU)
                 self.UGGNGGU[uindex:uindex+nus, uindex:uindex+nus] = \
                         np.dot(NiU.T, self.ptapsrs[ii].U) - np.dot(GcNiU.T, GcNiGcU)
@@ -3765,11 +3767,11 @@ class ptaLikelihood(object):
                 self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nwvec))
                 self.EGGNGGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm, findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].AGE.T, NGGE)
             else:
-                Nir = self.ptapsrs[ii].residuals / self.ptapsrs[ii].Nvec
+                Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
                 NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Gcmat.T).T
                 GcNiGc = np.dot(self.ptapsrs[ii].Gcmat.T, NiGc)
                 NiE = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Emat.T).T
-                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].residuals)
+                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].detresiduals)
                 GcNiE = np.dot(NiGc.T, self.ptapsrs[ii].Emat)
 
                 try:
@@ -3781,9 +3783,9 @@ class ptaLikelihood(object):
                 except np.linalg.LinAlgError:
                     print "MAJOR ERROR"
 
-                self.rGr[ii] = np.dot(self.ptapsrs[ii].residuals, Nir) \
+                self.rGr[ii] = np.dot(self.ptapsrs[ii].detresiduals, Nir) \
                         - np.dot(GcNir, GcNiGcr)
-                self.rGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].residuals, NiE) \
+                self.rGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].detresiduals, NiE) \
                         - np.dot(GcNir, GcNiGcE)
                 self.EGGNGGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm, findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = \
                         np.dot(NiE.T, self.ptapsrs[ii].Emat) - np.dot(GcNiE.T, GcNiGcE)
@@ -3903,11 +3905,11 @@ class ptaLikelihood(object):
                 self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nwvec))
                 self.EGGNGGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm, findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].AGE.T, NGGE)
             else:
-                Nir = self.ptapsrs[ii].residuals / self.ptapsrs[ii].Nvec
+                Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
                 NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Gcmat.T).T
                 GcNiGc = np.dot(self.ptapsrs[ii].Gcmat.T, NiGc)
                 NiE = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Emat.T).T
-                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].residuals)
+                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].detresiduals)
                 GcNiE = np.dot(NiGc.T, self.ptapsrs[ii].Emat)
 
                 try:
@@ -3919,9 +3921,9 @@ class ptaLikelihood(object):
                 except np.linalg.LinAlgError:
                     print "MAJOR ERROR"
 
-                self.rGr[ii] = np.dot(self.ptapsrs[ii].residuals, Nir) \
+                self.rGr[ii] = np.dot(self.ptapsrs[ii].detresiduals, Nir) \
                         - np.dot(GcNir, GcNiGcr)
-                self.rGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].residuals, NiE) \
+                self.rGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].detresiduals, NiE) \
                         - np.dot(GcNir, GcNiGcE)
                 self.EGGNGGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm, findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = \
                         np.dot(NiE.T, self.ptapsrs[ii].Emat) - np.dot(GcNiE.T, GcNiGcE)
@@ -4062,11 +4064,11 @@ class ptaLikelihood(object):
                 self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nwvec))
                 self.FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].lAGF.T, NGGF)
             else:
-                Nir = self.ptapsrs[ii].residuals / self.ptapsrs[ii].Nvec
+                Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
                 NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Gcmat.T).T
                 GcNiGc = np.dot(self.ptapsrs[ii].Gcmat.T, NiGc)
                 NiF = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].lFmat.T).T
-                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].residuals)
+                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].detresiduals)
                 GcNiF = np.dot(NiGc.T, self.ptapsrs[ii].lFmat)
 
                 try:
@@ -4078,9 +4080,9 @@ class ptaLikelihood(object):
                 except np.linalg.LinAlgError:
                     print "MAJOR ERROR"
 
-                self.rGr[ii] = np.dot(self.ptapsrs[ii].residuals, Nir) \
+                self.rGr[ii] = np.dot(self.ptapsrs[ii].detresiduals, Nir) \
                         - np.dot(GcNir, GcNiGcr)
-                self.rGF[findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].residuals, NiF) \
+                self.rGF[findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].detresiduals, NiF) \
                         - np.dot(GcNir, GcNiGcF)
                 self.FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = \
                         np.dot(NiF.T, self.ptapsrs[ii].lFmat) - np.dot(GcNiF.T, GcNiGcF)
@@ -4225,11 +4227,11 @@ class ptaLikelihood(object):
                 self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nwvec))
                 self.EGGNGGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm, findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].lAGE.T, NGGE)
             else:
-                Nir = self.ptapsrs[ii].residuals / self.ptapsrs[ii].Nvec
+                Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
                 NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Gcmat.T).T
                 GcNiGc = np.dot(self.ptapsrs[ii].Gcmat.T, NiGc)
                 NiE = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].lEmat.T).T
-                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].residuals)
+                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].detresiduals)
                 GcNiE = np.dot(NiGc.T, self.ptapsrs[ii].lEmat)
 
                 try:
@@ -4241,9 +4243,9 @@ class ptaLikelihood(object):
                 except np.linalg.LinAlgError:
                     print "MAJOR ERROR"
 
-                self.rGr[ii] = np.dot(self.ptapsrs[ii].residuals, Nir) \
+                self.rGr[ii] = np.dot(self.ptapsrs[ii].detresiduals, Nir) \
                         - np.dot(GcNir, GcNiGcr)
-                self.rGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].residuals, NiE) \
+                self.rGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].detresiduals, NiE) \
                         - np.dot(GcNir, GcNiGcE)
                 self.EGGNGGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm, findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = \
                         np.dot(NiE.T, self.ptapsrs[ii].lEmat) - np.dot(GcNiE.T, GcNiGcE)
@@ -4340,11 +4342,11 @@ class ptaLikelihood(object):
                 self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nwvec))
                 self.FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].AGFF.T, NGGF)
             else:
-                Nir = self.ptapsrs[ii].residuals / self.ptapsrs[ii].Nvec
+                Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
                 NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Gcmat.T).T
                 GcNiGc = np.dot(self.ptapsrs[ii].Gcmat.T, NiGc)
                 NiF = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].FFmat.T).T
-                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].residuals)
+                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].detresiduals)
                 GcNiF = np.dot(NiGc.T, self.ptapsrs[ii].FFmat)
 
                 try:
@@ -4356,9 +4358,9 @@ class ptaLikelihood(object):
                 except np.linalg.LinAlgError:
                     print "MAJOR ERROR"
 
-                self.rGr[ii] = np.dot(self.ptapsrs[ii].residuals, Nir) \
+                self.rGr[ii] = np.dot(self.ptapsrs[ii].detresiduals, Nir) \
                         - np.dot(GcNir, GcNiGcr)
-                self.rGF[findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].residuals, NiF) \
+                self.rGF[findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].detresiduals, NiF) \
                         - np.dot(GcNir, GcNiGcF)
                 self.FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = \
                         np.dot(NiF.T, self.ptapsrs[ii].FFmat) - np.dot(GcNiF.T, GcNiGcF)
@@ -4443,11 +4445,11 @@ class ptaLikelihood(object):
                 self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nwvec))
                 self.EGGNGGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm, findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].AGE.T, NGGE)
             else:
-                Nir = self.ptapsrs[ii].residuals / self.ptapsrs[ii].Nvec
+                Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
                 NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Gcmat.T).T
                 GcNiGc = np.dot(self.ptapsrs[ii].Gcmat.T, NiGc)
                 NiE = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Emat.T).T
-                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].residuals)
+                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].detresiduals)
                 GcNiE = np.dot(NiGc.T, self.ptapsrs[ii].Emat)
 
                 try:
@@ -4459,9 +4461,9 @@ class ptaLikelihood(object):
                 except np.linalg.LinAlgError:
                     print "MAJOR ERROR"
 
-                self.rGr[ii] = np.dot(self.ptapsrs[ii].residuals, Nir) \
+                self.rGr[ii] = np.dot(self.ptapsrs[ii].detresiduals, Nir) \
                         - np.dot(GcNir, GcNiGcr)
-                self.rGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].residuals, NiE) \
+                self.rGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].detresiduals, NiE) \
                         - np.dot(GcNir, GcNiGcE)
                 self.EGGNGGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm, findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = \
                         np.dot(NiE.T, self.ptapsrs[ii].Emat) - np.dot(GcNiE.T, GcNiGcE)
