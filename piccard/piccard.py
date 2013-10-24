@@ -823,7 +823,7 @@ def bwmsignal(parameters, raj, decj, t):
     heaviside = lambda x: 0.5 * (np.sign(x) + 1)
 
     # Return the time series
-    return ap * parameters[1] * heaviside(t - parameters[0])
+    return ap * (10**parameters[1]) * heaviside(t - parameters[0])
 
 
 
@@ -2047,7 +2047,7 @@ class ptaLikelihood(object):
 
         # 0 = burst TOA, 1 = amplitude, 2 = raj, 3 = decj, 4 = polarisation
         newsignal.pmin = np.array([toamin, -18.0, 0.0, 0.0, 0.0])
-        newsignal.pmax = np.array([toamax, -13.0, 2*np.pi, np.pi, np.pi])
+        newsignal.pmax = np.array([toamax, -10.0, 2*np.pi, np.pi, np.pi])
         newsignal.pstart = np.array([0.5*(toamax-toamin), -15.0, 3.0, 1.0, 1.0])
         newsignal.pwidth = np.array([30*24*3600.0, 0.1, 0.1, 0.1, 0.1])
 
