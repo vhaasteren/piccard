@@ -763,6 +763,68 @@ class aniCorrelations(object):
 
         return corrreturn
 
+"""
+Function that calculates the earth-term gravitational-wave burst-with-memory
+signal, as described in:
+Seto et al, van haasteren and Levin, phsirkov et al, Cordes and Jenet.
+
+parameter[0] = TOA time (sec) the burst hits the earth
+parameter[1] = amplitude of the burst (strain h)
+parameter[2] = azimuthal angle (rad)
+parameter[3] = polar angle (rad)
+parameter[4] = polarisation angle (rad)
+
+raj = Right Ascension of the pulsar (rad)
+decj = Declination of the pulsar (rad)
+t = timestamps where the waveform should be returned
+
+returns the waveform as induced timing residuals (seconds)
+
+"""
+def bwmsignal(parameters, raj, decj, t):
+    # The rotation matrices
+    rot1 = np.eye(3)
+    rot2 = np.eye(3)
+    rot3 = np.eye(3)
+
+    # Rotation along the azimuthal angle (raj source)
+    rot1[0,0] = np.cos(parameters[2])   ; rot1[0,1] = np.sin(parameters[2])
+    rot1[1,0] = -np.sin(parameters[2])  ; rot1[1,1] = np.cos(parameters[2])
+
+    # Rotation along the polar angle (decj source)
+    rot2[0,0] = np.sin(parameters[3])   ; rot2[0,2] = -np.cos(parameters[3])
+    rot2[2,0] = np.cos(parameters[3])   ; rot2[2,2] = np.sin(parameters[3])
+
+    # Rotate the bwm polarisation to match the x-direction
+    rot3[0,0] = np.cos(parameters[4])   ; rot3[0,1] = np.sin(parameters[4])
+    rot3[1,0] = -np.sin(parameters[4])  ; rot3[1,1] = np.cos(parameters[4])
+
+    # The total rotation matrix
+    rot = np.dot(rot1, np.dot(rot2, rot3))
+
+    # The pulsar position in Euclidian coordinates
+    ppos = np.zeros(3)
+    ppos[0] = np.cos(raj) * np.cos(decj)
+    ppos[1] = np.sin(raj) * np.cos(decj)
+    ppos[2] = np.sin(decj)
+
+    # Rotate the position of the pulsar
+    ppr = np.dot(rot, ppos)
+
+    # Antenna pattern
+    ap = 0.0
+    if np.abs(ppr[2]) < 1:
+        # Depending on definition of source position, it could be (1 - ppr[2])
+        ap = 0.5 * (1 + ppr[2]) * (2 * ppr[0] * ppr[0] / (1 - ppr[2]*ppr[2]) - 1)
+        
+        2 * ppr[0] * ppr[0] 
+
+    # Define the heaviside function
+    heaviside = lambda x: 0.5 * (np.sign(x) + 1)
+
+    # Return the time series
+    return ap * parameters[1] * heaviside(t - parameters[0])
+
 
 
 """
@@ -847,6 +909,7 @@ class ptaPulsar(object):
     toas = None
     toaerrs = None
     residuals = None
+    detresiduals = None     # Residuals after subtraction of deterministic sources
     freqs = None
     Gmat = None
     Gcmat = None
@@ -904,6 +967,7 @@ class ptaPulsar(object):
         self.toas = None
         self.toaerrs = None
         self.residuals = None
+        self.detresiduals = None     # Residuals after subtraction of deterministic sources
         self.freqs = None
         self.Gmat = None
         self.Gcmat = None
@@ -1487,6 +1551,7 @@ class ptaLikelihood(object):
     pamplitudeind = None
     initialised = False
     pardes = None
+    haveDetSources = False
 
     # What likelihood function to use
     likfunc = 'mark3'
@@ -1534,6 +1599,7 @@ class ptaLikelihood(object):
         self.initialised = False
         self.likfunc = 'mark3'
         self.orderFrequencyLines = False
+        self.haveDetSources = False
 
         if filename is not None:
             self.initFromFile(filename)
@@ -1656,7 +1722,7 @@ class ptaLikelihood(object):
         newsignal.bvary = np.array([True, True], dtype=np.bool)
         newsignal.npsrfreqindex = freqindex
 
-        # 1 = frequency, 1 = amplitude
+        # 0 = frequency, 1 = amplitude
         newsignal.pmin = np.array([-9.0, -18])
         newsignal.pmax = np.array([-5.0, -9.0])
         newsignal.pstart = np.array([-7, -10.0])
@@ -1961,6 +2027,34 @@ class ptaLikelihood(object):
         self.ptasignals.append(newsignal)
         """
 
+    def addSignalBWM(self, psrind, index):
+        newsignal = ptasignal()
+        newsignal.pulsarind = psrind
+
+        newsignal.stype = 'bwm'
+        newsignal.npars = 5
+        newsignal.ntotpars = 5
+        newsignal.bvary = np.array([True]*5, dtype=np.bool)
+
+        # Find out the maximum and minimum TOA
+        toamax = self.ptapsrs[0].toas[0]
+        toamin = self.ptapsrs[0].toas[0]
+        for psr in self.ptapsrs:
+            if toamax < np.max(psr.toas):
+                toamax = np.max(psr.toas)
+            if toamin > np.min(psr.toas):
+                toamin = np.min(psr.toas)
+
+        # 0 = burst TOA, 1 = amplitude, 2 = raj, 3 = decj, 4 = polarisation
+        newsignal.pmin = np.array([toamin, -18.0, 0.0, 0.0, 0.0])
+        newsignal.pmax = np.array([toamax, -13.0, 2*np.pi, np.pi, np.pi])
+        newsignal.pstart = np.array([0.5*(toamax-toamin), -15.0, 3.0, 1.0, 1.0])
+        newsignal.pwidth = np.array([30*24*3600.0, 0.1, 0.1, 0.1, 0.1])
+
+        newsignal.corr = 'gr'
+        newsignal.nindex = index
+        self.ptasignals.append(newsignal)
+
 
 
 
@@ -2072,6 +2166,7 @@ class ptaLikelihood(object):
             incGWB=False, gwbModel='powerlaw', \
             incDipole=False, dipoleModel='powerlaw', \
             incAniGWB=False, anigwbModel='powerlaw', lAniGWB=1, \
+            incBWM=True, \
             varyEfac=False, incEquad=False, separateEfacs=False, \
             incCEquad=False, \
             incSingleFreqNoise=False, \
@@ -2194,6 +2289,11 @@ class ptaLikelihood(object):
             self.addSignalAniGWB(index, Tmax, anigwbModel, lAniGWB)
             index += self.ptasignals[-1].npars
 
+        if incBWM:
+            self.addSignalBWM(-1, index)
+            self.haveDetSources = True
+            index += self.ptasignals[-1].npars
+
 
         # If the frequency coefficients are included explicitly (mark1
         # likelihood), we need a couple of extra signals
@@ -2276,6 +2376,9 @@ class ptaLikelihood(object):
                 elif sig.stype == 'frequencyline':
                     flagname = 'frequencyline'
                     flagvalue = ['Line-Freq', 'Line-Ampl'][jj]
+                elif sig.stype == 'bwm':
+                    flagname = 'BurstWithMemory'
+                    flagvalue = ['burst-arrival', 'amplitude', 'raj', 'decj', 'polarisation'][jj]
                 else:
                     flagname = 'none'
                     flagvalue = 'none'
@@ -2680,6 +2783,37 @@ class ptaLikelihood(object):
                     pcdoubled = np.array([sparameters[1], sparameters[1]])
                     self.Thetavec[findex:findex+2] += 10**pcdoubled
 
+    """
+    kfdd
+    """
+    def updateDetSources(self, parameters, selection=None):
+        npsrs = len(self.ptapsrs)
+
+        if selection is None:
+            selection = np.array([1]*len(self.ptasignals), dtype=np.bool)
+
+        # Loop over all signals, and construct the deterministic signals
+        for ss in range(len(self.ptasignals)):
+            m2signal = self.ptasignals[ss]
+            if selection[ss]:
+                # Create a parameters array for this particular signal
+                sparameters = m2signal.pstart.copy()
+                sparameters[m2signal.bvary] = \
+                        parameters[m2signal.nindex:m2signal.nindex+m2signal.npars]
+                if m2signal.stype == 'bwm':
+
+                    for pp in range(len(self.ptapsrs)):
+                        if m2signal.pulsarind == pp or m2signal.pulsarind == -1:
+                            bwmsig = bwmsignal(sparameters, \
+                                    self.ptapsrs[pp].raj, self.ptapsrs[pp].decj, \
+                                    self.ptapsrs[pp].toas)
+
+                            self.ptapsrs[pp].detresiduals = self.ptapsrs[pp].residuals - bwmsig
+
+                            if self.ptapsrs[pp].twoComponentNoise:
+                                Gr = np.dot(self.ptapsrs[pp].Gmat.T, self.ptapsrs[pp].detresiduals)
+                                self.ptapsrs[pp].AGr = np.dot(self.ptapsrs[pp].Amat.T, Gr)
+
 
 
 
@@ -3045,6 +3179,9 @@ class ptaLikelihood(object):
 
         self.setPsrNoise(parameters)
 
+        if self.haveDetSources:
+            self.updateDetSources(parameters)
+
         # MARK C
 
         # Armed with the Noise (and it's inverse), we'll construct the
@@ -3112,12 +3249,15 @@ class ptaLikelihood(object):
 
         # MARK A
 
-
         self.setPsrNoise(parameters)
 
         # MARK B
 
         self.constructPhiAndTheta(parameters)
+
+        # MARK ??
+        if self.haveDetSources:
+            self.updateDetSources(parameters)
 
         # MARK C
 
@@ -3222,6 +3362,9 @@ class ptaLikelihood(object):
         # MARK B
 
         self.constructPhiAndTheta(parameters)
+
+        if self.haveDetSources:
+            self.updateDetSources(parameters)
 
         # MARK C
 
@@ -3339,6 +3482,9 @@ class ptaLikelihood(object):
         # MARK B
 
         self.constructPhiAndTheta(parameters)
+
+        if self.haveDetSources:
+            self.updateDetSources(parameters)
 
         # MARK C
 
@@ -3471,6 +3617,9 @@ class ptaLikelihood(object):
 
         self.constructPhiAndTheta(parameters)
 
+        if self.haveDetSources:
+            self.updateDetSources(parameters)
+
         # MARK C
 
         # Armed with the Noise (and it's inverse), we'll construct the
@@ -3596,6 +3745,9 @@ class ptaLikelihood(object):
 
         # The white noise
         self.setPsrNoise(parameters)
+
+        if self.haveDetSources:
+            self.updateDetSources(parameters)
 
         # Armed with the Noise (and it's inverse), we'll construct the
         # auxiliaries for all pulsars
@@ -3731,6 +3883,9 @@ class ptaLikelihood(object):
 
         # The white noise
         self.setPsrNoise(parameters)
+
+        if self.haveDetSources:
+            self.updateDetSources(parameters)
 
         # Armed with the Noise (and it's inverse), we'll construct the
         # auxiliaries for all pulsars
@@ -3869,6 +4024,9 @@ class ptaLikelihood(object):
 
         # The white noise
         self.setPsrNoise(parameters)
+
+        if self.haveDetSources:
+            self.updateDetSources(parameters)
 
         # If the included frequencies are passed by numbers -- not indicator
         # functions --, then obtain the indicators from the numbers
@@ -4021,6 +4179,9 @@ class ptaLikelihood(object):
         # The red signals
         self.constructPhiAndTheta(parameters)
 
+        if self.haveDetSources:
+            self.updateDetSources(parameters)
+
         # MARK C
 
         # If the included frequencies are passed by numbers -- not indicator
@@ -4159,6 +4320,9 @@ class ptaLikelihood(object):
 
         self.constructPhiAndTheta(parameters)
 
+        if self.haveDetSources:
+            self.updateDetSources(parameters)
+
         # MARK C
 
         # Armed with the Noise (and it's inverse), we'll construct the
@@ -4259,6 +4423,9 @@ class ptaLikelihood(object):
 
         # The white noise
         self.setPsrNoise(parameters)
+
+        if self.haveDetSources:
+            self.updateDetSources(parameters)
 
         # Armed with the Noise (and it's inverse), we'll construct the
         # auxiliaries for all pulsars
@@ -5500,7 +5667,7 @@ Given an mcmc chain file, plot the log-spectrum
 """
 def makespectrumplot(chainfilename, parstart=1, numfreqs=10, freqs=None, \
         Apl=None, gpl=None, Asm=None, asm=None, fcsm=0.1, plotlog=False, \
-        lcolor='black', Tmax=None):
+        lcolor='black', Tmax=None, Aref=None):
     if freqs is None:
         ufreqs = np.log10(np.arange(1, 1+numfreqs))
     else:
