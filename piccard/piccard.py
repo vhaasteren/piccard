@@ -45,6 +45,7 @@ from . import pydnest                  # Internal module
 from . import anisotropygammas as ang  # Internal module
 from . import rjmcmchammer as rjemcee  # Internal module
 from .triplot import *
+from . import PTMCMC_generic as ptmcmc
 
 """
 # Set the environment variables for MultiNest and other stuff
@@ -312,7 +313,7 @@ Input is a vector of site arrival times. Returns the reduced-size average toas,
 and the exploder matrix  Cfull = U Cred U^{T}
 """
 def dailyaveragequantities(toas):
-    spd = 3600.0 * 24.0     # Seconds per day
+    spd = 3600.0 * 0.1     # Seconds per hr/10
 
     processed = np.array([0]*len(toas), dtype=np.bool)  # No toas processed yet
     U = np.zeros((len(toas), 0))
@@ -1827,7 +1828,7 @@ class ptaLikelihood(object):
             newsignal.ntotpars = len(newsignal.bvary)
 
             newsignal.pmin = np.array([-14.0, 0.02, 1.0e-11])
-            newsignal.pmax = np.array([5.0, 6.98, 3.0e-9])
+            newsignal.pmax = np.array([-6.5, 6.98, 3.0e-9])
             newsignal.pstart = np.array([-13.0, 2.01, 1.0e-10])
             newsignal.pwidth = np.array([0.1, 0.1, 5.0e-11])
 
@@ -2170,7 +2171,7 @@ class ptaLikelihood(object):
             incGWB=False, gwbModel='powerlaw', \
             incDipole=False, dipoleModel='powerlaw', \
             incAniGWB=False, anigwbModel='powerlaw', lAniGWB=1, \
-            incBWM=True, \
+            incBWM=False, \
             varyEfac=False, incEquad=False, separateEfacs=False, \
             incCEquad=False, \
             incSingleFreqNoise=False, \
@@ -5466,41 +5467,37 @@ def make2dplot(x, y, w=None, **kwargs):
 Given an mcmc chain file, plot the credible region for the GWB
 
 """
-def makechainplot2d(chainfilename, par1=72, par2=73, xmin=None, xmax=None, ymin=None, ymax=None, title=r"GWB credible regions"):
-  emceechain = np.loadtxt(chainfilename)
-
+def makechainplot2d(chain, par1=72, par2=73, xmin=None, xmax=None, ymin=None, ymax=None, title=r"GWB credible regions"):
   if xmin is None:
     #xmin = 0
-    xmin = min(emceechain[:,par1+2])
+    xmin = min(chain[:,par1])
   if xmax is None:
     #xmax = 70
-    xmax = max(emceechain[:,par1+2])
+    xmax = max(chain[:,par1])
   if ymin is None:
     #ymin = 1
-    ymin = min(emceechain[:,par2+2])
+    ymin = min(chain[:,par2])
   if ymax is None:
     #ymax = 7
-    ymax = max(emceechain[:,par2+2])
+    ymax = max(chain[:,par2])
 
   # Process the parameters
 
-  make2dplot(emceechain[:,par1+2], emceechain[:,par2+2], title=title, \
+  make2dplot(chain[:,par1], chain[:,par2], title=title, \
 	  xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax)
 
 """
 Given an mcmc chain file, plot the credible region for the GWB
 
 """
-def makechainplot1d(chainfilename, par=72, xmin=None, xmax=None, title=r"GWB marginalised posterior"):
-  emceechain = np.loadtxt(chainfilename)
-
+def makechainplot1d(chain, par=72, xmin=None, xmax=None, title=r"GWB marginalised posterior"):
   if xmin is None:
     xmin = 0
   if xmax is None:
     xmax = 70
 
   plt.figure()
-  plt.hist(emceechain[:, par+2], 100, color="k", histtype="step", range=(xmin, xmax))
+  plt.hist(chain[:, par], 100, color="k", histtype="step", range=(xmin, xmax))
   plt.title(title)
 
 
@@ -5630,34 +5627,19 @@ def makescanplot(scanfilename):
 Given a MultiNest file, plot the important credible regions
 
 """
-def makemnplots(mnchainfilename, par1=72, par2=73, minmaxfile=None, xmin=0, xmax=70, ymin=1, ymax=7, title='MultiNest credible regions'):
-  mnchain = np.loadtxt(mnchainfilename)
-
-  if minmaxfile is not None:
-    minmax = np.loadtxt(minmaxfile)
-
-  nDimensions = mnchain.shape[1]-2
-
-  # Rescale the hypercube parameters
-  if minmaxfile is not None:
-    for i in range(nDimensions):
-      mnchain[:,i+2] = minmax[i,0] + mnchain[:,i+2] * (minmax[i,1] - minmax[i,0])
-
+def makemnplots(mnchain, par1=72, par2=73, xmin=0, xmax=70, ymin=1, ymax=7, title='MultiNest credible regions'):
+  nDimensions = mnchain.shape[1]
 
   # The list of 1D parameters we'd like to check:
-#  list1d = np.array([0, 4, 5, nDimensions-2, nDimensions-1])
   list1d = np.array([par1, par2])
 
   # Create 1d histograms
   for i in list1d:
-#    plt.figure()
-#    plt.hist(mnchain[:,i+2], 100, color="k", histtype="step")
-#    plt.title("Dimension {0:d} (No weight)".format(i))
     plt.figure()
-    plt.hist(mnchain[:,i+2], 100, weights=mnchain[:,0], color="k", histtype="step")
+    plt.hist(mnchain[:,i], 100, color="k", histtype="step")
     plt.title("Dimension {0:d}".format(i))
 
-  make2dplot(mnchain[:,par1+2], mnchain[:,par2+2], mnchain[:,0], title=title)
+  make2dplot(mnchain[:,par1], mnchain[:,par2], title=title)
 
 
 
@@ -5687,10 +5669,10 @@ def makednestplots(par1=72, par2=73, xmin=0, xmax=70, ymin=1, ymax=7, title='DNe
 
 
 """
-Given an mcmc chain file, plot the log-spectrum
+Given an mcmc chain, plot the log-spectrum
 
 """
-def makespectrumplot(chainfilename, parstart=1, numfreqs=10, freqs=None, \
+def makespectrumplot(chain, parstart=1, numfreqs=10, freqs=None, \
         Apl=None, gpl=None, Asm=None, asm=None, fcsm=0.1, plotlog=False, \
         lcolor='black', Tmax=None, Aref=None):
     if freqs is None:
@@ -5702,13 +5684,11 @@ def makespectrumplot(chainfilename, parstart=1, numfreqs=10, freqs=None, \
     yval = np.zeros(len(ufreqs))
     yerr = np.zeros(len(ufreqs))
 
-    emceechain = np.loadtxt(chainfilename)
-
     if len(ufreqs) != (numfreqs):
         print "WARNING: parameter range does not correspond to #frequencies"
 
     for ii in range(numfreqs):
-        fmin, fmax = confinterval(emceechain[:, parstart+2+ii], sigmalevel=1)
+        fmin, fmax = confinterval(chain[:, parstart+ii], sigmalevel=1)
         yval[ii] = (fmax + fmin) * 0.5
         yerr[ii] = (fmax - fmin) * 0.5
 
@@ -5766,83 +5746,6 @@ def makespectrumplot(chainfilename, parstart=1, numfreqs=10, freqs=None, \
     plt.grid(True)
 
 
-"""
-Given a MultiNest chain file, plot the log-spectrum
-
-"""
-def makemnspectrumplot(mnchainfilename, minmaxfile=None, parstart=1, parstop=10, freqs=None):
-    ufreqs = np.log10(np.sort(np.array(list(set(freqs)))))
-    #ufreqs = np.array(list(set(freqs)))
-    yval = np.zeros(parstop-parstart)
-    yerr = np.zeros(parstop-parstart)
-
-    if len(ufreqs) != (parstop - parstart):
-        print "WARNING: parameter range does not correspond to #frequencies"
-
-    spd = 24 * 3600.0
-    spy = 365.25 * spd
-    pfreqs = 10 ** ufreqs
-    #Aing = 5.0e-14
-    Aing = 10**(-13.00)
-    Aing = 10**(-10.00)
-    #yinj = (Aing**2 * spy**3 / (12*np.pi*np.pi * (5*spy))) * ((pfreqs * spy) ** (-13.0/3.0))
-    yinj = (Aing**2 * spy**3 / (12*np.pi*np.pi * (5*spy))) * ((pfreqs * spy) ** (-2.33))
-    #print pfreqs * spy
-    #print np.log10(yinj)
-
-    mnchain = np.loadtxt(mnchainfilename)
-    #emceechain = np.loadtxt(chainfilename)
-
-    if minmaxfile is not None:
-        minmax = np.loadtxt(minmaxfile)
-
-    nDimensions = mnchain.shape[1]-2
-
-    # Rescale the hypercube parameters
-    if minmaxfile is not None:
-        for i in range(nDimensions):
-            mnchain[:,i+2] = minmax[i,0] + mnchain[:,i+2] * (minmax[i,1] - minmax[i,0])
-
-
-    for ii in range(parstop - parstart):
-        fmin, fmax = confinterval(mnchain[:, parstart+2+ii], sigmalevel=1, weights=mnchain[:,0])
-        yval[ii] = (fmax + fmin) * 0.5
-        yerr[ii] = (fmax - fmin) * 0.5
-
-    fig = plt.figure()
-
-    #plt.plot(ufreqs, yval, 'k.-')
-    plt.errorbar(ufreqs, yval, yerr=yerr, fmt='.', c='black')
-    plt.plot(ufreqs, np.log10(yinj), 'k--')
-    plt.title("Periodogram")
-    plt.xlabel("Frequency [log(f)]")
-    plt.ylabel("Power [log(r)]")
-    plt.grid(True)
-
-
-"""
-Given a MultiNest file, plot the credible region for the GWB
-
-"""
-def makemnplot2d(mnchainfilename, par1=26, par2=27, xmin=0, xmax=70, ymin=1, ymax=7):
-  mnchain = np.loadtxt(mnchainfilename)
-
-  nDimensions = mnchain.shape[1]-2
-
-  # Create 1d histograms
-#  for i in list1d[np.where(list1d < nDimensions)]:
-#    plt.figure()
-#    plt.hist(mnchain[:,i+2], 100, color="k", histtype="step")
-#    plt.title("Dimension {0:d} (No weight)".format(i))
-#    plt.figure()
-#    plt.hist(mnchain[:,i+2], 100, weights=mnchain[:,0], color="k", histtype="step")
-#    plt.title("Dimension {0:d}".format(i))
-
-  # make2dplot(emceechain[:,2], emceechain[:,3], title=r'Red noise credible regions')
-#  make2dplot(mnchain[:,nDimensions], mnchain[:,nDimensions+1], title=r'GWB credible regions (No weights)')
-
-  make2dplot(mnchain[:,par1], mnchain[:,par2], title=r'credible regions', xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax)
-
 
 
 """
@@ -5850,15 +5753,13 @@ Given an mcmc chain file, plot the upper limit of one variable as a function of
 another
 
 """
-def upperlimitplot2d(chainfilename, par1=72, par2=73, ymin=None, ymax=None):
-  emceechain = np.loadtxt(chainfilename)
-
+def upperlimitplot2d(chain, par1=72, par2=73, ymin=None, ymax=None):
   if ymin is None:
     #ymin = 1
-    ymin = min(emceechain[:,par2+2])
+    ymin = min(chain[:,par2])
   if ymax is None:
     #ymax = 7
-    ymax = max(emceechain[:,par2+2])
+    ymax = max(chain[:,par2])
 
   bins = 40
   yedges = np.linspace(ymin, ymax, bins+1)
@@ -5871,15 +5772,15 @@ def upperlimitplot2d(chainfilename, par1=72, par2=73, ymin=None, ymax=None):
   for i in range(bins):
     # Obtain the indices in the range of the bin
     indices = np.flatnonzero(np.logical_and(
-      emceechain[:,par2+2] > yedges[i],
-      emceechain[:,par2+2] < yedges[i+1]))
+      chain[:,par2] > yedges[i],
+      chain[:,par2] < yedges[i+1]))
 
     # Obtain the 1-sided x-sigma upper limit
-    a, b = confinterval(emceechain[:,par1+2][indices], sigmalevel=1, onesided=True)
+    a, b = confinterval(chain[:,par1][indices], sigmalevel=1, onesided=True)
     sigma1[i] = np.exp(b)
-    a, b = confinterval(emceechain[:,par1+2][indices], sigmalevel=2, onesided=True)
+    a, b = confinterval(chain[:,par1][indices], sigmalevel=2, onesided=True)
     sigma2[i] = np.exp(b)
-    a, b = confinterval(emceechain[:,par1+2][indices], sigmalevel=3, onesided=True)
+    a, b = confinterval(chain[:,par1][indices], sigmalevel=3, onesided=True)
     sigma3[i] = np.exp(b)
 
   plt.figure()
@@ -5924,22 +5825,27 @@ chain, plot the different walkers independently
 Maximum number of figures is an optional parameter (for emcee can be large)
 
 """
-def makellplot(chainfilename, numfigs=2):
+def makellplot(chainfilename, numfigs=2, emceesort=False):
   emceechain = np.loadtxt(chainfilename)
 
-  uniquechains = set(emceechain[:,0])
+  if emceesort:
+      uniquechains = set(emceechain[:,0])
 
-  styles = ['b-', 'g-', 'r-', 'c-', 'm-', 'y-', 'k-',
-      'b--', 'g--', 'r--', 'c--', 'm--', 'y--', 'k--',
-      'b:', 'g:', 'r:', 'c:', 'm:', 'y:', 'k:']
+      styles = ['b-', 'g-', 'r-', 'c-', 'm-', 'y-', 'k-',
+          'b--', 'g--', 'r--', 'c--', 'm--', 'y--', 'k--',
+          'b:', 'g:', 'r:', 'c:', 'm:', 'y:', 'k:']
 
-  # For each chain, plot the ll range
-  for i in uniquechains:
-      if i < numfigs*len(styles):
-          if i % len(styles) == 0:
-              plt.figure()
-              plt.plot(np.arange(emceechain[(emceechain[:,0]==i),1].size), \
-                      emceechain[(emceechain[:,0]==i),1], styles[int(i % len(styles))])
+      # For each chain, plot the ll range
+      for i in uniquechains:
+          if i < numfigs*len(styles):
+              if i % len(styles) == 0:
+                  plt.figure()
+                  plt.plot(np.arange(emceechain[(emceechain[:,0]==i),1].size), \
+                          emceechain[(emceechain[:,0]==i),1], styles[int(i % len(styles))])
+  else:
+      plt.figure()
+      plt.plot(np.arange(emceechain[:,1].size), \
+              emceechain[:,1], 'b-')
 
   plt.xlabel("Sample number")
   plt.ylabel("Log-likelihood")
@@ -5997,14 +5903,13 @@ this function spits out a lot of plots summarising all relevant results of the
 MCMC
 """
 def makeresultsplot(likob, chainfilename, outputdir):
-    emceechain = np.loadtxt(chainfilename)
+    (logpost, loglik, emceechain, labels) = ReadMCMCFile(chainfilename)
 
     # List all varying parameters
     dopar = np.array([1]*likob.dimensions, dtype=np.bool)
 
     # First make a plot of all efac's
     efacparind, efacpsrind, efacnames = likob.getEfacNumbers()
-
     dopar[efacparind] = False
 
     if len(efacparind) > 0:
@@ -6021,7 +5926,7 @@ def makeresultsplot(likob, chainfilename, outputdir):
             yerr = np.zeros(maxpar-minpar)
 
             for ii in range(maxpar-minpar):
-                fmin, fmax = confinterval(emceechain[:, efacparind[ii]+2], sigmalevel=1)
+                fmin, fmax = confinterval(emceechain[:, efacparind[ii]], sigmalevel=1)
                 yval[ii] = (fmax + fmin) * 0.5
                 yerr[ii] = (fmax - fmin) * 0.5
 
@@ -6077,7 +5982,7 @@ def makeresultsplot(likob, chainfilename, outputdir):
             raise ValueError("ERROR: len(freqs) != maxpar-minpar")
 
         for jj in range(maxpar-minpar):
-            fmin, fmax = confinterval(emceechain[:, minpar+jj+2], sigmalevel=1)
+            fmin, fmax = confinterval(emceechain[:, minpar+jj], sigmalevel=1)
             yval[jj] = (fmax + fmin) * 0.5
             yerr[jj] = (fmax - fmin) * 0.5
 
@@ -6095,9 +6000,17 @@ def makeresultsplot(likob, chainfilename, outputdir):
         plt.savefig(fileout+'.eps')
 
     # Make a triplot of all the other parameters
-    if np.sum(dopar) > 0:
+    if np.sum(dopar) > 1:
         indices = np.flatnonzero(np.array(dopar == True))
-        triplot(chainfilename, indices)
+        fileout = outputdir+'/triplot'
+        triplot(emceechain, parlabels=labels, plotparameters=indices)
+        plt.savefig(fileout+'.png')
+        plt.savefig(fileout+'.eps')
+    if np.sum(dopar) == 1:
+        # Make a single plot
+        indices = np.flatnonzero(np.array(dopar == True))
+        f, axarr = plt.subplots(nrows=1, ncols=1)
+        makesubplot1d(axarr, emceechain[:,indices[0]])
         fileout = outputdir+'/triplot'
         plt.savefig(fileout+'.png')
         plt.savefig(fileout+'.eps')
@@ -6532,9 +6445,157 @@ def RunDNest(likob, mcmcFile=None, numParticles=1, newLevelInterval=500,\
 
 
 
+"""
+Run a generic PTMCMC algorithm.
+"""
+def RunPTMCMC(likob, steps, chainsdir, initfile=None, resize=0.088):
+    # Save the parameters to file
+    likob.saveModelParameters(chainsdir + '/ptparameters.txt')
+
+    ndim = likob.dimensions
+    pwidth = likob.pwidth.copy()
+
+    if initfile is not None:
+        # Read the starting position of the random walkers from a file
+        print "Obtaining initial positions from '" + initfile + "'"
+        burnindata = np.loadtxt(initfile)
+        burnindata = burnindata[:,3:]
+        nsteps = burnindata.shape[0]
+        dim = burnindata.shape[1]
+        if(ndim != dim):
+            print "ERROR: burnin file not same dimensions!"
+            print "mismatch: ", ndim, dim
+            exit()
+
+        # Get starting position
+        indices = np.random.randint(0, nsteps, 1)
+        p0 = burnindata[indices[0]]
+
+        # Estimate covariances as being the standarddeviation
+        pwidth = resize * np.std(burnindata, axis=0)
+
+        del burnindata
+    else:
+        # Set the starting position of the random walker (add a small perturbation to
+        # get away from a possible zero)
+        #    p0 = np.random.rand(ndim)*pwidth+pstart
+        p0 = likob.pstart + likob.pwidth
+        pwidth *= resize
 
 
+    # Set the initial covariances
+    cov = np.diag(pwidth**2)
+
+    sampler = ptmcmc.PTSampler(ndim, likob.loglikelihood, likob.logprior, cov=cov, \
+            outDir=chainsdir, verbose=True)
+
+    sampler.sample(p0, steps)
+
+"""
+Obtain the MCMC chain as a numpy array, and a list of parameter indices
+
+@param chainfile: name of the MCMC file
+@param parametersfile: name of the file with the parameter labels
+@param mcmctype: what method was used to generate the mcmc chain (auto=autodetect)
+                    other options are: 'emcee', 'MultiNest', 'ptmcmc'
+@param nolabels: set to true if ok to print without labels
+
+@return: logposterior (1D), loglikelihood (1D), parameter-chain (2D), parameter-labels(1D)
+"""
+def ReadMCMCFile(chainfile, parametersfile=None, sampler='auto', nolabels=False):
+    if sampler.lower() == 'auto':
+        # Auto-detect the sampler
+        parametersfile = chainfile+'.parameters.txt'
+        mnparametersfile = chainfile+'.mnparameters.txt'
+        ptparametersfile = chainfile+'/ptparameters.txt'
+
+        # Determine the type of sampler we've been using through the parameters
+        # file
+        if os.path.exists(mnparametersfile):
+            sampler = 'MultiNest'
+            parametersfile = mnparametersfile
+            chainfile = chainfile
+            figurefileeps = chainfile+'.fig.eps'
+            figurefilepng = chainfile+'.fig.png'
+        elif os.path.exists(ptparametersfile):
+            sampler = 'PTMCMC'
+            parametersfile = ptparametersfile
+            if os.path.exists(chainfile+'/chain_1.0.txt'):
+                figurefileeps = chainfile+'/chain_1.0.fig.eps'
+                figurefilepng = chainfile+'chain_1.0.fig.png'
+                chainfile = chainfile+'/chain_1.0.txt'
+            elif os.path.exists(chainfile+'/chain_1.txt'):
+                figurefileeps = chainfile+'/chain_1.fig.eps'
+                figurefilepng = chainfile+'chain_1.fig.png'
+                chainfile = chainfile+'/chain_1.txt'
+            else:
+                raise IOError, "No valid chain found for PTMCMC_Generic"
+        elif os.path.exists(parametersfile):
+            sampler = 'emcee'
+            chainfile = chainfile
+            figurefileeps = chainfile+'.fig.eps'
+            figurefilepng = chainfile+'.fig.png'
+        else:
+            if not nolabels:
+                raise IOError, "No valid parameters file found!"
+
+            else:
+                chainfile = chainfile
+                figurefileeps = chainfile+'.fig.eps'
+                figurefilepng = chainfile+'.fig.png'
+                sampler = 'emcee'
+    elif sampler.lower() == 'MultiNest':
+        parametersfile = mnparametersfile
+        figurefileeps = chainfile+'.fig.eps'
+        figurefilepng = chainfile+'.fig.png'
+    elif sampler.lower() == 'emcee':
+        figurefileeps = chainfile+'.fig.eps'
+        figurefilepng = chainfile+'.fig.png'
+    elif sampler.lower() == 'ptmcmc':
+        parametersfile = ptparametersfile
+        if os.path.exists(chainfile+'/chain_1.0.txt'):
+            figurefileeps = chainfile+'/chain_1.0.fig.eps'
+            figurefilepng = chainfile+'chain_1.0.fig.png'
+            chainfile = chainfile+'/chain_1.0.txt'
+        elif os.path.exists(chainfile+'/chain_1.txt'):
+            figurefileeps = chainfile+'/chain_1.fig.eps'
+            figurefilepng = chainfile+'chain_1.fig.png'
+            chainfile = chainfile+'/chain_1.txt'
+
+    if not nolabels:
+        # Read the parameter labels
+        if os.path.exists(parametersfile):
+            parfile = open(parametersfile)
+            lines=[line.strip() for line in parfile]
+            parlabels=[]
+            for i in range(len(lines)):
+                lines[i]=lines[i].split()
+
+                if int(lines[i][0]) >= 0:
+                    # If the parameter has an index
+                    parlabels.append(lines[i][5])
+        else:
+            raise IOError, "No valid parameters file found!"
+    else:
+        parlabels = None
+
+    if os.path.exists(parametersfile):
+        chain = np.loadtxt(chainfile)
+    else:
+        raise IOError, "No valid chain-file found!"
+
+    if sampler.lower() == 'emcee':
+        logpost = chain[:,1]
+        loglik = None
+        samples = chain[:,2:]
+    elif sampler.lower() == 'multinest':
+        loglik = chain[:,-1]
+        logpost = None
+        samples = chain[:,:-1]
+    elif sampler.lower() == 'ptmcmc':
+        logpost = chain[:,0]
+        loglik = chain[:,1]
+        samples = chain[:,3:]
 
 
-
-
+    return (logpost, loglik, samples, parlabels)
