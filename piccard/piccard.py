@@ -118,7 +118,7 @@ class DataFile(object):
     such should not be modified. Adding flags and other stuff should be done as
     part of the modelling (in the /Models folder).
     """
-    def addpulsar(self, parfile, timfile):
+    def addpulsar(self, parfile, timfile, iterations=1):
         # Check whether the two files exist
         if not os.path.isfile(parfile) or not os.path.isfile(timfile):
             raise IOError, "Cannot find parfile (%s) or timfile (%s)!" % (parfile, timfile)
@@ -166,10 +166,13 @@ class DataFile(object):
         # something like that. This is soooo unclear
         pulsarsgroup = pulsarsgroup.create_group(t2pulsar.name)
 
+        if iterations > 1:
+            t2pulsar.fit(iters=iterations)
+
         # Create the datasets, with reference time pepoch = 53000
         spd = 24.0*3600     # seconds per day
         pulsarsgroup.create_dataset('TOAs', data=np.double(np.array(t2pulsar.toas())-53000)*spd)       # days (MJD) * sec per day
-        pulsarsgroup.create_dataset('prefitRes', data=np.double(t2pulsar.residuals()))      # seconds
+        pulsarsgroup.create_dataset('prefitRes', data=np.double(t2pulsar.prefit.residuals))      # seconds
         pulsarsgroup.create_dataset('postfitRes', data=np.double(t2pulsar.residuals()))  # seconds
         pulsarsgroup.create_dataset('toaErr', data=np.double(1e-6*t2pulsar.toaerrs))          # seconds
         pulsarsgroup.create_dataset('freq', data=np.double(t2pulsar.freqs))              # MHz
@@ -909,6 +912,7 @@ class ptaPulsar(object):
     decj = 0
     toas = None
     toaerrs = None
+    prefitresiduals = None
     residuals = None
     detresiduals = None     # Residuals after subtraction of deterministic sources
     freqs = None
@@ -925,6 +929,7 @@ class ptaPulsar(object):
     SFmat = None            # Fmatrix for the frequency lines
     FFmat = None            # Total of Fmat and SFmat
     Fdmmat = None
+    Hmat = None             # The compression matrix
     SFdmmat = None         # Fdmmatrix for the dm frequency lines
     #FFdmmat = None         # Total of SFdmmatrix and Fdmmat
     Dmat = None
@@ -967,6 +972,7 @@ class ptaPulsar(object):
         self.decj = 0
         self.toas = None
         self.toaerrs = None
+        self.prefitresiduals = None
         self.residuals = None
         self.detresiduals = None     # Residuals after subtraction of deterministic sources
         self.freqs = None
@@ -982,6 +988,7 @@ class ptaPulsar(object):
         self.SFmat = None
         self.FFmat = None
         self.Fdmmat = None
+        self.Hmat = None
         self.Dmat = None
         self.DF = None
         self.Ffreqs = None
@@ -1035,7 +1042,8 @@ class ptaPulsar(object):
         # Obtain residuals, TOAs, etc.
         self.toas = np.array(pulsarsgroup[psrname]['TOAs'])
         self.toaerrs = np.array(pulsarsgroup[psrname]['toaErr'])
-        self.residuals = np.array(pulsarsgroup[psrname]['prefitRes'])
+        self.prefitresiduals = np.array(pulsarsgroup[psrname]['prefitRes'])
+        self.residuals = np.array(pulsarsgroup[psrname]['postfitRes'])
         self.detresiduals = np.array(pulsarsgroup[psrname]['prefitRes'])
         self.freqs = np.array(pulsarsgroup[psrname]['freq'])
         self.Mmat = np.array(pulsarsgroup[psrname]['designmatrix'])
@@ -1237,6 +1245,7 @@ class ptaPulsar(object):
                 self.AGr = np.dot(self.Amat.T, self.Gr)
                 self.AGF = np.dot(self.Amat.T, self.GtF)
                 self.AG = np.dot(self.Amat.T, self.Gmat.T)
+
 
         if likfunc == 'mark4':
             (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
@@ -2544,56 +2553,62 @@ class ptaLikelihood(object):
     (based on efac/equad)
     For two-component noise model, fill the total weights vector
     """
-    def setPsrNoise(self, parameters):
+    def setPsrNoise(self, parameters, selection=None):
         # For every pulsar, set the noise vector to zero
         for m2psr in self.ptapsrs:
             if m2psr.twoComponentNoise:
                 m2psr.Nwvec[:] = 0
             #else:
             m2psr.Nvec[:] = 0
+            m2psr.Qamp = 0
+
+        if selection is None:
+            selection = np.array([1]*len(self.ptasignals), dtype=np.bool)
 
         # Loop over all white noise signals, and fill the pulsar Nvec
-        for m2signal in self.ptasignals:
-            if m2signal.stype == 'efac':
-                if m2signal.npars == 1:
-                    pefac = parameters[m2signal.nindex]
-                else:
-                    pefac = m2signal.pstart[0]
+        for ss in range(len(self.ptasignals)):
+            m2signal = self.ptasignals[ss]
+            if selection[ss]:
+                if m2signal.stype == 'efac':
+                    if m2signal.npars == 1:
+                        pefac = parameters[m2signal.nindex]
+                    else:
+                        pefac = m2signal.pstart[0]
 
-                if self.ptapsrs[m2signal.pulsarind].twoComponentNoise:
-                    self.ptapsrs[m2signal.pulsarind].Nwvec += \
-                            self.ptapsrs[m2signal.pulsarind].Wvec * pefac**2
-                #else:
-                self.ptapsrs[m2signal.pulsarind].Nvec += m2signal.Nvec * pefac**2
+                    if self.ptapsrs[m2signal.pulsarind].twoComponentNoise:
+                        self.ptapsrs[m2signal.pulsarind].Nwvec += \
+                                self.ptapsrs[m2signal.pulsarind].Wvec * pefac**2
+                    #else:
+                    self.ptapsrs[m2signal.pulsarind].Nvec += m2signal.Nvec * pefac**2
 
-                #if m2signal.bvary[0]:
-                #    pefac = parameters[m2signal.nindex]
-                #else:
-                #    pefac = parameters[m2signal.ntotindex]
-                #self.ptapsrs[m2signal.pulsarind].Nvec += m2signal.Nvec * pefac**2
-            elif m2signal.stype == 'equad':
-                if m2signal.npars == 1:
-                    pequadsqr = 10**(2*parameters[m2signal.nindex])
-                else:
-                    pequadsqr = 10**(2*m2signal.pstart[0])
+                    #if m2signal.bvary[0]:
+                    #    pefac = parameters[m2signal.nindex]
+                    #else:
+                    #    pefac = parameters[m2signal.ntotindex]
+                    #self.ptapsrs[m2signal.pulsarind].Nvec += m2signal.Nvec * pefac**2
+                elif m2signal.stype == 'equad':
+                    if m2signal.npars == 1:
+                        pequadsqr = 10**(2*parameters[m2signal.nindex])
+                    else:
+                        pequadsqr = 10**(2*m2signal.pstart[0])
 
-                if self.ptapsrs[m2signal.pulsarind].twoComponentNoise:
-                    self.ptapsrs[m2signal.pulsarind].Nwvec += pequadsqr
-                #else:
-                self.ptapsrs[m2signal.pulsarind].Nvec += m2signal.Nvec * pequadsqr
-            elif m2signal.stype == 'jitter':
-                if m2signal.npars == 1:
-                    pequadsqr = 10**(2*parameters[m2signal.nindex])
-                else:
-                    pequadsqr = 10**(2*m2signal.pstart[0])
+                    if self.ptapsrs[m2signal.pulsarind].twoComponentNoise:
+                        self.ptapsrs[m2signal.pulsarind].Nwvec += pequadsqr
+                    #else:
+                    self.ptapsrs[m2signal.pulsarind].Nvec += m2signal.Nvec * pequadsqr
+                elif m2signal.stype == 'jitter':
+                    if m2signal.npars == 1:
+                        pequadsqr = 10**(2*parameters[m2signal.nindex])
+                    else:
+                        pequadsqr = 10**(2*m2signal.pstart[0])
 
-                self.ptapsrs[m2signal.pulsarind].Qamp = pequadsqr
+                    self.ptapsrs[m2signal.pulsarind].Qamp = pequadsqr
 
-                #if m2signal.bvary[0]:
-                #    pequadsqr = 10**(2*parameters[m2signal.nindex])
-                #else:
-                #    pequadsqr = 10**(2*parameters[m2signal.ntotindex])
-                #self.ptapsrs[m2signal.pulsarind].Nvec += m2signal.Nvec * pequadsqr
+                    #if m2signal.bvary[0]:
+                    #    pequadsqr = 10**(2*parameters[m2signal.nindex])
+                    #else:
+                    #    pequadsqr = 10**(2*parameters[m2signal.ntotindex])
+                    #self.ptapsrs[m2signal.pulsarind].Nvec += m2signal.Nvec * pequadsqr
 
 
     """
@@ -2814,7 +2829,6 @@ class ptaLikelihood(object):
                 sparameters[m2signal.bvary] = \
                         parameters[m2signal.nindex:m2signal.nindex+m2signal.npars]
                 if m2signal.stype == 'bwm':
-
                     for pp in range(len(self.ptapsrs)):
                         if m2signal.pulsarind == pp or m2signal.pulsarind == -1:
                             bwmsig = bwmsignal(sparameters, \
@@ -3475,6 +3489,8 @@ class ptaLikelihood(object):
         return -0.5*np.sum(self.npgs)*np.log(2*np.pi) \
                 -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) \
                 +0.5*rGSigmaGr - 0.5*PhiaLD - 0.5*SigmaLD + rScr
+
+
 
 
 
