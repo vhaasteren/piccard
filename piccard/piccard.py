@@ -1185,28 +1185,47 @@ class ptaPulsar(object):
     @param ndmfreqs: when using dm frequencies, use this number if not -1
     """
     def constructCompressionMatrix(self, compression='None', \
-            nfreqs=-1, ndmfreqs=-1):
+            nfreqs=-1, ndmfreqs=-1, likfunc='mark3', threshold=0.99999):
         if compression == 'None':
             self.Hmat = self.Gmat
             self.Hcmat = self.Gcmat
         elif compression == 'average':
+            if likfunc[:5] != 'mark4':
+                (self.avetoas, self.U) = dailyaveragequantities(self.toas)
+
             # This assumes that self.U has already been set
             GU = np.dot(self.Gmat.T, self.U)
             GUUG = np.dot(GU, GU.T)
 
             # Construct an orthogonal basis, and singular values
-            svec, Vmat = sl.eigh(GUUG)
+            # svech, Vmath = sl.eigh(GUUG)
+            Vmat, svec, Vhsvd = sl.svd(GUUG)
 
             # Decide how many basis vectors we'll take. (Would be odd if this is
             # not the number of columns of self.U. How to test? For now, use
             # 99.9% of rms power
             cumrms = np.cumsum(svec)
             totrms = np.sum(svec)
-            l = np.flatnonzero( (cumrms/totrms) > 0.999 )[0] + 1
-            if l != self.U.shape[1]:
-                print "Number of basis vectors for " + \
-                        self.name + ": " + str(self.U.shape[1]) + \
-                        " --> " + str(l)
+            #print "svec:   ", svec
+            #print "cumrms: ", cumrms
+            #print "totrms: ", totrms
+            l = np.flatnonzero( (cumrms/totrms) > threshold )[0] + 1
+
+            print "Number of U basis vectors for " + \
+                    self.name + ": " + str(self.U.shape) + \
+                    " --> " + str(l)
+            """
+            ll = self.U.shape[1]
+
+            print "U: ", self.U.shape
+            print "CumRMS:    ", cumrms
+            print "cumrms[l] / tot = ", cumrms[l] / totrms
+            print "svec range:   ", svec[130:150]
+            print "cumrms range: ", cumrms[130:150]
+            print "designmatrix: ", self.Mmat.shape
+            print "TMPars: ", self.ptmdescription
+            plt.plot(np.arange(120,ll+10), np.log10(svec[120:ll+10]), 'k-')
+            """
 
             # H is the compression matrix
             Bmat = Vmat[:, :l].copy()
@@ -1249,22 +1268,19 @@ class ptaPulsar(object):
             GFFG = np.dot(GF, GF.T)
 
             # Construct an orthogonal basis, and singular (eigen) values
-            svec, Vmat = sl.eigh(GFFG)
+            #svec, Vmat = sl.eigh(GFFG)
+            Vmat, svec, Vhsvd = sl.svd(GFFG)
 
             # Decide how many basis vectors we'll take. (Would be odd if this is
             # not the number of columns of self.U. How to test? For now, use
             # 99.9% of rms power
             cumrms = np.cumsum(svec)
             totrms = np.sum(svec)
-            l = np.flatnonzero( (cumrms/totrms) > 0.999 )[0] + 1
-            if l != Ftot.shape[1]:
-                print "Number of basis vectors for " + \
-                        self.name + ": " + str(Ftot.shape[1]) + \
-                        " --> " + str(l)
-            else:
-                print "Number of basis vectors for " + \
-                        self.name + ": " + str(Ftot.shape[1]) + \
-                        " --> " + str(l)
+            l = np.flatnonzero( (cumrms/totrms) > threshold )[0] + 1
+
+            print "Number of F basis vectors for " + \
+                    self.name + ": " + str(self.Fmat.shape) + \
+                    " --> " + str(l)
 
             # H is the compression matrix
             Bmat = Vmat[:, :l].copy()
@@ -1287,6 +1303,39 @@ class ptaPulsar(object):
     def createAuxiliaries(self, Tmax, nfreqs, ndmfreqs, twoComponent=False, \
             nSingleFreqs=0, nSingleDMFreqs=0, compression='None', \
             likfunc='mark3'):
+
+        if likfunc == 'mark1':
+            ndmf = 0
+            nf = 0
+
+            if nfreqs is not None:
+                (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
+                nf = -1
+
+            if ndmfreqs is not None:
+                (self.Fdmmat, self.Fdmfreqs) = fourierdesignmatrix(self.toas, 2*ndmfreqs, Tmax)
+                self.Dmat = np.diag(DMk / (self.freqs**2))
+                self.DF = np.dot(self.Dmat, self.Fdmmat)
+                ndmf = -1
+
+            self.constructCompressionMatrix(compression, nfreqs=nf, ndmfreqs=ndmf)
+
+            self.Gr = np.dot(self.Hmat.T, self.residuals)
+            self.GGr = np.dot(self.Hmat, self.Gr)
+            self.GtF = np.dot(self.Hmat.T, self.Fmat)
+            #self.GGtF = np.dot(self.Hmat, self.GtF)
+
+            if twoComponent:
+                self.twoComponentNoise = True
+
+                # Diagonalise GtEfG
+                GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
+                self.Wvec, self.Amat = sl.eigh(GtNeG)
+
+                self.AGr = np.dot(self.Amat.T, self.Gr)
+                self.AGF = np.dot(self.Amat.T, self.GtF)
+                self.AG = np.dot(self.Amat.T, self.Hmat.T)
+
 
         if likfunc == 'mark2':
             self.Gr = np.dot(self.Gmat.T, self.residuals)
@@ -1328,7 +1377,7 @@ class ptaPulsar(object):
             (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
             (self.avetoas, self.U) = dailyaveragequantities(self.toas)
 
-            self.constructCompressionMatrix(compression, nfreqs=-1, ndmfreqs=0)
+            self.constructCompressionMatrix(compression, nfreqs=-1, ndmfreqs=0, likfunc=likfunc)
 
             self.Gr = np.dot(self.Hmat.T, self.residuals)
             self.GGr = np.dot(self.Hmat, self.Gr)
@@ -1353,7 +1402,7 @@ class ptaPulsar(object):
             (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
             (self.avetoas, self.U) = dailyaveragequantities(self.toas)
 
-            self.constructCompressionMatrix(compression, nfreqs=-1, ndmfreqs=0)
+            self.constructCompressionMatrix(compression, nfreqs=-1, ndmfreqs=0, likfunc=likfunc)
 
             self.Gr = np.dot(self.Hmat.T, self.residuals)
             self.GGr = np.dot(self.Hmat, self.Gr)
@@ -1607,7 +1656,7 @@ class ptaPulsar(object):
                 #       advanced indexing
                 self.lAGF = self.AGF[:,bf]
 
-                if not likfunc in ['mark2', 'mark3', 'mark3fa', 'mark4', 'mark7', 'mark9']:
+                if not likfunc in ['mark1', 'mark2', 'mark3', 'mark3fa', 'mark4', 'mark7', 'mark9']:
                     self.lAGE = np.append(self.AGE[:,bf], self.AGD[:,bfdm], axis=1)
 
                 if likfunc in ['mark9', 'mark10']:
@@ -1622,7 +1671,7 @@ class ptaPulsar(object):
                 self.lFmat = self.Fmat[:,bf]
                 #self.lGGtF = self.GGtF[:,bf]  # Not used
 
-                if not likfunc in ['mark2', 'mark3', 'mark3fa', 'mark4', 'mark7', 'mark9']:
+                if not likfunc in ['mark1', 'mark2', 'mark3', 'mark3fa', 'mark4', 'mark7', 'mark9']:
                     self.lEmat = np.append(self.Fmat[:,bf], self.DF[:,bfdm], axis=1)
                     #self.lGGtE = np.append(self.GGtF[:,bf], self.GGtD[:,bfdm], axis=1) # Not used
 
@@ -2170,6 +2219,7 @@ class ptaLikelihood(object):
 
 
     # TODO: see if we can implement the RJMCMC for the Fourier modes
+    # TODO: these quantities should depend on the model, not the likelihood function
     def allocateAuxiliaries(self):
         # First figure out how large we have to make the arrays
         npsrs = len(self.ptapsrs)
@@ -2208,9 +2258,9 @@ class ptaLikelihood(object):
             self.Thetavec = np.zeros(np.sum(self.npfdm))
             self.GNGldet = np.zeros(npsrs)
             self.rGr = np.zeros(npsrs)
-            self.rGFa = np.zeros(npsrs)
-            self.aFGFa = np.zeros(npsrs)
-            self.avec = np.zeros(np.sum(self.npf))
+
+            self.Gr = np.zeros(np.sum(self.npgs))
+            self.GCG = np.zeros((np.sum(self.npgs), np.sum(self.npgs)))
         elif self.likfunc == 'mark2':
             self.GNGldet = np.zeros(npsrs)
             self.rGr = np.zeros(npsrs)
@@ -3231,14 +3281,9 @@ class ptaLikelihood(object):
     """
     mark1 loglikelihood of the pta model/likelihood implementation
 
-    This likelihood is similar to mark3, but it uses the frequency coefficients
-    explicitly in the likelihood. Mark3 marginalises over them analytically.
-    Therefore, this mark1 version requires some extra parameters in the model,
-    all part of an extra auxiliary 'signal'.
-    
-    TODO: (Including DM variations not yet implemented)
+    This is the full likelihood, without any Woodbury expansions. Seems to be
+    slower than the woodbury one, even with equal dimensionality
 
-    DEPRECATED!!
     """
     def mark1loglikelihood(self, parameters):
         npsrs = len(self.ptapsrs)
@@ -3247,48 +3292,49 @@ class ptaLikelihood(object):
 
         self.constructPhiAndTheta(parameters)
 
-        # Loop over all white noise signals, and fill the pulsar Nvec, and the
-        # Fourier coefficients
-        for m2signal in self.ptasignals:
-            if m2signal.stype == 'fouriercoeff':
-                findex = np.sum(self.npf[:m2signal.pulsarind])
-                nfour = self.npf[m2signal.pulsarind]
-                if nfour != m2signal.npars:
-                    raise ValueError('ERROR: len(nfour) not correct')
-                self.avec[findex:findex+nfour] = parameters[m2signal.nindex:m2signal.nindex+m2signal.npars]
+        if self.haveDetSources:
+            self.updateDetSources(parameters)
 
+        #self.Gr = np.zeros(np.sum(self.npgs))
+        #self.GCG = np.zeros((np.sum(self.npgs), np.sum(self.npgs)))
 
         # Armed with the Noise (and it's inverse), we'll construct the
         # auxiliaries for all pulsars
+        GtFtot = []
         for ii in range(npsrs):
-            findex = np.sum(self.npf[:ii])
-            nfreq = int(self.npf[ii]/2)
+            gindex = np.sum(self.npgs[:ii])
+            ng = self.npgs[ii]
 
-            # Fill the auxiliaries
-            nobs = len(self.ptapsrs[ii].toas)
-            ng = self.ptapsrs[ii].Hmat.shape[1]
-            self.rGr[ii] = np.sum(self.ptapsrs[ii].GGr ** 2 / self.ptapsrs[ii].Nvec)
+            # Two-component noise or not does not matter
+            self.GCG[gindex:gindex+ng, gindex:gindex+ng] = \
+                    np.dot(self.ptapsrs[ii].Hmat.T, (self.ptapsrs[ii].Nvec * self.ptapsrs[ii].Hmat.T).T)
 
-            GGtFa = np.dot(self.ptapsrs[ii].GGtF, self.avec[findex:findex+2*nfreq])
-            self.rGFa[ii] = np.sum(self.ptapsrs[ii].GGr * GGtFa / self.ptapsrs[ii].Nvec)
-            self.aFGFa[ii] = np.sum(GGtFa**2 / self.ptapsrs[ii].Nvec)
-            self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nvec)) * ng / nobs
-        
+            GtFtot.append(self.ptapsrs[ii].GtF)
 
-        # Now that all arrays are filled, we can proceed to do some linear
-        # algebra. First we'll invert Phi. For a single pulsar, this will be
-        # diagonal
+            self.Gr[gindex:gindex+ng] = np.dot(self.ptapsrs[ii].Hmat.T, self.ptapsrs[ii].detresiduals)
+
+        # Create the total GCG matrix (only works with Phi for now)
+        # TODO: include Theta for DM
+        GtF = sl.block_diag(*GtFtot)
         if npsrs == 1:
-            PhiLD = np.sum(np.log(np.diag(self.Phi)))
-            aPhia = np.sum(self.avec * self.avec / np.diag(self.Phi))
+            self.GCG += np.dot(GtF, (np.diag(self.Phi) * GtF).T)
         else:
-            cf = sl.cho_factor(self.Phi)
-            PhiLD = 2*np.sum(np.log(np.diag(cf[0])))
-            aPhia = np.dot(self.avec, sl.cho_solve(cf, self.avec))
+            self.GCG += np.dot(GtF, np.dot(self.Phi, GtF.T))
 
-        # Now we are ready to return the log-likelihood
-        return -0.5*np.sum(self.rGr) - 0.5*np.sum(self.aFGFa) + np.sum(self.rGFa) \
-               -0.5*np.sum(self.GNGldet) - 0.5*aPhia - 0.5*PhiLD
+        # Do the inversion
+        try:
+            cf = sl.cho_factor(self.GCG)
+            GNGldet = 2*np.sum(np.log(np.diag(cf[0])))
+            xi2 = np.dot(self.Gr, sl.cho_solve(cf, self.Gr))
+        except np.linalg.LinAlgError:
+            U, s, Vh = sl.svd(self.GCG)
+            if not np.all(s > 0):
+                raise ValueError("ERROR: GCG singular according to SVD")
+            GNGldet = np.sum(np.log(s))
+            xi2 = np.dot(self.Gr, np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, self.Gr))))
+
+        return -0.5 * np.sum(self.npgs)*np.log(2*np.pi) \
+                -0.5 * xi2 - 0.5 * GNGldet
 
 
 
