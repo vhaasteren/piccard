@@ -1176,9 +1176,9 @@ class ptaPulsar(object):
     fidelity = 1 case.
 
         # U-compression:
-        # W s V^{T} = G^{T} U U^{T} G    H = G^{T} Wl
+        # W s V^{T} = G^{T} U U^{T} G    H = G Wl
         # F-compression
-        # W s V^{T} = G^{T} F F^{T} G    H = G^{T} Wl
+        # W s V^{T} = G^{T} F F^{T} G    H = G Wl
 
     @param compression: what kind of compression to use: None/average/frequencies
     @param nfreqs: when using frequencies, use this number if not -1
@@ -1200,8 +1200,8 @@ class ptaPulsar(object):
             # Decide how many basis vectors we'll take. (Would be odd if this is
             # not the number of columns of self.U. How to test? For now, use
             # 99.9% of rms power
-            cumrms = np.cumsum(s)
-            totrms = np.sum(a)
+            cumrms = np.cumsum(svec)
+            totrms = np.sum(svec)
             l = np.flatnonzero( (cumrms/totrms) > 0.999 )[0] + 1
             if l != self.U.shape[1]:
                 print "Number of basis vectors for " + \
@@ -1210,12 +1210,13 @@ class ptaPulsar(object):
 
             # H is the compression matrix
             Bmat = Vmat[:, :l].copy()
-            H = np.dot(self.Gmat.T, Bmat)
+            H = np.dot(self.Gmat, Bmat)
 
             # Use another SVD to construct not only Hmat, but also Hcmat
             # We use this version of Hmat, and not H from above, in case of
             # linear dependences...
-            svec, Vmat = sl.eigh(H)
+            #svec, Vmat = sl.eigh(H)
+            Vmat, s, Vh = sl.svd(H)
             self.Hmat = Vmat[:, :l]
             self.Hcmat = Vmat[:, l:]
 
@@ -1225,13 +1226,13 @@ class ptaPulsar(object):
             # Decide on the (dm)frequencies to include
             if nfreqs == -1:
                 # Include all, and only all, frequency modes
-                Ftot = np.append(Ftot, self.Fmat)
+                Ftot = np.append(Ftot, self.Fmat, axis=1)
             elif nfreqs == 0:
                 # Why would anyone do this?
                 pass
             else:
                 # Should we check whether nfreqs is not too large?
-                Ftot = np.append(Ftot, self.Fmat[:, :nfreqs])
+                Ftot = np.append(Ftot, self.Fmat[:, :nfreqs], axis=1)
                 
             if ndmfreqs == -1:
                 # Include all, and only all, frequency modes
@@ -1241,34 +1242,39 @@ class ptaPulsar(object):
                 pass
             else:
                 # Should we check whether nfreqs is not too large?
-                Ftot = np.append(Ftot, self.DF[:, :ndmfreqs])
+                Ftot = np.append(Ftot, self.DF[:, :ndmfreqs], axis=1)
 
             # This assumes that self.U has already been set
             GF = np.dot(self.Gmat.T, Ftot)
             GFFG = np.dot(GF, GF.T)
 
-            # Construct an orthogonal basis, and singular values
+            # Construct an orthogonal basis, and singular (eigen) values
             svec, Vmat = sl.eigh(GFFG)
 
             # Decide how many basis vectors we'll take. (Would be odd if this is
             # not the number of columns of self.U. How to test? For now, use
             # 99.9% of rms power
-            cumrms = np.cumsum(s)
-            totrms = np.sum(a)
+            cumrms = np.cumsum(svec)
+            totrms = np.sum(svec)
             l = np.flatnonzero( (cumrms/totrms) > 0.999 )[0] + 1
             if l != Ftot.shape[1]:
+                print "Number of basis vectors for " + \
+                        self.name + ": " + str(Ftot.shape[1]) + \
+                        " --> " + str(l)
+            else:
                 print "Number of basis vectors for " + \
                         self.name + ": " + str(Ftot.shape[1]) + \
                         " --> " + str(l)
 
             # H is the compression matrix
             Bmat = Vmat[:, :l].copy()
-            H = np.dot(self.Gmat.T, Bmat)
+            H = np.dot(self.Gmat, Bmat)
 
             # Use another SVD to construct not only Hmat, but also Hcmat
             # We use this version of Hmat, and not H from above, in case of
             # linear dependences...
-            svec, Vmat = sl.eigh(H)
+            #svec, Vmat = sl.eigh(H)
+            Vmat, s, Vh = sl.svd(H)
             self.Hmat = Vmat[:, :l]
             self.Hcmat = Vmat[:, l:]
 
@@ -2332,7 +2338,7 @@ class ptaLikelihood(object):
 
             m2psr.createAuxiliaries(Tmax, nfreqmodes, ndmfreqmodes, not separateEfacs, \
                             nSingleFreqs=nSingleFreqs, nSingleDMFreqs=nSingleDMFreqs, \
-                                    likfunc=likfunc)
+                                    likfunc=likfunc, compression=compression)
 
             # When selecting Fourier modes, like in mark7/mark8, the binclude vector
             # indicates whether or not a frequency is included in the likelihood. By
