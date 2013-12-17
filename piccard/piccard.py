@@ -1272,9 +1272,7 @@ class ptaPulsar(object):
 
             if ndmfreqs == -1:
                 # Include all, and only all, frequency modes
-                print "shapesDM:", Ftot.shape, self.DF.shape
                 Ftot = np.append(Ftot, self.DF, axis=1)
-                print "shapesDM:", Ftot.shape, self.DF.shape
             elif ndmfreqs == 0:
                 # Do not include DM in the compression
                 pass
@@ -1282,7 +1280,6 @@ class ptaPulsar(object):
                 # Should we check whether nfreqs is not too large?
                 Ftot = np.append(Ftot, self.DF[:, :ndmfreqs], axis=1)
 
-            print "shapes:", self.Gmat.shape, Ftot.shape
             GF = np.dot(self.Gmat.T, Ftot)
             GFFG = np.dot(GF, GF.T)
 
