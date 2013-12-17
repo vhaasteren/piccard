@@ -1269,7 +1269,7 @@ class ptaPulsar(object):
             else:
                 # Should we check whether nfreqs is not too large?
                 Ftot = np.append(Ftot, self.Fmat[:, :nfreqs], axis=1)
-                
+
             if ndmfreqs == -1:
                 # Include all, and only all, frequency modes
                 Ftot = np.append(Ftot, self.DF)
@@ -1280,7 +1280,6 @@ class ptaPulsar(object):
                 # Should we check whether nfreqs is not too large?
                 Ftot = np.append(Ftot, self.DF[:, :ndmfreqs], axis=1)
 
-            # This assumes that self.U has already been set
             GF = np.dot(self.Gmat.T, Ftot)
             GFFG = np.dot(GF, GF.T)
 
@@ -1371,8 +1370,10 @@ class ptaPulsar(object):
                     HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
                     self.Wovec, self.Aomat = sl.eigh(HotNeHo)
 
-                    self.AoGr = np.dot(self.Aomat.T, self.Gr)
-                    self.AoGF = np.dot(self.Aomat.T, self.GtF)
+                    Hor = np.dot(self.Homat.T, self.residuals)
+                    HotF = np.dot(self.Homat.T, self.Fmat)
+                    self.AoGr = np.dot(self.Aomat.T, Hor)
+                    self.AoGF = np.dot(self.Aomat.T, HotF)
                 else:
                     self.Wovec = np.zeros(0)
                     self.Aomat = np.zeros((self.Amat.shape[0], 0))
@@ -2575,8 +2576,8 @@ class ptaLikelihood(object):
             if incDM:
                 m2psr.addDMQuadratic()
 
-            if ndmfreqmodes is None:
-                ndmfreqmodes = nfreqmodes
+                if ndmfreqmodes is None:
+                    ndmfreqmodes = nfreqmodes
 
             nSingleFreqs = 0
             if incSingleFreqNoise:
