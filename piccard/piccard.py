@@ -930,6 +930,9 @@ class ptaPulsar(object):
     FFmat = None            # Total of Fmat and SFmat
     Fdmmat = None
     Hmat = None             # The compression matrix
+    Homat = None            # The orthogonal-to compression matrix
+    Hcmat = None            # The co-compression matrix
+    Hocmat = None           # The orthogonal co-compression matrix
     SFdmmat = None         # Fdmmatrix for the dm frequency lines
     #FFdmmat = None         # Total of SFdmmatrix and Fdmmat
     Dmat = None
@@ -951,15 +954,23 @@ class ptaPulsar(object):
     #GGtFF = None
     GGtD = None
     AGr = None      # Replaces GGr in 2-component noise model
+    AoGr = None     #   Same but for orthogonal basis (when compressing)
     AGF = None      # Replaces GGtF in 2-component noise model
+    AoGF = None     #   Same but for orthogonal basis (when compressing)
     AGD = None      # Replaces GGtD in 2-component noise model
+    AoGD = None     #   Same but for orthogonal basis (when compressing)
     AGE = None      # Replaces GGtE in 2-component noise model
+    AoGE = None     #   Same but for orthogonal basis (when compressing)
+    AGU = None      # Replace GGtU in 2-component noise model
+    AoGU = None     #   Same .... you got it
 
     # Auxiliaries used in the likelihood
     twoComponentNoise = False       # Whether we use the 2-component noise model
     Nvec = None             # The total white noise (eq^2 + ef^2*err)
     Wvec = None             # The weights in 2-component noise
+    Wovec = None            # The weights in 2-component orthogonal noise
     Nwvec = None            # Total noise in 2-component basis (eq^2 + ef^2*Wvec)
+    Nwovec = None           # Total noise in 2-component orthogonal basis
 
     # To select the number of Frequency modes
     bfinc = None        # Number of modes of all internal matrices
@@ -989,6 +1000,9 @@ class ptaPulsar(object):
         self.FFmat = None
         self.Fdmmat = None
         self.Hmat = None
+        self.Homat = None
+        self.Hcmat = None
+        self.Hocmat = None
         self.Dmat = None
         self.DF = None
         self.Ffreqs = None
@@ -1185,11 +1199,8 @@ class ptaPulsar(object):
     @param ndmfreqs: when using dm frequencies, use this number if not -1
     """
     def constructCompressionMatrix(self, compression='None', \
-            nfreqs=-1, ndmfreqs=-1, likfunc='mark3', threshold=0.99999):
-        if compression == 'None':
-            self.Hmat = self.Gmat
-            self.Hcmat = self.Gcmat
-        elif compression == 'average':
+            nfreqs=-1, ndmfreqs=-1, likfunc='mark3', threshold=0.999999999):
+        if compression == 'average':
             if likfunc[:5] != 'mark4':
                 (self.avetoas, self.U) = dailyaveragequantities(self.toas)
 
@@ -1229,7 +1240,9 @@ class ptaPulsar(object):
 
             # H is the compression matrix
             Bmat = Vmat[:, :l].copy()
+            Bomat = Vmat[:, l:].copy()
             H = np.dot(self.Gmat, Bmat)
+            Ho = np.dot(self.Gmat, Bomat)
 
             # Use another SVD to construct not only Hmat, but also Hcmat
             # We use this version of Hmat, and not H from above, in case of
@@ -1239,6 +1252,10 @@ class ptaPulsar(object):
             self.Hmat = Vmat[:, :l]
             self.Hcmat = Vmat[:, l:]
 
+            # For compression-complements, construct Ho and Hoc
+            Vmat, s, Vh = sl.svd(Ho)
+            self.Homat = Vmat[:, :Ho.shape[1]]
+            self.Hocmat = Vmat[:, Ho.shape[1]:]
         elif compression == 'frequencies':
             Ftot = np.zeros((len(self.toas), 0))
 
@@ -1277,6 +1294,7 @@ class ptaPulsar(object):
             cumrms = np.cumsum(svec)
             totrms = np.sum(svec)
             l = np.flatnonzero( (cumrms/totrms) > threshold )[0] + 1
+            # l = Ftot.shape[1]         # This line would cause the threshold to be ignored
 
             print "Number of F basis vectors for " + \
                     self.name + ": " + str(self.Fmat.shape) + \
@@ -1284,7 +1302,9 @@ class ptaPulsar(object):
 
             # H is the compression matrix
             Bmat = Vmat[:, :l].copy()
+            Bomat = Vmat[:, l:].copy()
             H = np.dot(self.Gmat, Bmat)
+            Ho = np.dot(self.Gmat, Bomat)
 
             # Use another SVD to construct not only Hmat, but also Hcmat
             # We use this version of Hmat, and not H from above, in case of
@@ -1294,6 +1314,16 @@ class ptaPulsar(object):
             self.Hmat = Vmat[:, :l]
             self.Hcmat = Vmat[:, l:]
 
+            # For compression-complements, construct Ho and Hoc
+            Vmat, s, Vh = sl.svd(Ho)
+            self.Homat = Vmat[:, :Ho.shape[1]]
+            self.Hocmat = Vmat[:, Ho.shape[1]:]
+        elif compression == 'None':
+            self.Hmat = self.Gmat
+            self.Hcmat = self.Gcmat
+            self.Homat = np.zeros((self.Hmat.shape[0], 0))
+        else:
+            raise IOError, "Invalid compression argument"
 
 
     """
@@ -1328,13 +1358,26 @@ class ptaPulsar(object):
             if twoComponent:
                 self.twoComponentNoise = True
 
-                # Diagonalise GtEfG
+                # Diagonalise GtEfG (HtEfH)
                 GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
                 self.Wvec, self.Amat = sl.eigh(GtNeG)
 
                 self.AGr = np.dot(self.Amat.T, self.Gr)
                 self.AGF = np.dot(self.Amat.T, self.GtF)
-                self.AG = np.dot(self.Amat.T, self.Hmat.T)
+                #self.AG = np.dot(self.Amat.T, self.Hmat.T)
+
+                # Diagonalise HotEfHo
+                if self.Homat.shape[1] > 0:
+                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+
+                    self.AoGr = np.dot(self.Aomat.T, self.Gr)
+                    self.AoGF = np.dot(self.Aomat.T, self.GtF)
+                else:
+                    self.Wovec = np.zeros(0)
+                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                    self.AoGF = np.zeros((0, self.GtF.shape[1]))
 
 
         if likfunc == 'mark2':
@@ -1350,7 +1393,18 @@ class ptaPulsar(object):
                 self.Wvec, self.Amat = sl.eigh(GtNeG)
 
                 self.AGr = np.dot(self.Amat.T, self.Gr)
-                self.AG = np.dot(self.Amat.T, self.Gmat.T)
+                #self.AG = np.dot(self.Amat.T, self.Gmat.T)
+
+                # Diagonalise HotEfHo
+                if self.Homat.shape[1] > 0:
+                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+
+                    self.AoGr = np.dot(self.Aomat.T, self.Gr)
+                else:
+                    self.Wovec = np.zeros(0)
+                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
 
         if likfunc == 'mark3' or likfunc == 'mark3fa':
             (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
@@ -1370,7 +1424,22 @@ class ptaPulsar(object):
 
                 self.AGr = np.dot(self.Amat.T, self.Gr)
                 self.AGF = np.dot(self.Amat.T, self.GtF)
-                self.AG = np.dot(self.Amat.T, self.Hmat.T)
+                #self.AG = np.dot(self.Amat.T, self.Hmat.T)
+
+                # Diagonalise HotEfHo
+                if self.Homat.shape[1] > 0:
+                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+
+                    Hor = np.dot(self.Homat.T, self.residuals)
+                    HotF = np.dot(self.Homat.T, self.Fmat)
+                    self.AoGr = np.dot(self.Aomat.T, Hor)
+                    self.AoGF = np.dot(self.Aomat.T, HotF)
+                else:
+                    self.Wovec = np.zeros(0)
+                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                    self.AoGF = np.zeros((0, self.GtF.shape[1]))
 
 
         if likfunc == 'mark4':
@@ -1397,6 +1466,21 @@ class ptaPulsar(object):
 
                 self.AGr = np.dot(self.Amat.T, self.Gr)
                 self.AGU = np.dot(self.Amat.T, GtU)
+
+                # Diagonalise HotEfHo
+                if self.Homat.shape[1] > 0:
+                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+
+                    Hor = np.dot(self.Homat.T, self.residuals)
+                    HotU = np.dot(self.Homat.T, self.U)
+                    self.AoGr = np.dot(self.Aomat.T, Hor)
+                    self.AoGU = np.dot(self.Aomat.T, HotU)
+                else:
+                    self.Wovec = np.zeros(0)
+                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                    self.AoGU = np.zeros((0, GtU.shape[1]))
 
         if likfunc == 'mark4ln':
             (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
@@ -1437,6 +1521,21 @@ class ptaPulsar(object):
                 self.AGr = np.dot(self.Amat.T, self.Gr)
                 self.AGU = np.dot(self.Amat.T, GtU)
 
+                # Diagonalise HotEfHo
+                if self.Homat.shape[1] > 0:
+                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+
+                    Hor = np.dot(self.Homat.T, self.residuals)
+                    HotU = np.dot(self.Homat.T, self.U)
+                    self.AoGr = np.dot(self.Aomat.T, Hor)
+                    self.AoGU = np.dot(self.Aomat.T, HotU)
+                else:
+                    self.Wovec = np.zeros(0)
+                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                    self.AoGU = np.zeros((0, GtU.shape[1]))
+
 
         if likfunc == 'mark6' or likfunc == 'mark6fa':
             (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
@@ -1473,6 +1572,27 @@ class ptaPulsar(object):
                 self.AGD = np.dot(self.Amat.T, GtD)
                 self.AGE = np.dot(self.Amat.T, GtE)
 
+                # Diagonalise HotEfHo
+                if self.Homat.shape[1] > 0:
+                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+
+                    Hor = np.dot(self.Homat.T, self.residuals)
+                    HotF = np.dot(self.Homat.T, self.Fmat)
+                    HotD = np.dot(self.Homat.T, self.DF)
+                    HotE = np.dot(self.Homat.T, self.Emat)
+                    self.AoGr = np.dot(self.Aomat.T, Hor)
+                    self.AoGF = np.dot(self.Aomat.T, HotF)
+                    self.AoGD = np.dot(self.Aomat.T, HotD)
+                    self.AoGE = np.dot(self.Aomat.T, HotE)
+                else:
+                    self.Wovec = np.zeros(0)
+                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                    self.AoGF = np.zeros((0, self.GtF.shape[1]))
+                    self.AoGD = np.zeros((0, GtD.shape[1]))
+                    self.AoGE = np.zeros((0, GtE.shape[1]))
+
         if likfunc == 'mark7':
             (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
 
@@ -1492,6 +1612,21 @@ class ptaPulsar(object):
 
                 self.AGr = np.dot(self.Amat.T, self.Gr)
                 self.AGF = np.dot(self.Amat.T, self.GtF)
+
+                # Diagonalise HotEfHo
+                if self.Homat.shape[1] > 0:
+                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+
+                    Hor = np.dot(self.Homat.T, self.residuals)
+                    HotF = np.dot(self.Homat.T, self.Fmat)
+                    self.AoGr = np.dot(self.Aomat.T, Hor)
+                    self.AoGF = np.dot(self.Aomat.T, HotF)
+                else:
+                    self.Wovec = np.zeros(0)
+                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                    self.AoGF = np.zeros((0, self.GtF.shape[1]))
 
 
         if likfunc == 'mark8':
@@ -1529,6 +1664,27 @@ class ptaPulsar(object):
                 self.AGD = np.dot(self.Amat.T, GtD)
                 self.AGE = np.dot(self.Amat.T, GtE)
 
+                # Diagonalise HotEfHo
+                if self.Homat.shape[1] > 0:
+                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+
+                    Hor = np.dot(self.Homat.T, self.residuals)
+                    HotF = np.dot(self.Homat.T, self.Fmat)
+                    HotD = np.dot(self.Homat.T, self.DF)
+                    HotE = np.dot(self.Homat.T, self.Emat)
+                    self.AoGr = np.dot(self.Aomat.T, Hor)
+                    self.AoGF = np.dot(self.Aomat.T, HotF)
+                    self.AoGD = np.dot(self.Aomat.T, HotD)
+                    self.AoGE = np.dot(self.Aomat.T, HotE)
+                else:
+                    self.Wovec = np.zeros(0)
+                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                    self.AoGF = np.zeros((0, self.GtF.shape[1]))
+                    self.AoGD = np.zeros((0, GtD.shape[1]))
+                    self.AoGE = np.zeros((0, GtE.shape[1]))
+
         if likfunc == 'mark9':
             (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
 
@@ -1563,7 +1719,23 @@ class ptaPulsar(object):
                 self.AGF = np.dot(self.Amat.T, self.GtF)
                 self.AGFF = np.dot(self.Amat.T, GtFF)
 
-                self.AG = np.dot(self.Amat.T, self.Hmat.T)
+                # Diagonalise HotEfHo
+                if self.Homat.shape[1] > 0:
+                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+
+                    Hor = np.dot(self.Homat.T, self.residuals)
+                    HotF = np.dot(self.Homat.T, self.Fmat)
+                    HotFF = np.dot(self.Homat.T, self.FFmat)
+                    self.AoGr = np.dot(self.Aomat.T, Hor)
+                    self.AoGF = np.dot(self.Aomat.T, HotF)
+                    self.AoGFF = np.dot(self.Aomat.T, HotFF)
+                else:
+                    self.Wovec = np.zeros(0)
+                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                    self.AoGF = np.zeros((0, self.GtF.shape[1]))
+                    self.AoGFF = np.zeros((0, GtFF.shape[1]))
 
         if likfunc == 'mark10':
             (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
@@ -1627,6 +1799,33 @@ class ptaPulsar(object):
 
                 self.AGE = np.dot(self.Amat.T, GtE)
                 self.AGEE = np.dot(self.Amat.T, GtEE)
+
+                # Diagonalise HotEfHo
+                if self.Homat.shape[1] > 0:
+                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+
+                    Hor = np.dot(self.Homat.T, self.residuals)
+                    HotF = np.dot(self.Homat.T, self.Fmat)
+                    HotFF = np.dot(self.Homat.T, self.FFmat)
+                    HotD = np.dot(self.Homat.T, self.DF)
+                    HotE = np.dot(self.Homat.T, self.Emat)
+                    HotEE = np.dot(self.Homat.T, self.EEmat)
+                    self.AoGr = np.dot(self.Aomat.T, Hor)
+                    self.AoGF = np.dot(self.Aomat.T, HotF)
+                    self.AoGFF = np.dot(self.Aomat.T, HotFF)
+                    self.AoGD = np.dot(self.Aomat.T, HotD)
+                    self.AoGE = np.dot(self.Aomat.T, HotE)
+                    self.AoGEE = np.dot(self.Aomat.T, HotEE)
+                else:
+                    self.Wovec = np.zeros(0)
+                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                    self.AoGF = np.zeros((0, self.GtF.shape[1]))
+                    self.AoGFF = np.zeros((0, GtFF.shape[1]))
+                    self.AoGD = np.zeros((0, GtD.shape[1]))
+                    self.AoGE = np.zeros((0, GtE.shape[1]))
+                    self.AoGEE = np.zeros((0, GtEE.shape[1]))
 
 
 
@@ -1715,6 +1914,9 @@ class ptaLikelihood(object):
     # What likelihood function to use
     likfunc = 'mark3'
 
+    # Whether we evaluate the complement of the compressed likelihood
+    evallikcomp = False
+
     # Whether we use the option of forcing the frequency lines to be ordered in
     # the prior
     orderFrequencyLines = False
@@ -1725,7 +1927,8 @@ class ptaLikelihood(object):
     npfdm = None    # Number of frequencies per pulsar (DM)
     npe = None      # Number of frequencies per pulsar (rn + DM)
     npobs = None    # Number of observations per pulsar
-    npgs = None     # Number of non-projected observations per pulsar (columns Gmat)
+    npgs = None     # Number of non-projected observations per pulsar (columns Hmat)
+    npgos = None    # Number of orthogonal non-projected observations per pulsar (columns Homat)
 
     # The Phi, Theta, and Sigma matrices
     Phi = None          # mark1, mark3, mark?, mark6
@@ -2230,6 +2433,7 @@ class ptaLikelihood(object):
         self.npffdm = np.zeros(npsrs, dtype=np.int)
         self.npobs = np.zeros(npsrs, dtype=np.int)
         self.npgs = np.zeros(npsrs, dtype=np.int)
+        self.npgos = np.zeros(npsrs, dtype=np.int)
         for ii in range(npsrs):
             if not self.likfunc in ['mark2']:
                 self.npf[ii] = len(self.ptapsrs[ii].Ffreqs)
@@ -2250,8 +2454,10 @@ class ptaLikelihood(object):
 
             self.npobs[ii] = len(self.ptapsrs[ii].toas)
             self.npgs[ii] = self.ptapsrs[ii].Hmat.shape[1]
+            self.npgos[ii] = self.ptapsrs[ii].Homat.shape[1]
             self.ptapsrs[ii].Nvec = np.zeros(len(self.ptapsrs[ii].toas))
             self.ptapsrs[ii].Nwvec = np.zeros(self.ptapsrs[ii].Hmat.shape[1])
+            self.ptapsrs[ii].Nwovec = np.zeros(self.ptapsrs[ii].Homat.shape[1])
 
         if self.likfunc == 'mark1':
             self.Phi = np.zeros((np.sum(self.npf), np.sum(self.npf)))
@@ -2340,6 +2546,7 @@ class ptaLikelihood(object):
                                         # [0, 3, 2, ..., 4]
             orderFrequencyLines=False, \
             compression = 'None', \
+            evalCompressionComplement = None, \
             likfunc='mark3'):
         # For every pulsar, construct the auxiliary quantities like the Fourier
         # design matrix etc
@@ -2352,8 +2559,10 @@ class ptaLikelihood(object):
         self.orderFrequencyLines = orderFrequencyLines
 
         for m2psr in self.ptapsrs:
-            Tstart = np.min([np.min(self.ptapsrs[0].toas), Tstart])
-            Tfinish = np.max([np.max(self.ptapsrs[0].toas), Tfinish])
+            Tstart = np.min([np.min(m2psr.toas), Tstart])
+            Tfinish = np.max([np.max(m2psr.toas), Tfinish])
+            #Tstart = np.min([np.min(self.ptapsrs[0].toas), Tstart])
+            #Tfinish = np.max([np.max(self.ptapsrs[0].toas), Tfinish])
 
         # After processing the parameters, store the number of single frequency lines
         psrSingleFreqNoiseModes = np.zeros(len(self.ptapsrs), dtype=np.int)
@@ -2389,6 +2598,15 @@ class ptaLikelihood(object):
             m2psr.createAuxiliaries(Tmax, nfreqmodes, ndmfreqmodes, not separateEfacs, \
                             nSingleFreqs=nSingleFreqs, nSingleDMFreqs=nSingleDMFreqs, \
                                     likfunc=likfunc, compression=compression)
+
+            # If the compressionComplement is defined, overwrite the default
+            if compression == 'None':
+                self.evallikcomp = False
+            else:
+                self.evallikcomp = True
+
+            if evalCompressionComplement != None:
+                self.evallikcomp = evalCompressionComplement
 
             # When selecting Fourier modes, like in mark7/mark8, the binclude vector
             # indicates whether or not a frequency is included in the likelihood. By
@@ -2706,6 +2924,7 @@ class ptaLikelihood(object):
         for m2psr in self.ptapsrs:
             if m2psr.twoComponentNoise:
                 m2psr.Nwvec[:] = 0
+                m2psr.Nwovec[:] = 0
             #else:
             m2psr.Nvec[:] = 0
             m2psr.Qamp = 0
@@ -2726,6 +2945,8 @@ class ptaLikelihood(object):
                     if self.ptapsrs[m2signal.pulsarind].twoComponentNoise:
                         self.ptapsrs[m2signal.pulsarind].Nwvec += \
                                 self.ptapsrs[m2signal.pulsarind].Wvec * pefac**2
+                        self.ptapsrs[m2signal.pulsarind].Nwovec += \
+                                self.ptapsrs[m2signal.pulsarind].Wovec * pefac**2
                     #else:
                     self.ptapsrs[m2signal.pulsarind].Nvec += m2signal.Nvec * pefac**2
 
@@ -2742,6 +2963,7 @@ class ptaLikelihood(object):
 
                     if self.ptapsrs[m2signal.pulsarind].twoComponentNoise:
                         self.ptapsrs[m2signal.pulsarind].Nwvec += pequadsqr
+                        self.ptapsrs[m2signal.pulsarind].Nwovec += pequadsqr
                     #else:
                     self.ptapsrs[m2signal.pulsarind].Nvec += m2signal.Nvec * pequadsqr
                 elif m2signal.stype == 'jitter':
@@ -3252,6 +3474,7 @@ class ptaLikelihood(object):
                     #m2psr.GGtFF = np.append(m2psr.GGtF, GGtSF, axis=1)
                     #m2psr.GGtFF = np.dot(m2psr.Hmat, GtFF)
 
+                    """
                     if m2psr.twoComponentNoise:
                         #GtSF = np.dot(m2psr.Hmat.T, m2psr.SFmat)
                         AGSF = np.dot(m2psr.AG, m2psr.SFmat)
@@ -3261,6 +3484,7 @@ class ptaLikelihood(object):
                         #GtFF = np.append(m2psr.GtF, GtSF, axis=1)
 
                         #m2psr.AGFF = np.dot(m2psr.Amat.T, GtFF)
+                    """
 
             if m2psr.dmfrequencyLinesAdded > 0:
                 m2psr.SFdmmat = singleFreqFourierModes(m2psr.toas, 10**m2psr.SFdmfreqs[::2])
@@ -3277,12 +3501,64 @@ class ptaLikelihood(object):
                     if self.likfunc in ['mark6', 'mark6fa', 'mark8', 'mark10']:
                         m2psr.AGEE = np.dot(m2psr.Amat.T, GtEE)
 
+    """
+    Complement loglikelihood. This is not really the full log-likelihood by itself.
+    It is the part of the log-likelihood that is complementary to the compressed
+    log-likelihood. This way, we can still do data compression and evidence
+    calculation simultaneously
+
+    This function is basically equal to mark2loglikelihood, but now for the
+    complement
+
+    TODO: ptapsrs[i].Homat has just been made. Now fix this function
+    """
+    def comploglikelihood(self, parameters):
+        npsrs = len(self.ptapsrs)
+
+        # MARK A
+
+        self.setPsrNoise(parameters)
+
+        if self.haveDetSources:
+            self.updateDetSources(parameters)
+
+        # MARK C
+
+        # Armed with the Noise (and it's inverse), we'll construct the
+        # auxiliaries for all pulsars
+        for ii in range(npsrs):
+            if self.ptapsrs[ii].twoComponentNoise:
+                # This is equivalent to np.dot(np.diag(1.0/Nwvec, AGF))
+                self.rGr[ii] = np.sum(self.ptapsrs[ii].AoGr ** 2 / self.ptapsrs[ii].Nwovec)
+                self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nwovec))
+            else:
+                Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
+                NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Hocmat.T).T
+                GcNiGc = np.dot(self.ptapsrs[ii].Hocmat.T, NiGc)
+                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].detresiduals)
+
+                try:
+                    cf = sl.cho_factor(GcNiGc)
+                    self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nvec)) + \
+                            2*np.sum(np.log(np.diag(cf[0])))
+                    GcNiGcr = sl.cho_solve(cf, GcNir)
+                except np.linalg.LinAlgError:
+                    print "MAJOR ERROR"
+
+                self.rGr[ii] = np.dot(self.ptapsrs[ii].detresiduals, Nir) \
+                        - np.dot(GcNir, GcNiGcr)
+
+        # Now we are ready to return the log-likelihood
+        return -0.5*np.sum(self.npgos)*np.log(2*np.pi) \
+                -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet)
+
+
 
     """
     mark1 loglikelihood of the pta model/likelihood implementation
 
     This is the full likelihood, without any Woodbury expansions. Seems to be
-    slower than the woodbury one, even with equal dimensionality
+    slower than the woodbury one, even with equal dimensionality and compression
 
     """
     def mark1loglikelihood(self, parameters):
@@ -3358,9 +3634,6 @@ class ptaLikelihood(object):
         # Armed with the Noise (and it's inverse), we'll construct the
         # auxiliaries for all pulsars
         for ii in range(npsrs):
-            findex = np.sum(self.npf[:ii])
-            nfreq = int(self.npf[ii]/2)
-
             if self.ptapsrs[ii].twoComponentNoise:
                 # This is equivalent to np.dot(np.diag(1.0/Nwvec, AGF))
                 self.rGr[ii] = np.sum(self.ptapsrs[ii].AGr ** 2 / self.ptapsrs[ii].Nwvec)
@@ -4717,6 +4990,9 @@ class ptaLikelihood(object):
                 ll = self.mark8loglikelihood(parameters)
             elif self.likfunc == 'mark9':
                 ll = self.mark9loglikelihood(parameters)
+
+            if self.evallikcomp:
+                ll += self.comploglikelihood(parameters)
         else:
             ll = -1e99
 
