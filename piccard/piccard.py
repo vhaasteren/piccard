@@ -950,6 +950,7 @@ class ptaPulsar(object):
     Gr = None
     GGr = None
     GtF = None
+    GtD = None
     #GGtF = None
     #GGtFF = None
     GGtD = None
@@ -1013,6 +1014,7 @@ class ptaPulsar(object):
         self.Gr = None
         self.GGr = None
         self.GtF = None
+        self.GtD = None
         #self.GGtF = None
         #self.GGtFF = None
         self.GGtD = None
@@ -1199,7 +1201,7 @@ class ptaPulsar(object):
     @param ndmfreqs: when using dm frequencies, use this number if not -1
     """
     def constructCompressionMatrix(self, compression='None', \
-            nfreqs=-1, ndmfreqs=-1, likfunc='mark3', threshold=0.999999999):
+            nfreqs=-1, ndmfreqs=-1, likfunc='mark3', threshold=1.0):
         if compression == 'average':
             if likfunc[:5] != 'mark4':
                 (self.avetoas, self.U) = dailyaveragequantities(self.toas)
@@ -1262,23 +1264,43 @@ class ptaPulsar(object):
             # Decide on the (dm)frequencies to include
             if nfreqs == -1:
                 # Include all, and only all, frequency modes
-                Ftot = np.append(Ftot, self.Fmat, axis=1)
+                #Ftot = np.append(Ftot, self.Fmat, axis=1)
+
+                # Produce an orthogonal basis for the frequencies
+                l = self.Fmat.shape[1]
+                Vmat, svec, Vhsvd = sl.svd(self.Fmat)
+                Ftot = np.append(Ftot, Vmat[:, :l].copy(), axis=1)
             elif nfreqs == 0:
                 # Why would anyone do this?
                 pass
             else:
                 # Should we check whether nfreqs is not too large?
-                Ftot = np.append(Ftot, self.Fmat[:, :nfreqs], axis=1)
+                #Ftot = np.append(Ftot, self.Fmat[:, :nfreqs], axis=1)
+
+                # Produce an orthogonal basis for the frequencies
+                l = nfreqs
+                Vmat, svec, Vhsvd = sl.svd(self.Fmat)
+                Ftot = np.append(Ftot, Vmat[:, :l].copy(), axis=1)
 
             if ndmfreqs == -1:
                 # Include all, and only all, frequency modes
-                Ftot = np.append(Ftot, self.DF, axis=1)
+                # Ftot = np.append(Ftot, self.DF, axis=1)
+
+                # Produce an orthogonal basis for the frequencies
+                l = self.DF.shape[1]
+                Vmat, svec, Vhsvd = sl.svd(self.DF)
+                Ftot = np.append(Ftot, Vmat[:, :l].copy(), axis=1)
             elif ndmfreqs == 0:
                 # Do not include DM in the compression
                 pass
             else:
                 # Should we check whether nfreqs is not too large?
-                Ftot = np.append(Ftot, self.DF[:, :ndmfreqs], axis=1)
+                # Ftot = np.append(Ftot, self.DF[:, :ndmfreqs], axis=1)
+
+                # Produce an orthogonal basis for the frequencies
+                l = self.DF.shape[1]
+                Vmat, svec, Vhsvd = sl.svd(self.DF)
+                Ftot = np.append(Ftot, Vmat[:, :l].copy(), axis=1)
 
             GF = np.dot(self.Gmat.T, Ftot)
             GFFG = np.dot(GF, GF.T)
@@ -1287,13 +1309,11 @@ class ptaPulsar(object):
             #svec, Vmat = sl.eigh(GFFG)
             Vmat, svec, Vhsvd = sl.svd(GFFG)
 
-            # Decide how many basis vectors we'll take. (Would be odd if this is
-            # not the number of columns of self.U. How to test? For now, use
-            # 99.9% of rms power
+            # Decide how many basis vectors we'll take.
             cumrms = np.cumsum(svec)
             totrms = np.sum(svec)
-            l = np.flatnonzero( (cumrms/totrms) > threshold )[0] + 1
-            # l = Ftot.shape[1]         # This line would cause the threshold to be ignored
+            l = np.flatnonzero( (cumrms/totrms) >= threshold )[0] + 1
+            # l = Ftot.shape[1]-8         # This line would cause the threshold to be ignored
 
             print "Number of F basis vectors for " + \
                     self.name + ": " + str(self.Fmat.shape) + \
@@ -1340,12 +1360,19 @@ class ptaPulsar(object):
             if nfreqs is not None:
                 (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
                 nf = -1
+            else:
+                self.Fmat = np.zeros((len(self.toas), 0))
+                self.Ffreqs = np.zeros(0)
 
             if ndmfreqs is not None:
                 (self.Fdmmat, self.Fdmfreqs) = fourierdesignmatrix(self.toas, 2*ndmfreqs, Tmax)
                 self.Dmat = np.diag(DMk / (self.freqs**2))
                 self.DF = np.dot(self.Dmat, self.Fdmmat)
                 ndmf = -1
+            else:
+                self.Dmat = np.zeros((len(self.freqs), 0))
+                self.DF = np.zeros((len(self.freqs), 0))
+                self.Fdmfreqs = np.zeros(0)
 
             self.constructCompressionMatrix(compression, nfreqs=nf, ndmfreqs=ndmf)
 
@@ -1353,6 +1380,7 @@ class ptaPulsar(object):
             self.GGr = np.dot(self.Hmat, self.Gr)
             self.GtF = np.dot(self.Hmat.T, self.Fmat)
             #self.GGtF = np.dot(self.Hmat, self.GtF)
+            self.GtD = np.dot(self.Hmat.T, self.DF)
 
             if twoComponent:
                 self.twoComponentNoise = True
@@ -1948,6 +1976,10 @@ class ptaLikelihood(object):
     EGGNGGE = None      #                      mark6
     NGGF = None         #        mark3, mark?  mark6
 
+    # Whether we have already called the likelihood in one call, so we can skip
+    # some things in comploglikelihood
+    skipUpdateToggle = False
+
 
     def __init__(self, filename=None):
         self.ptapsrs = []
@@ -1964,6 +1996,7 @@ class ptaLikelihood(object):
         self.orderFrequencyLines = False
         self.haveStochSources = False
         self.haveDetSources = False
+        self.skipUpdateToggle = False
 
         if filename is not None:
             self.initFromFile(filename)
@@ -2446,7 +2479,7 @@ class ptaLikelihood(object):
             if self.likfunc in ['mark4', 'mark4ln']:
                 self.npu[ii] = len(self.ptapsrs[ii].avetoas)
 
-            if self.likfunc in ['mark6', 'mark6fa', 'mark8', 'mark10']:
+            if self.likfunc in ['mark1', 'mark6', 'mark6fa', 'mark8', 'mark10']:
                 self.npfdm[ii] = len(self.ptapsrs[ii].Fdmfreqs)
                 self.npffdm[ii] = len(self.ptapsrs[ii].Fdmfreqs)
 
@@ -3165,6 +3198,7 @@ class ptaLikelihood(object):
 
                         # Fill the Theta matrix
                         self.Thetavec[findex:findex+2*nfreq] += pcdoubled
+
                 elif m2signal.stype == 'frequencyline':
                     # For a frequency line, the FFmatrix is assumed to be set elsewhere
                     findex = np.sum(self.npff[:m2signal.pulsarind]) + \
@@ -3183,7 +3217,8 @@ class ptaLikelihood(object):
                     self.Thetavec[findex:findex+2] += 10**pcdoubled
 
     """
-    kfdd
+    Update the deterministic signals for the new values of the parameters. This
+    updated signal is used in the likelihood functions
     """
     def updateDetSources(self, parameters, selection=None):
         npsrs = len(self.ptapsrs)
@@ -3510,18 +3545,18 @@ class ptaLikelihood(object):
 
     This function is basically equal to mark2loglikelihood, but now for the
     complement
-
-    TODO: ptapsrs[i].Homat has just been made. Now fix this function
     """
     def comploglikelihood(self, parameters):
         npsrs = len(self.ptapsrs)
 
         # MARK A
 
-        self.setPsrNoise(parameters)
+        # If this is already evaluated in the likelihood, do not do it here
+        if not self.skipUpdateToggle:
+            self.setPsrNoise(parameters)
 
-        if self.haveDetSources:
-            self.updateDetSources(parameters)
+            if self.haveDetSources:
+                self.updateDetSources(parameters)
 
         # MARK C
 
@@ -3529,7 +3564,6 @@ class ptaLikelihood(object):
         # auxiliaries for all pulsars
         for ii in range(npsrs):
             if self.ptapsrs[ii].twoComponentNoise:
-                # This is equivalent to np.dot(np.diag(1.0/Nwvec, AGF))
                 self.rGr[ii] = np.sum(self.ptapsrs[ii].AoGr ** 2 / self.ptapsrs[ii].Nwovec)
                 self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nwovec))
             else:
@@ -3578,6 +3612,7 @@ class ptaLikelihood(object):
         # Armed with the Noise (and it's inverse), we'll construct the
         # auxiliaries for all pulsars
         GtFtot = []
+        GtDtot = []
         for ii in range(npsrs):
             gindex = np.sum(self.npgs[:ii])
             ng = self.npgs[ii]
@@ -3586,7 +3621,9 @@ class ptaLikelihood(object):
             self.GCG[gindex:gindex+ng, gindex:gindex+ng] = \
                     np.dot(self.ptapsrs[ii].Hmat.T, (self.ptapsrs[ii].Nvec * self.ptapsrs[ii].Hmat.T).T)
 
+            # Create the total GtF and GtD lists for addition of Red(DM) noise
             GtFtot.append(self.ptapsrs[ii].GtF)
+            GtDtot.append(self.ptapsrs[ii].GtD)
 
             self.Gr[gindex:gindex+ng] = np.dot(self.ptapsrs[ii].Hmat.T, self.ptapsrs[ii].detresiduals)
 
@@ -3597,6 +3634,9 @@ class ptaLikelihood(object):
             self.GCG += np.dot(GtF, (np.diag(self.Phi) * GtF).T)
         else:
             self.GCG += np.dot(GtF, np.dot(self.Phi, GtF.T))
+
+        GtD = sl.block_diag(*GtDtot)
+        self.GCG += np.dot(GtD, (self.Thetavec * GtD).T)
 
         # Do the inversion
         try:
@@ -4278,7 +4318,7 @@ class ptaLikelihood(object):
                     np.diag(1.0 / self.Thetavec[np.sum(self.npfdm[:ii]):np.sum(self.npfdm[:ii+1])])
 
             # Include the cross terms of Phi in Sigma.
-            for jj in range(ii, npsrs):
+            for jj in range(ii+1, npsrs):
                 inda2 = np.sum(self.npf[:jj])+np.sum(self.npfdm[:jj])
                 indaph2 = np.sum(self.npf[:jj])
                 indb2 = np.sum(self.npf[:jj+1])+np.sum(self.npfdm[:jj])
@@ -4308,6 +4348,7 @@ class ptaLikelihood(object):
                 raise ValueError("ERROR: Sigma singular according to SVD")
             SigmaLD = np.sum(np.log(s))
             rGSigmaGr = np.dot(self.rGE, np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, self.rGE))))
+
 
         # Now we are ready to return the log-likelihood
         return -0.5*np.sum(self.npgs)*np.log(2*np.pi) \
@@ -4719,6 +4760,7 @@ class ptaLikelihood(object):
                 print "Fallback to SVD for Phi"
 
         # MARK G
+        print "WARNING: mark8loglikelihood not yet fixed for more than one pulsar"
 
         ThetaLD = np.sum(np.log(lThetavec))
 
@@ -4936,6 +4978,8 @@ class ptaLikelihood(object):
 
         ThetaLD = np.sum(np.log(self.Thetavec))
 
+        print "WARNGIN: mark10loglikelihood not yet fixed for more than one pulsar"
+
         # Construct and decompose Sigma
         di = np.diag_indices(np.sum(self.npff))
         didm = np.diag_indices(np.sum(self.npffdm))
@@ -4957,10 +5001,6 @@ class ptaLikelihood(object):
         return -0.5*np.sum(self.npgs)*np.log(2*np.pi) \
                 -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) \
                 +0.5*rGSigmaGr - 0.5*PhiLD - 0.5*SigmaLD - 0.5*ThetaLD
-
-
-
-
 
 
 
@@ -4993,7 +5033,9 @@ class ptaLikelihood(object):
                 ll = self.mark9loglikelihood(parameters)
 
             if self.evallikcomp:
+                self.skipUpdateToggle = True
                 ll += self.comploglikelihood(parameters)
+                self.skipUpdateToggle = False
         else:
             ll = -1e99
 
