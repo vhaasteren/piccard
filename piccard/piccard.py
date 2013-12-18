@@ -307,6 +307,57 @@ class DataFile(object):
         self.filename = filename
 
 
+# Block-wise multiplication as in G^{T}CG
+def blockmul(A, B, psrobs, psrg):
+    """Computes B.T . A . B, where B is a block-diagonal design matrix
+        with block heights m = len(A) / len(meta) and block widths m - meta[i]['pars'].
+
+        >>> a = N.random.randn(8,8)
+        >>> a = a + a.T
+        >>> b = N.zeros((8,5),'d')
+        >>> b[0:4,0:2] = N.random.randn(4,2)
+        >>> b[4:8,2:5] = N.random.randn(4,3)
+        >>> psrobs = [4, 4]
+        >>> psrg = [2, 3]
+        >>> c = blockmul(a,b,psrobs, psrg) - N.dot(b.T,N.dot(a,b))
+        >>> N.max(N.abs(c))
+        0.0
+    """
+
+    n, p = A.shape[0], B.shape[1]    # A is n x n, B is n x p
+
+    if (A.shape[0] != A.shape[1]) or (A.shape[1] != B.shape[0]):
+        raise ValueError('incompatible matrix sizes')
+    
+    if (len(psrobs) != len(psrg)):
+        raise ValueError('incompatible matrix description')
+
+    res1 = np.zeros((n,p), 'd')
+    res2 = np.zeros((p,p), 'd')
+
+    npulsars = len(psrobs)
+    #m = n/npulsars          # times (assumed the same for every pulsar)
+
+    psum, isum = 0, 0
+    for i in range(npulsars):
+        # each A matrix is n x m, with starting column index = i * m
+        # each B matrix is m x (m - p_i), with starting row = i * m, starting column s = sum_{k=0}^{i-1} (m - p_i)
+        # so the logical C dimension is n x (m - p_i), and it goes to res1[:,s:(s + m - p_i)]
+        res1[:,psum:psum+psrg[i]] = np.dot(A[:,isum:isum+psrobs[i]],B[isum:isum+psrobs[i], psum:psum+psrg[i]])
+            
+        psum += psrg[i]
+        isum += psrobs[i]
+
+    psum, isum = 0, 0
+    for i in range(npulsars):
+        res2[psum:psum+psrg[i],:] = np.dot(B.T[psum:psum+psrg[i], isum:isum+psrobs[i]], res1[isum:isum+psrobs[i],:])
+                    
+        psum += psrg[i]
+        isum += psrobs[i]
+
+    return res2
+
+
 """
 Calculate the daily-averaging exploder matrix, and the daily averaged site
 arrival times. In the modelling, the residuals will not be changed. It is only
@@ -1315,9 +1366,9 @@ class ptaPulsar(object):
             l = np.flatnonzero( (cumrms/totrms) >= threshold )[0] + 1
             # l = Ftot.shape[1]-8         # This line would cause the threshold to be ignored
 
-            print "Number of F basis vectors for " + \
-                    self.name + ": " + str(self.Fmat.shape) + \
-                    " --> " + str(l)
+            #print "Number of F basis vectors for " + \
+            #        self.name + ": " + str(self.Fmat.shape) + \
+            #        " --> " + str(l)
 
             # H is the compression matrix
             Bmat = Vmat[:, :l].copy()
@@ -2732,6 +2783,7 @@ class ptaLikelihood(object):
         self.initPrior()
         self.pardes = self.getModelParameterList()
 
+
     def getModelParameterList(self):
         pardes = []
 
@@ -3606,13 +3658,13 @@ class ptaLikelihood(object):
         if self.haveDetSources:
             self.updateDetSources(parameters)
 
-        #self.Gr = np.zeros(np.sum(self.npgs))
-        #self.GCG = np.zeros((np.sum(self.npgs), np.sum(self.npgs)))
+        # MARK A
 
         # Armed with the Noise (and it's inverse), we'll construct the
         # auxiliaries for all pulsars
         GtFtot = []
         GtDtot = []
+        self.GCG[:] = 0
         for ii in range(npsrs):
             gindex = np.sum(self.npgs[:ii])
             ng = self.npgs[ii]
@@ -3627,28 +3679,51 @@ class ptaLikelihood(object):
 
             self.Gr[gindex:gindex+ng] = np.dot(self.ptapsrs[ii].Hmat.T, self.ptapsrs[ii].detresiduals)
 
+        # MARK B
+
         # Create the total GCG matrix (only works with Phi for now)
         # TODO: include Theta for DM
         GtF = sl.block_diag(*GtFtot)
+        # MARK C
+
+        self.GCG += blockmul(self.Phi, GtF.T, self.npf, self.npgs)
+
+        """
+        # This is much much slower than the block multiplication
         if npsrs == 1:
             self.GCG += np.dot(GtF, (np.diag(self.Phi) * GtF).T)
         else:
             self.GCG += np.dot(GtF, np.dot(self.Phi, GtF.T))
+        """
+
+        # Mark D
+
 
         GtD = sl.block_diag(*GtDtot)
-        self.GCG += np.dot(GtD, (self.Thetavec * GtD).T)
+
+        # MARK E
+
+        # Do not directly multiply. Use block multiplication.
+        # TODO: For even more speed, these two could be combined
+        #self.GCG += np.dot(GtD, (self.Thetavec * GtD).T)
+        self.GCG += blockmul(np.diag(self.Thetavec), GtD.T, self.npfdm, self.npgs)
+
+        # MARK F
 
         # Do the inversion
         try:
             cf = sl.cho_factor(self.GCG)
             GNGldet = 2*np.sum(np.log(np.diag(cf[0])))
             xi2 = np.dot(self.Gr, sl.cho_solve(cf, self.Gr))
-        except np.linalg.LinAlgError:
+        except np.linalg.LinAlgError as err:
             U, s, Vh = sl.svd(self.GCG)
             if not np.all(s > 0):
                 raise ValueError("ERROR: GCG singular according to SVD")
             GNGldet = np.sum(np.log(s))
             xi2 = np.dot(self.Gr, np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, self.Gr))))
+            # print "  -- msg: ", err.message
+
+        # MARK G
 
         return -0.5 * np.sum(self.npgs)*np.log(2*np.pi) \
                 -0.5 * xi2 - 0.5 * GNGldet
