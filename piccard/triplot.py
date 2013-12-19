@@ -162,67 +162,21 @@ def makesubplot1d(ax, samples, weights=None):
 
 
 
-# The mcmc chain (ASCII file, with columns the values of the parameters each step)
-# Note that the first two columns are walker index, and loglikelihood value
-# So the indices are used '+2' in the chain below
-# Layout ASCII-file
-#     Col 1        Col 2        Col 3           Col 4
-#   walker id  loglikelihood  parameter 1   parameter 2
-#   walker id  loglikelihood  parameter 1   parameter 2
-#  .... etc.
+"""
+Make a tri-plot of an MCMC chain.
 
+@param chain: mcmc chain, with all columns the parameters of the chain
+@param parlabels: the names of all parameters in the columns of the chain
+@param plotparameters: list of the parameter indices to be plotter (None=all)
+@param name: name of the plot (and of the figure file output)
 
-def triplot(chainfilename, plotparameters=None, minmaxfile=None):
-    #shortname=options.root
-    chainfilename = chainfilename
-    parametersfilename = chainfilename+'.parameters.txt'
-    mnparametersfilename = chainfilename+'.mnparameters.txt'
-    figurefilenameeps = chainfilename+'.fig.eps'
-    figurefilenamepng = chainfilename+'.fig.png'
-    chain = np.loadtxt(chainfilename)
-
-    if len(chain.shape) <= 1:
-        print "ERROR: ", chainfilename, " run not finished"
-        return
-
-    if minmaxfile==None:
-        minmaxfile = chainfilename+'.minmax.txt'
-
-    # Check if we are making MultiNest triplots (rescale the parameters, and use
-    # posterior weights
-    weights=None
-    """
-    if os.path.exists(minmaxfile):
-        minmax = np.loadtxt(minmaxfile)
-        #for ii in range(chain.shape[1]-2):
-        #  chain[:,ii+2] = minmax[ii,0] + chain[:,ii+2] * (minmax[ii,1] - minmax[ii,0])
-        weights = chain[:,0]
-    """
-
-    #print "shortname = ", shortname
-    print "parametersfilename = ", parametersfilename, " (for MCMC)"
-    print "mnparametersfilename = ", mnparametersfilename, " (for MultiNest)"
-    print "figurefilename = ", figurefilenameeps
-    print "chainfilename = ", chainfilename
-
-    # Read in the labels for all parameters from parametersfilename
-    if os.path.exists(mnparametersfilename):
-        parametersfilename = mnparametersfilename
-        samples = chain[:, :-1]
-    elif os.path.exists(parametersfilename):
-        samples = chain[:, 2:]
-
-    parfile = open(parametersfilename)
-    lines=[line.strip() for line in parfile]
-    parlabels=[]
-    for i in range(len(lines)):
-        lines[i]=lines[i].split()
-
-        if int(lines[i][0]) >= 0:
-            # If the parameter has an index
-            parlabels.append(lines[i][5])
+Writes an eps and a png file as well
+"""
+def triplot(chain, parlabels=None, plotparameters=None, name=None):
+    # Need chain, and parlabels
 
     # Figure out which parameters to plot
+    samples = chain
     fileparameters = samples.shape[1]
     if plotparameters is None:
         parameters = np.arange(fileparameters)
@@ -261,12 +215,11 @@ def triplot(chainfilename, plotparameters=None, minmaxfile=None):
 
                 if ii == jj:
                     # Make a 1D plot
-                    makesubplot1d(axarr[ii][ii], samples[:,parameters[ii]],
-                            weights=weights)
+                    makesubplot1d(axarr[ii][ii], samples[:,parameters[ii]])
                 else:
                     # Make a 2D plot
                     makesubplot2denh(axarr[jj][ii], samples[:,parameters[ii]], \
-                            samples[:,parameters[jj]], weights=weights)
+                            samples[:,parameters[jj]])
 
                 axarr[jj][ii].xaxis.set_major_locator(xmajorLocator)
                 axarr[jj][ii].yaxis.set_major_locator(ymajorLocator)
@@ -287,17 +240,18 @@ def triplot(chainfilename, plotparameters=None, minmaxfile=None):
                     axarr[jj][ii].set_ylabel(parlabels[parameters[jj]])
 
 
-    #f.suptitle(shortname[-10:])
-    f.suptitle(chainfilename)
+    if name is not None:
+        #f.suptitle(shortname[-10:])
+        f.suptitle(name)
 
-    #f.subplots_adjust(hspace=0)
-    #plt.setp([a.get_xticklabels() for a in f.axes[:-0-2]], visible=False)
-    #plt.tight_layout() # Or equivalently,  "plt.tight_layout()"
+        #f.subplots_adjust(hspace=0)
+        #plt.setp([a.get_xticklabels() for a in f.axes[:-0-2]], visible=False)
+        #plt.tight_layout() # Or equivalently,  "plt.tight_layout()"
 
-    #plt.savefig('pulsar-' + str(psr) + '.png')
-    plt.savefig(figurefilenameeps)
-    plt.savefig(figurefilenamepng)
-    #plt.show()
+        #plt.savefig('pulsar-' + str(psr) + '.png')
+        plt.savefig(name+'.fig.png')
+        plt.savefig(name+'.fig.eps')
+        #plt.show()
 
     """
     # Fine-tune figure: make subplots close to each other and hide x ticks for all

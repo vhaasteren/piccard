@@ -45,6 +45,7 @@ from . import pydnest                  # Internal module
 from . import anisotropygammas as ang  # Internal module
 from . import rjmcmchammer as rjemcee  # Internal module
 from .triplot import *
+from . import PTMCMC_generic as ptmcmc
 
 """
 # Set the environment variables for MultiNest and other stuff
@@ -117,7 +118,7 @@ class DataFile(object):
     such should not be modified. Adding flags and other stuff should be done as
     part of the modelling (in the /Models folder).
     """
-    def addpulsar(self, parfile, timfile):
+    def addpulsar(self, parfile, timfile, iterations=1):
         # Check whether the two files exist
         if not os.path.isfile(parfile) or not os.path.isfile(timfile):
             raise IOError, "Cannot find parfile (%s) or timfile (%s)!" % (parfile, timfile)
@@ -144,7 +145,7 @@ class DataFile(object):
         else:
             datagroup = self.h5file.create_group("Data")
 
-        # Load pulsar data from the JPL Cython tempo2 library
+        # Load pulsar data from the libstempo library
         os.chdir(dirname)
         t2pulsar = t2.tempopulsar(relparfile, reltimfile)
         os.chdir(savedir)
@@ -165,10 +166,13 @@ class DataFile(object):
         # something like that. This is soooo unclear
         pulsarsgroup = pulsarsgroup.create_group(t2pulsar.name)
 
+        if iterations > 1:
+            t2pulsar.fit(iters=iterations)
+
         # Create the datasets, with reference time pepoch = 53000
         spd = 24.0*3600     # seconds per day
         pulsarsgroup.create_dataset('TOAs', data=np.double(np.array(t2pulsar.toas())-53000)*spd)       # days (MJD) * sec per day
-        pulsarsgroup.create_dataset('prefitRes', data=np.double(t2pulsar.residuals()))      # seconds
+        pulsarsgroup.create_dataset('prefitRes', data=np.double(t2pulsar.prefit.residuals))      # seconds
         pulsarsgroup.create_dataset('postfitRes', data=np.double(t2pulsar.residuals()))  # seconds
         pulsarsgroup.create_dataset('toaErr', data=np.double(1e-6*t2pulsar.toaerrs))          # seconds
         pulsarsgroup.create_dataset('freq', data=np.double(t2pulsar.freqs))              # MHz
@@ -303,6 +307,57 @@ class DataFile(object):
         self.filename = filename
 
 
+# Block-wise multiplication as in G^{T}CG
+def blockmul(A, B, psrobs, psrg):
+    """Computes B.T . A . B, where B is a block-diagonal design matrix
+        with block heights m = len(A) / len(meta) and block widths m - meta[i]['pars'].
+
+        >>> a = N.random.randn(8,8)
+        >>> a = a + a.T
+        >>> b = N.zeros((8,5),'d')
+        >>> b[0:4,0:2] = N.random.randn(4,2)
+        >>> b[4:8,2:5] = N.random.randn(4,3)
+        >>> psrobs = [4, 4]
+        >>> psrg = [2, 3]
+        >>> c = blockmul(a,b,psrobs, psrg) - N.dot(b.T,N.dot(a,b))
+        >>> N.max(N.abs(c))
+        0.0
+    """
+
+    n, p = A.shape[0], B.shape[1]    # A is n x n, B is n x p
+
+    if (A.shape[0] != A.shape[1]) or (A.shape[1] != B.shape[0]):
+        raise ValueError('incompatible matrix sizes')
+    
+    if (len(psrobs) != len(psrg)):
+        raise ValueError('incompatible matrix description')
+
+    res1 = np.zeros((n,p), 'd')
+    res2 = np.zeros((p,p), 'd')
+
+    npulsars = len(psrobs)
+    #m = n/npulsars          # times (assumed the same for every pulsar)
+
+    psum, isum = 0, 0
+    for i in range(npulsars):
+        # each A matrix is n x m, with starting column index = i * m
+        # each B matrix is m x (m - p_i), with starting row = i * m, starting column s = sum_{k=0}^{i-1} (m - p_i)
+        # so the logical C dimension is n x (m - p_i), and it goes to res1[:,s:(s + m - p_i)]
+        res1[:,psum:psum+psrg[i]] = np.dot(A[:,isum:isum+psrobs[i]],B[isum:isum+psrobs[i], psum:psum+psrg[i]])
+            
+        psum += psrg[i]
+        isum += psrobs[i]
+
+    psum, isum = 0, 0
+    for i in range(npulsars):
+        res2[psum:psum+psrg[i],:] = np.dot(B.T[psum:psum+psrg[i], isum:isum+psrobs[i]], res1[isum:isum+psrobs[i],:])
+                    
+        psum += psrg[i]
+        isum += psrobs[i]
+
+    return res2
+
+
 """
 Calculate the daily-averaging exploder matrix, and the daily averaged site
 arrival times. In the modelling, the residuals will not be changed. It is only
@@ -312,7 +367,7 @@ Input is a vector of site arrival times. Returns the reduced-size average toas,
 and the exploder matrix  Cfull = U Cred U^{T}
 """
 def dailyaveragequantities(toas):
-    spd = 3600.0 * 24.0     # Seconds per day
+    spd = 3600.0 * 0.1     # Seconds per hr/10
 
     processed = np.array([0]*len(toas), dtype=np.bool)  # No toas processed yet
     U = np.zeros((len(toas), 0))
@@ -763,6 +818,68 @@ class aniCorrelations(object):
 
         return corrreturn
 
+"""
+Function that calculates the earth-term gravitational-wave burst-with-memory
+signal, as described in:
+Seto et al, van haasteren and Levin, phsirkov et al, Cordes and Jenet.
+
+parameter[0] = TOA time (sec) the burst hits the earth
+parameter[1] = amplitude of the burst (strain h)
+parameter[2] = azimuthal angle (rad)
+parameter[3] = polar angle (rad)
+parameter[4] = polarisation angle (rad)
+
+raj = Right Ascension of the pulsar (rad)
+decj = Declination of the pulsar (rad)
+t = timestamps where the waveform should be returned
+
+returns the waveform as induced timing residuals (seconds)
+
+"""
+def bwmsignal(parameters, raj, decj, t):
+    # The rotation matrices
+    rot1 = np.eye(3)
+    rot2 = np.eye(3)
+    rot3 = np.eye(3)
+
+    # Rotation along the azimuthal angle (raj source)
+    rot1[0,0] = np.cos(parameters[2])   ; rot1[0,1] = np.sin(parameters[2])
+    rot1[1,0] = -np.sin(parameters[2])  ; rot1[1,1] = np.cos(parameters[2])
+
+    # Rotation along the polar angle (decj source)
+    rot2[0,0] = np.sin(parameters[3])   ; rot2[0,2] = -np.cos(parameters[3])
+    rot2[2,0] = np.cos(parameters[3])   ; rot2[2,2] = np.sin(parameters[3])
+
+    # Rotate the bwm polarisation to match the x-direction
+    rot3[0,0] = np.cos(parameters[4])   ; rot3[0,1] = np.sin(parameters[4])
+    rot3[1,0] = -np.sin(parameters[4])  ; rot3[1,1] = np.cos(parameters[4])
+
+    # The total rotation matrix
+    rot = np.dot(rot1, np.dot(rot2, rot3))
+
+    # The pulsar position in Euclidian coordinates
+    ppos = np.zeros(3)
+    ppos[0] = np.cos(raj) * np.cos(decj)
+    ppos[1] = np.sin(raj) * np.cos(decj)
+    ppos[2] = np.sin(decj)
+
+    # Rotate the position of the pulsar
+    ppr = np.dot(rot, ppos)
+
+    # Antenna pattern
+    ap = 0.0
+    if np.abs(ppr[2]) < 1:
+        # Depending on definition of source position, it could be (1 - ppr[2])
+        ap = 0.5 * (1 + ppr[2]) * (2 * ppr[0] * ppr[0] / (1 - ppr[2]*ppr[2]) - 1)
+        
+        2 * ppr[0] * ppr[0] 
+
+    # Define the heaviside function
+    heaviside = lambda x: 0.5 * (np.sign(x) + 1)
+
+    # Return the time series
+    return ap * (10**parameters[1]) * heaviside(t - parameters[0]) * (t - parameters[0])
+
 
 
 """
@@ -846,7 +963,9 @@ class ptaPulsar(object):
     decj = 0
     toas = None
     toaerrs = None
+    prefitresiduals = None
     residuals = None
+    detresiduals = None     # Residuals after subtraction of deterministic sources
     freqs = None
     Gmat = None
     Gcmat = None
@@ -861,6 +980,10 @@ class ptaPulsar(object):
     SFmat = None            # Fmatrix for the frequency lines
     FFmat = None            # Total of Fmat and SFmat
     Fdmmat = None
+    Hmat = None             # The compression matrix
+    Homat = None            # The orthogonal-to compression matrix
+    Hcmat = None            # The co-compression matrix
+    Hocmat = None           # The orthogonal co-compression matrix
     SFdmmat = None         # Fdmmatrix for the dm frequency lines
     #FFdmmat = None         # Total of SFdmmatrix and Fdmmat
     Dmat = None
@@ -878,19 +1001,28 @@ class ptaPulsar(object):
     Gr = None
     GGr = None
     GtF = None
+    GtD = None
     #GGtF = None
     #GGtFF = None
     GGtD = None
     AGr = None      # Replaces GGr in 2-component noise model
+    AoGr = None     #   Same but for orthogonal basis (when compressing)
     AGF = None      # Replaces GGtF in 2-component noise model
+    AoGF = None     #   Same but for orthogonal basis (when compressing)
     AGD = None      # Replaces GGtD in 2-component noise model
+    AoGD = None     #   Same but for orthogonal basis (when compressing)
     AGE = None      # Replaces GGtE in 2-component noise model
+    AoGE = None     #   Same but for orthogonal basis (when compressing)
+    AGU = None      # Replace GGtU in 2-component noise model
+    AoGU = None     #   Same .... you got it
 
     # Auxiliaries used in the likelihood
     twoComponentNoise = False       # Whether we use the 2-component noise model
     Nvec = None             # The total white noise (eq^2 + ef^2*err)
     Wvec = None             # The weights in 2-component noise
+    Wovec = None            # The weights in 2-component orthogonal noise
     Nwvec = None            # Total noise in 2-component basis (eq^2 + ef^2*Wvec)
+    Nwovec = None           # Total noise in 2-component orthogonal basis
 
     # To select the number of Frequency modes
     bfinc = None        # Number of modes of all internal matrices
@@ -903,7 +1035,9 @@ class ptaPulsar(object):
         self.decj = 0
         self.toas = None
         self.toaerrs = None
+        self.prefitresiduals = None
         self.residuals = None
+        self.detresiduals = None     # Residuals after subtraction of deterministic sources
         self.freqs = None
         self.Gmat = None
         self.Gcmat = None
@@ -917,6 +1051,10 @@ class ptaPulsar(object):
         self.SFmat = None
         self.FFmat = None
         self.Fdmmat = None
+        self.Hmat = None
+        self.Homat = None
+        self.Hcmat = None
+        self.Hocmat = None
         self.Dmat = None
         self.DF = None
         self.Ffreqs = None
@@ -927,6 +1065,7 @@ class ptaPulsar(object):
         self.Gr = None
         self.GGr = None
         self.GtF = None
+        self.GtD = None
         #self.GGtF = None
         #self.GGtFF = None
         self.GGtD = None
@@ -970,7 +1109,9 @@ class ptaPulsar(object):
         # Obtain residuals, TOAs, etc.
         self.toas = np.array(pulsarsgroup[psrname]['TOAs'])
         self.toaerrs = np.array(pulsarsgroup[psrname]['toaErr'])
-        self.residuals = np.array(pulsarsgroup[psrname]['prefitRes'])
+        self.prefitresiduals = np.array(pulsarsgroup[psrname]['prefitRes'])
+        self.residuals = np.array(pulsarsgroup[psrname]['postfitRes'])
+        self.detresiduals = np.array(pulsarsgroup[psrname]['prefitRes'])
         self.freqs = np.array(pulsarsgroup[psrname]['freq'])
         self.Mmat = np.array(pulsarsgroup[psrname]['designmatrix'])
 
@@ -1006,6 +1147,7 @@ class ptaPulsar(object):
         self.toas = np.linspace(0, 10*365.25*3600*24, 300)
         self.toaerrs = np.array([1.0e-7]*len(self.toas))
         self.residuals = np.array([0.0e-7]*len(self.toas))
+        self.detresiduals = np.array([0.0e-7]*len(self.toas))
         self.freqs = np.array([
                 np.array([720]*int(len(self.toas)/3)), \
                 np.array([1440]*int(len(self.toas)/3)), \
@@ -1094,91 +1236,303 @@ class ptaPulsar(object):
         self.Mmat, self.Gmat, self.Gcmat, self.ptmpars, self.ptmdescription = \
                 self.getModifiedDesignMatrix(addDMQSD=True, removeJumps=False)
 
-        """
-        if 'DM' in self.ptmdescription:
-            # DM is included, do not include it again
-            newM = np.zeros((self.Mmat.shape[0], self.Mmat.shape[1]+2))
-            Dmatdiag = DMk / (self.freqs**2)
-            d = np.array([Dmatdiag*self.toas, Dmatdiag*(self.toas**2)]).T
 
-            self.ptmdescription.append('DM1')
-            self.ptmdescription.append('DM2')
-            self.ptmpars = np.append(self.ptmpars, [0.0, 0.0])
-            
-            newM[:,:-2] = self.Mmat
-            newM[:,-2:] = d
+    """
+    Construct the compression matrix and it's orthogonal complement. This is
+    always done, even if in practice there is no compression. That is just the
+    fidelity = 1 case.
+
+        # U-compression:
+        # W s V^{T} = G^{T} U U^{T} G    H = G Wl
+        # F-compression
+        # W s V^{T} = G^{T} F F^{T} G    H = G Wl
+
+    @param compression: what kind of compression to use: None/average/frequencies
+    @param nfreqs: when using frequencies, use this number if not -1
+    @param ndmfreqs: when using dm frequencies, use this number if not -1
+    """
+    def constructCompressionMatrix(self, compression='None', \
+            nfreqs=-1, ndmfreqs=-1, likfunc='mark3', threshold=1.0):
+        if compression == 'average':
+            if likfunc[:5] != 'mark4':
+                (self.avetoas, self.U) = dailyaveragequantities(self.toas)
+
+            # This assumes that self.U has already been set
+            GU = np.dot(self.Gmat.T, self.U)
+            GUUG = np.dot(GU, GU.T)
+
+            # Construct an orthogonal basis, and singular values
+            # svech, Vmath = sl.eigh(GUUG)
+            Vmat, svec, Vhsvd = sl.svd(GUUG)
+
+            # Decide how many basis vectors we'll take. (Would be odd if this is
+            # not the number of columns of self.U. How to test? For now, use
+            # 99.9% of rms power
+            cumrms = np.cumsum(svec)
+            totrms = np.sum(svec)
+            #print "svec:   ", svec
+            #print "cumrms: ", cumrms
+            #print "totrms: ", totrms
+            l = np.flatnonzero( (cumrms/totrms) > threshold )[0] + 1
+
+            print "Number of U basis vectors for " + \
+                    self.name + ": " + str(self.U.shape) + \
+                    " --> " + str(l)
+            """
+            ll = self.U.shape[1]
+
+            print "U: ", self.U.shape
+            print "CumRMS:    ", cumrms
+            print "cumrms[l] / tot = ", cumrms[l] / totrms
+            print "svec range:   ", svec[130:150]
+            print "cumrms range: ", cumrms[130:150]
+            print "designmatrix: ", self.Mmat.shape
+            print "TMPars: ", self.ptmdescription
+            plt.plot(np.arange(120,ll+10), np.log10(svec[120:ll+10]), 'k-')
+            """
+
+            # H is the compression matrix
+            Bmat = Vmat[:, :l].copy()
+            Bomat = Vmat[:, l:].copy()
+            H = np.dot(self.Gmat, Bmat)
+            Ho = np.dot(self.Gmat, Bomat)
+
+            # Use another SVD to construct not only Hmat, but also Hcmat
+            # We use this version of Hmat, and not H from above, in case of
+            # linear dependences...
+            #svec, Vmat = sl.eigh(H)
+            Vmat, s, Vh = sl.svd(H)
+            self.Hmat = Vmat[:, :l]
+            self.Hcmat = Vmat[:, l:]
+
+            # For compression-complements, construct Ho and Hoc
+            Vmat, s, Vh = sl.svd(Ho)
+            self.Homat = Vmat[:, :Ho.shape[1]]
+            self.Hocmat = Vmat[:, Ho.shape[1]:]
+        elif compression == 'frequencies':
+            Ftot = np.zeros((len(self.toas), 0))
+
+            # Decide on the (dm)frequencies to include
+            if nfreqs == -1:
+                # Include all, and only all, frequency modes
+                #Ftot = np.append(Ftot, self.Fmat, axis=1)
+
+                # Produce an orthogonal basis for the frequencies
+                l = self.Fmat.shape[1]
+                Vmat, svec, Vhsvd = sl.svd(self.Fmat)
+                Ftot = np.append(Ftot, Vmat[:, :l].copy(), axis=1)
+            elif nfreqs == 0:
+                # Why would anyone do this?
+                pass
+            else:
+                # Should we check whether nfreqs is not too large?
+                #Ftot = np.append(Ftot, self.Fmat[:, :nfreqs], axis=1)
+
+                # Produce an orthogonal basis for the frequencies
+                l = nfreqs
+                Vmat, svec, Vhsvd = sl.svd(self.Fmat)
+                Ftot = np.append(Ftot, Vmat[:, :l].copy(), axis=1)
+
+            if ndmfreqs == -1:
+                # Include all, and only all, frequency modes
+                # Ftot = np.append(Ftot, self.DF, axis=1)
+
+                # Produce an orthogonal basis for the frequencies
+                l = self.DF.shape[1]
+                Vmat, svec, Vhsvd = sl.svd(self.DF)
+                Ftot = np.append(Ftot, Vmat[:, :l].copy(), axis=1)
+            elif ndmfreqs == 0:
+                # Do not include DM in the compression
+                pass
+            else:
+                # Should we check whether nfreqs is not too large?
+                # Ftot = np.append(Ftot, self.DF[:, :ndmfreqs], axis=1)
+
+                # Produce an orthogonal basis for the frequencies
+                l = self.DF.shape[1]
+                Vmat, svec, Vhsvd = sl.svd(self.DF)
+                Ftot = np.append(Ftot, Vmat[:, :l].copy(), axis=1)
+
+            GF = np.dot(self.Gmat.T, Ftot)
+            GFFG = np.dot(GF, GF.T)
+
+            # Construct an orthogonal basis, and singular (eigen) values
+            #svec, Vmat = sl.eigh(GFFG)
+            Vmat, svec, Vhsvd = sl.svd(GFFG)
+
+            # Decide how many basis vectors we'll take.
+            cumrms = np.cumsum(svec)
+            totrms = np.sum(svec)
+            l = np.flatnonzero( (cumrms/totrms) >= threshold )[0] + 1
+            # l = Ftot.shape[1]-8         # This line would cause the threshold to be ignored
+
+            #print "Number of F basis vectors for " + \
+            #        self.name + ": " + str(self.Fmat.shape) + \
+            #        " --> " + str(l)
+
+            # H is the compression matrix
+            Bmat = Vmat[:, :l].copy()
+            Bomat = Vmat[:, l:].copy()
+            H = np.dot(self.Gmat, Bmat)
+            Ho = np.dot(self.Gmat, Bomat)
+
+            # Use another SVD to construct not only Hmat, but also Hcmat
+            # We use this version of Hmat, and not H from above, in case of
+            # linear dependences...
+            #svec, Vmat = sl.eigh(H)
+            Vmat, s, Vh = sl.svd(H)
+            self.Hmat = Vmat[:, :l]
+            self.Hcmat = Vmat[:, l:]
+
+            # For compression-complements, construct Ho and Hoc
+            Vmat, s, Vh = sl.svd(Ho)
+            self.Homat = Vmat[:, :Ho.shape[1]]
+            self.Hocmat = Vmat[:, Ho.shape[1]:]
+        elif compression == 'None':
+            self.Hmat = self.Gmat
+            self.Hcmat = self.Gcmat
+            self.Homat = np.zeros((self.Hmat.shape[0], 0))
         else:
-            # DM is not included, include it now
-            newM = np.zeros((self.Mmat.shape[0], self.Mmat.shape[1]+3))
-            Dmatdiag = DMk / (self.freqs**2)
-            d = np.array([Dmatdiag, Dmatdiag*self.toas, Dmatdiag*(self.toas**2)]).T
-
-            self.ptmdescription.append('DM')
-            self.ptmdescription.append('DM1')
-            self.ptmdescription.append('DM2')
-            self.ptmpars = np.append(self.ptmpars, [0.0, 0.0, 0.0])
-            
-            newM[:,:-3] = self.Mmat
-            newM[:,-3:] = d
-
-        self.Mmat = newM
-        U, s, Vh = sl.svd(self.Mmat)
-        self.Gmat = U[:, (self.Mmat.shape[1]):].copy()
-        self.Gcmat = U[:, :(self.Mmat.shape[1])].copy()
-        """
-
+            raise IOError, "Invalid compression argument"
 
 
     """
     Create auxiliary quantities for the different likelihood functions, like GtF
     etc.
-
-    TODO: make the flow of this function a bit more transparent. Just make a few
-    big blocks for the different likelihood functions. This is too cluttered
     """
     def createAuxiliaries(self, Tmax, nfreqs, ndmfreqs, twoComponent=False, \
-            nSingleFreqs=0, nSingleDMFreqs=0, likfunc='mark3'): 
+            nSingleFreqs=0, nSingleDMFreqs=0, compression='None', \
+            likfunc='mark3'):
 
-        if likfunc == 'mark2':
-            self.Gr = np.dot(self.Gmat.T, self.residuals)
-            self.GGr = np.dot(self.Gmat, self.Gr)
+        if likfunc == 'mark1':
+            ndmf = 0
+            nf = 0
+
+            if nfreqs is not None:
+                (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
+                nf = -1
+            else:
+                self.Fmat = np.zeros((len(self.toas), 0))
+                self.Ffreqs = np.zeros(0)
+
+            if ndmfreqs is not None:
+                (self.Fdmmat, self.Fdmfreqs) = fourierdesignmatrix(self.toas, 2*ndmfreqs, Tmax)
+                self.Dmat = np.diag(DMk / (self.freqs**2))
+                self.DF = np.dot(self.Dmat, self.Fdmmat)
+                ndmf = -1
+            else:
+                self.Dmat = np.zeros((len(self.freqs), 0))
+                self.DF = np.zeros((len(self.freqs), 0))
+                self.Fdmfreqs = np.zeros(0)
+
+            self.constructCompressionMatrix(compression, nfreqs=nf, ndmfreqs=ndmf)
+
+            self.Gr = np.dot(self.Hmat.T, self.residuals)
+            self.GGr = np.dot(self.Hmat, self.Gr)
+            self.GtF = np.dot(self.Hmat.T, self.Fmat)
+            #self.GGtF = np.dot(self.Hmat, self.GtF)
+            self.GtD = np.dot(self.Hmat.T, self.DF)
 
             if twoComponent:
                 self.twoComponentNoise = True
 
-                # Diagonalise GtEfG
-                GtNeG = np.dot(self.Gmat.T, ((self.toaerrs**2) * self.Gmat.T).T)
-                self.Wvec, self.Amat = sl.eigh(GtNeG)
-
-                self.AGr = np.dot(self.Amat.T, self.Gr)
-                self.AG = np.dot(self.Amat.T, self.Gmat.T)
-
-        if likfunc == 'mark3' or likfunc == 'mark3fa':
-            (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
-            self.Gr = np.dot(self.Gmat.T, self.residuals)
-            self.GGr = np.dot(self.Gmat, self.Gr)
-            self.GtF = np.dot(self.Gmat.T, self.Fmat)
-            #self.GGtF = np.dot(self.Gmat, self.GtF)
-
-            if twoComponent:
-                self.twoComponentNoise = True
-
-                # Diagonalise GtEfG
-                GtNeG = np.dot(self.Gmat.T, ((self.toaerrs**2) * self.Gmat.T).T)
+                # Diagonalise GtEfG (HtEfH)
+                GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
                 self.Wvec, self.Amat = sl.eigh(GtNeG)
 
                 self.AGr = np.dot(self.Amat.T, self.Gr)
                 self.AGF = np.dot(self.Amat.T, self.GtF)
-                self.AG = np.dot(self.Amat.T, self.Gmat.T)
+                #self.AG = np.dot(self.Amat.T, self.Hmat.T)
+
+                # Diagonalise HotEfHo
+                if self.Homat.shape[1] > 0:
+                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+
+                    Hor = np.dot(self.Homat.T, self.residuals)
+                    HotF = np.dot(self.Homat.T, self.Fmat)
+                    self.AoGr = np.dot(self.Aomat.T, Hor)
+                    self.AoGF = np.dot(self.Aomat.T, HotF)
+                else:
+                    self.Wovec = np.zeros(0)
+                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                    self.AoGF = np.zeros((0, self.GtF.shape[1]))
+
+
+        if likfunc == 'mark2':
+            self.Gr = np.dot(self.Gmat.T, self.residuals)
+            self.GGr = np.dot(self.Gmat, self.Gr)
+            self.constructCompressionMatrix(compression)
+
+            if twoComponent:
+                self.twoComponentNoise = True
+
+                # Diagonalise GtEfG
+                GtNeG = np.dot(self.Gmat.T, ((self.toaerrs**2) * self.Gmat.T).T)
+                self.Wvec, self.Amat = sl.eigh(GtNeG)
+
+                self.AGr = np.dot(self.Amat.T, self.Gr)
+                #self.AG = np.dot(self.Amat.T, self.Gmat.T)
+
+                # Diagonalise HotEfHo
+                if self.Homat.shape[1] > 0:
+                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+
+                    self.AoGr = np.dot(self.Aomat.T, self.Gr)
+                else:
+                    self.Wovec = np.zeros(0)
+                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
+
+        if likfunc == 'mark3' or likfunc == 'mark3fa':
+            (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
+            self.constructCompressionMatrix(compression, nfreqs=-1, ndmfreqs=0)
+
+            self.Gr = np.dot(self.Hmat.T, self.residuals)
+            self.GGr = np.dot(self.Hmat, self.Gr)
+            self.GtF = np.dot(self.Hmat.T, self.Fmat)
+            #self.GGtF = np.dot(self.Hmat, self.GtF)
+
+            if twoComponent:
+                self.twoComponentNoise = True
+
+                # Diagonalise GtEfG
+                GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
+                self.Wvec, self.Amat = sl.eigh(GtNeG)
+
+                self.AGr = np.dot(self.Amat.T, self.Gr)
+                self.AGF = np.dot(self.Amat.T, self.GtF)
+                #self.AG = np.dot(self.Amat.T, self.Hmat.T)
+
+                # Diagonalise HotEfHo
+                if self.Homat.shape[1] > 0:
+                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+
+                    Hor = np.dot(self.Homat.T, self.residuals)
+                    HotF = np.dot(self.Homat.T, self.Fmat)
+                    self.AoGr = np.dot(self.Aomat.T, Hor)
+                    self.AoGF = np.dot(self.Aomat.T, HotF)
+                else:
+                    self.Wovec = np.zeros(0)
+                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                    self.AoGF = np.zeros((0, self.GtF.shape[1]))
+
 
         if likfunc == 'mark4':
             (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
-            self.Gr = np.dot(self.Gmat.T, self.residuals)
-            self.GGr = np.dot(self.Gmat, self.Gr)
-            self.GtF = np.dot(self.Gmat.T, self.Fmat)
-            #self.GGtF = np.dot(self.Gmat, self.GtF)
-            self.avetoas, self.U = dailyaveragequantities(self.toas)
-            GtU = np.dot(self.Gmat.T, self.U)
+            (self.avetoas, self.U) = dailyaveragequantities(self.toas)
+
+            self.constructCompressionMatrix(compression, nfreqs=-1, ndmfreqs=0, likfunc=likfunc)
+
+            self.Gr = np.dot(self.Hmat.T, self.residuals)
+            self.GGr = np.dot(self.Hmat, self.Gr)
+            self.GtF = np.dot(self.Hmat.T, self.Fmat)
+            #self.GGtF = np.dot(self.Hmat, self.GtF)
+            GtU = np.dot(self.Hmat.T, self.U)
 
             self.UtF = np.dot(self.U.T, self.Fmat)
             self.Qamp = 1.0
@@ -1187,20 +1541,38 @@ class ptaPulsar(object):
                 self.twoComponentNoise = True
 
                 # Diagonalise GtEfG
-                GtNeG = np.dot(self.Gmat.T, ((self.toaerrs**2) * self.Gmat.T).T)
+                GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
                 self.Wvec, self.Amat = sl.eigh(GtNeG)
 
                 self.AGr = np.dot(self.Amat.T, self.Gr)
                 self.AGU = np.dot(self.Amat.T, GtU)
 
+                # Diagonalise HotEfHo
+                if self.Homat.shape[1] > 0:
+                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+
+                    Hor = np.dot(self.Homat.T, self.residuals)
+                    HotU = np.dot(self.Homat.T, self.U)
+                    self.AoGr = np.dot(self.Aomat.T, Hor)
+                    self.AoGU = np.dot(self.Aomat.T, HotU)
+                else:
+                    self.Wovec = np.zeros(0)
+                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                    self.AoGU = np.zeros((0, GtU.shape[1]))
+
         if likfunc == 'mark4ln':
             (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
-            self.Gr = np.dot(self.Gmat.T, self.residuals)
-            self.GGr = np.dot(self.Gmat, self.Gr)
-            self.GtF = np.dot(self.Gmat.T, self.Fmat)
-            #self.GGtF = np.dot(self.Gmat, self.GtF)
-            self.avetoas, self.U = dailyaveragequantities(self.toas)
-            GtU = np.dot(self.Gmat.T, self.U)
+            (self.avetoas, self.U) = dailyaveragequantities(self.toas)
+
+            self.constructCompressionMatrix(compression, nfreqs=-1, ndmfreqs=0, likfunc=likfunc)
+
+            self.Gr = np.dot(self.Hmat.T, self.residuals)
+            self.GGr = np.dot(self.Hmat, self.Gr)
+            self.GtF = np.dot(self.Hmat.T, self.Fmat)
+            #self.GGtF = np.dot(self.Hmat, self.GtF)
+            GtU = np.dot(self.Hmat.T, self.U)
 
             self.UtF = np.dot(self.U.T, self.Fmat)
             self.Qamp = 1.0
@@ -1214,8 +1586,8 @@ class ptaPulsar(object):
             self.SFmat = singleFreqFourierModes(self.toas, np.log10(sfreqs))
             self.FFmat = np.append(self.Fmat, self.SFmat, axis=1)
             self.SFfreqs = np.log10(np.array([sfreqs, sfreqs]).T.flatten())
-            GtFF = np.dot(self.Gmat.T, self.FFmat)
-            #self.GGtFF = np.dot(self.Gmat, GtFF)
+            GtFF = np.dot(self.Hmat.T, self.FFmat)
+            #self.GGtFF = np.dot(self.Hmat, GtFF)
 
             self.UtFF = np.dot(self.U.T, self.FFmat)
 
@@ -1223,38 +1595,56 @@ class ptaPulsar(object):
                 self.twoComponentNoise = True
 
                 # Diagonalise GtEfG
-                GtNeG = np.dot(self.Gmat.T, ((self.toaerrs**2) * self.Gmat.T).T)
+                GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
                 self.Wvec, self.Amat = sl.eigh(GtNeG)
 
                 self.AGr = np.dot(self.Amat.T, self.Gr)
                 self.AGU = np.dot(self.Amat.T, GtU)
 
+                # Diagonalise HotEfHo
+                if self.Homat.shape[1] > 0:
+                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+
+                    Hor = np.dot(self.Homat.T, self.residuals)
+                    HotU = np.dot(self.Homat.T, self.U)
+                    self.AoGr = np.dot(self.Aomat.T, Hor)
+                    self.AoGU = np.dot(self.Aomat.T, HotU)
+                else:
+                    self.Wovec = np.zeros(0)
+                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                    self.AoGU = np.zeros((0, GtU.shape[1]))
+
 
         if likfunc == 'mark6' or likfunc == 'mark6fa':
-            # Red noise
             (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
-            self.Gr = np.dot(self.Gmat.T, self.residuals)
-            self.GGr = np.dot(self.Gmat, self.Gr)
-            self.GtF = np.dot(self.Gmat.T, self.Fmat)
-            #self.GGtF = np.dot(self.Gmat, self.GtF)
-
-            # DM
             (self.Fdmmat, self.Fdmfreqs) = fourierdesignmatrix(self.toas, 2*ndmfreqs, Tmax)
             self.Dmat = np.diag(DMk / (self.freqs**2))
             self.DF = np.dot(self.Dmat, self.Fdmmat)
-            GtD = np.dot(self.Gmat.T, self.DF)
-            self.GGtD = np.dot(self.Gmat, GtD)
+
+            self.constructCompressionMatrix(compression, nfreqs=-1, ndmfreqs=-1)
+
+            # Red noise
+            self.Gr = np.dot(self.Hmat.T, self.residuals)
+            self.GGr = np.dot(self.Hmat, self.Gr)
+            self.GtF = np.dot(self.Hmat.T, self.Fmat)
+            #self.GGtF = np.dot(self.Hmat, self.GtF)
+
+            # DM
+            GtD = np.dot(self.Hmat.T, self.DF)
+            self.GGtD = np.dot(self.Hmat, GtD)
 
             # DM + Red noise stuff (mark6 needs this)
             self.Emat = np.append(self.Fmat, self.DF, axis=1)
-            GtE = np.dot(self.Gmat.T, self.Emat)
-            self.GGtE = np.dot(self.Gmat, GtE)
+            GtE = np.dot(self.Hmat.T, self.Emat)
+            self.GGtE = np.dot(self.Hmat, GtE)
 
             if twoComponent:
                 self.twoComponentNoise = True
 
                 # Diagonalise GtEfG
-                GtNeG = np.dot(self.Gmat.T, ((self.toaerrs**2) * self.Gmat.T).T)
+                GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
                 self.Wvec, self.Amat = sl.eigh(GtNeG)
 
                 self.AGr = np.dot(self.Amat.T, self.Gr)
@@ -1262,50 +1652,91 @@ class ptaPulsar(object):
                 self.AGD = np.dot(self.Amat.T, GtD)
                 self.AGE = np.dot(self.Amat.T, GtE)
 
+                # Diagonalise HotEfHo
+                if self.Homat.shape[1] > 0:
+                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+
+                    Hor = np.dot(self.Homat.T, self.residuals)
+                    HotF = np.dot(self.Homat.T, self.Fmat)
+                    HotD = np.dot(self.Homat.T, self.DF)
+                    HotE = np.dot(self.Homat.T, self.Emat)
+                    self.AoGr = np.dot(self.Aomat.T, Hor)
+                    self.AoGF = np.dot(self.Aomat.T, HotF)
+                    self.AoGD = np.dot(self.Aomat.T, HotD)
+                    self.AoGE = np.dot(self.Aomat.T, HotE)
+                else:
+                    self.Wovec = np.zeros(0)
+                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                    self.AoGF = np.zeros((0, self.GtF.shape[1]))
+                    self.AoGD = np.zeros((0, GtD.shape[1]))
+                    self.AoGE = np.zeros((0, GtE.shape[1]))
+
         if likfunc == 'mark7':
             (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
-            self.Gr = np.dot(self.Gmat.T, self.residuals)
-            self.GGr = np.dot(self.Gmat, self.Gr)
-            self.GtF = np.dot(self.Gmat.T, self.Fmat)
-            #self.GGtF = np.dot(self.Gmat, self.GtF)
+
+            self.constructCompressionMatrix(compression, nfreqs=-1, ndmfreqs=0)
+
+            self.Gr = np.dot(self.Hmat.T, self.residuals)
+            self.GGr = np.dot(self.Hmat, self.Gr)
+            self.GtF = np.dot(self.Hmat.T, self.Fmat)
+            #self.GGtF = np.dot(self.Hmat, self.GtF)
 
             if twoComponent:
                 self.twoComponentNoise = True
 
                 # Diagonalise GtEfG
-                GtNeG = np.dot(self.Gmat.T, ((self.toaerrs**2) * self.Gmat.T).T)
+                GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
                 self.Wvec, self.Amat = sl.eigh(GtNeG)
 
                 self.AGr = np.dot(self.Amat.T, self.Gr)
                 self.AGF = np.dot(self.Amat.T, self.GtF)
 
+                # Diagonalise HotEfHo
+                if self.Homat.shape[1] > 0:
+                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+
+                    Hor = np.dot(self.Homat.T, self.residuals)
+                    HotF = np.dot(self.Homat.T, self.Fmat)
+                    self.AoGr = np.dot(self.Aomat.T, Hor)
+                    self.AoGF = np.dot(self.Aomat.T, HotF)
+                else:
+                    self.Wovec = np.zeros(0)
+                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                    self.AoGF = np.zeros((0, self.GtF.shape[1]))
+
 
         if likfunc == 'mark8':
-
             (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
-            self.Gr = np.dot(self.Gmat.T, self.residuals)
-            self.GGr = np.dot(self.Gmat, self.Gr)
-            self.GtF = np.dot(self.Gmat.T, self.Fmat)
-            #self.GGtF = np.dot(self.Gmat, self.GtF)
-
-            # For the DM stuff
             (self.Fdmmat, self.Fdmfreqs) = fourierdesignmatrix(self.toas, 2*ndmfreqs, Tmax)
             self.Dmat = np.diag(DMk / (self.freqs**2))
             self.DF = np.dot(self.Dmat, self.Fdmmat)
-            GtD = np.dot(self.Gmat.T, self.DF)
-            self.GGtD = np.dot(self.Gmat, GtD)
+
+            self.constructCompressionMatrix(compression, nfreqs=-1, ndmfreqs=-1)
+
+            self.Gr = np.dot(self.Hmat.T, self.residuals)
+            self.GGr = np.dot(self.Hmat, self.Gr)
+            self.GtF = np.dot(self.Hmat.T, self.Fmat)
+            #self.GGtF = np.dot(self.Hmat, self.GtF)
+
+            # For the DM stuff
+            GtD = np.dot(self.Hmat.T, self.DF)
+            self.GGtD = np.dot(self.Hmat, GtD)
 
             # DM + Red noise stuff
             self.Emat = np.append(self.Fmat, self.DF, axis=1)
-            GtE = np.dot(self.Gmat.T, self.Emat)
-            self.GGtE = np.dot(self.Gmat, GtE)
+            GtE = np.dot(self.Hmat.T, self.Emat)
+            self.GGtE = np.dot(self.Hmat, GtE)
 
             # For a two-component noise model, we need some more stuff done
             if twoComponent:
                 self.twoComponentNoise = True
 
                 # Diagonalise GtEfG
-                GtNeG = np.dot(self.Gmat.T, ((self.toaerrs**2) * self.Gmat.T).T)
+                GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
                 self.Wvec, self.Amat = sl.eigh(GtNeG)
 
                 self.AGr = np.dot(self.Amat.T, self.Gr)
@@ -1313,12 +1744,36 @@ class ptaPulsar(object):
                 self.AGD = np.dot(self.Amat.T, GtD)
                 self.AGE = np.dot(self.Amat.T, GtE)
 
+                # Diagonalise HotEfHo
+                if self.Homat.shape[1] > 0:
+                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+
+                    Hor = np.dot(self.Homat.T, self.residuals)
+                    HotF = np.dot(self.Homat.T, self.Fmat)
+                    HotD = np.dot(self.Homat.T, self.DF)
+                    HotE = np.dot(self.Homat.T, self.Emat)
+                    self.AoGr = np.dot(self.Aomat.T, Hor)
+                    self.AoGF = np.dot(self.Aomat.T, HotF)
+                    self.AoGD = np.dot(self.Aomat.T, HotD)
+                    self.AoGE = np.dot(self.Aomat.T, HotE)
+                else:
+                    self.Wovec = np.zeros(0)
+                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                    self.AoGF = np.zeros((0, self.GtF.shape[1]))
+                    self.AoGD = np.zeros((0, GtD.shape[1]))
+                    self.AoGE = np.zeros((0, GtE.shape[1]))
+
         if likfunc == 'mark9':
             (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
-            self.Gr = np.dot(self.Gmat.T, self.residuals)
-            self.GGr = np.dot(self.Gmat, self.Gr)
-            self.GtF = np.dot(self.Gmat.T, self.Fmat)
-            #self.GGtF = np.dot(self.Gmat, self.GtF)
+
+            self.constructCompressionMatrix(compression, nfreqs=-1, ndmfreqs=0)
+
+            self.Gr = np.dot(self.Hmat.T, self.residuals)
+            self.GGr = np.dot(self.Hmat, self.Gr)
+            self.GtF = np.dot(self.Hmat.T, self.Fmat)
+            #self.GGtF = np.dot(self.Hmat, self.GtF)
 
             # Initialise the single frequency with a frequency of 10 / yr
             self.frequencyLinesAdded = nSingleFreqs
@@ -1329,41 +1784,60 @@ class ptaPulsar(object):
             self.SFmat = singleFreqFourierModes(self.toas, np.log10(sfreqs))
             self.FFmat = np.append(self.Fmat, self.SFmat, axis=1)
             self.SFfreqs = np.log10(np.array([sfreqs, sfreqs]).T.flatten())
-            GtFF = np.dot(self.Gmat.T, self.FFmat)
-            #self.GGtFF = np.dot(self.Gmat, GtFF)
+            GtFF = np.dot(self.Hmat.T, self.FFmat)
+            #self.GGtFF = np.dot(self.Hmat, GtFF)
 
             # For a two-component noise model, we need some more stuff done
             if twoComponent:
                 self.twoComponentNoise = True
 
                 # Diagonalise GtEfG
-                GtNeG = np.dot(self.Gmat.T, ((self.toaerrs**2) * self.Gmat.T).T)
+                GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
                 self.Wvec, self.Amat = sl.eigh(GtNeG)
 
                 self.AGr = np.dot(self.Amat.T, self.Gr)
                 self.AGF = np.dot(self.Amat.T, self.GtF)
                 self.AGFF = np.dot(self.Amat.T, GtFF)
 
-                self.AG = np.dot(self.Amat.T, self.Gmat.T)
+                # Diagonalise HotEfHo
+                if self.Homat.shape[1] > 0:
+                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+
+                    Hor = np.dot(self.Homat.T, self.residuals)
+                    HotF = np.dot(self.Homat.T, self.Fmat)
+                    HotFF = np.dot(self.Homat.T, self.FFmat)
+                    self.AoGr = np.dot(self.Aomat.T, Hor)
+                    self.AoGF = np.dot(self.Aomat.T, HotF)
+                    self.AoGFF = np.dot(self.Aomat.T, HotFF)
+                else:
+                    self.Wovec = np.zeros(0)
+                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                    self.AoGF = np.zeros((0, self.GtF.shape[1]))
+                    self.AoGFF = np.zeros((0, GtFF.shape[1]))
 
         if likfunc == 'mark10':
             (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
-            self.Gr = np.dot(self.Gmat.T, self.residuals)
-            self.GGr = np.dot(self.Gmat, self.Gr)
-            self.GtF = np.dot(self.Gmat.T, self.Fmat)
-            #self.GGtF = np.dot(self.Gmat, self.GtF)
-
-            # For the DM stuff
             (self.Fdmmat, self.Fdmfreqs) = fourierdesignmatrix(self.toas, 2*ndmfreqs, Tmax)
             self.Dmat = np.diag(DMk / (self.freqs**2))
             self.DF = np.dot(self.Dmat, self.Fdmmat)
-            GtD = np.dot(self.Gmat.T, self.DF)
-            self.GGtD = np.dot(self.Gmat, GtD)
+
+            self.constructCompressionMatrix(compression, nfreqs=-1, ndmfreqs=-1)
+
+            self.Gr = np.dot(self.Hmat.T, self.residuals)
+            self.GGr = np.dot(self.Hmat, self.Gr)
+            self.GtF = np.dot(self.Hmat.T, self.Fmat)
+            #self.GGtF = np.dot(self.Hmat, self.GtF)
+
+            # For the DM stuff
+            GtD = np.dot(self.Hmat.T, self.DF)
+            self.GGtD = np.dot(self.Hmat, GtD)
 
             # DM + Red noise stuff (mark6 needs this)
             self.Emat = np.append(self.Fmat, self.DF, axis=1)
-            GtE = np.dot(self.Gmat.T, self.Emat)
-            self.GGtE = np.dot(self.Gmat, GtE)
+            GtE = np.dot(self.Hmat.T, self.Emat)
+            self.GGtE = np.dot(self.Hmat, GtE)
 
             # Initialise the single frequency with a frequency of 10 / yr
             self.frequencyLinesAdded = nSingleFreqs
@@ -1382,19 +1856,19 @@ class ptaPulsar(object):
             self.DSF = np.dot(self.Dmat, self.SFdmmat)
             self.DFF = np.append(self.DF, self.DSF, axis=1)
 
-            GtFF = np.dot(self.Gmat.T, self.FFmat)
-            #self.GGtFF = np.dot(self.Gmat, GtFF)
+            GtFF = np.dot(self.Hmat.T, self.FFmat)
+            #self.GGtFF = np.dot(self.Hmat, GtFF)
 
             self.EEmat = np.append(self.FFmat, self.DFF, axis=1)
-            GtEE = np.dot(self.Gmat.T, self.EEmat)
-            self.GGtEE = np.dot(self.Gmat, GtEE)
+            GtEE = np.dot(self.Hmat.T, self.EEmat)
+            self.GGtEE = np.dot(self.Hmat, GtEE)
 
             # For a two-component noise model, we need some more stuff done
             if twoComponent:
                 self.twoComponentNoise = True
 
                 # Diagonalise GtEfG
-                GtNeG = np.dot(self.Gmat.T, ((self.toaerrs**2) * self.Gmat.T).T)
+                GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
                 self.Wvec, self.Amat = sl.eigh(GtNeG)
 
                 self.AGr = np.dot(self.Amat.T, self.Gr)
@@ -1405,6 +1879,33 @@ class ptaPulsar(object):
 
                 self.AGE = np.dot(self.Amat.T, GtE)
                 self.AGEE = np.dot(self.Amat.T, GtEE)
+
+                # Diagonalise HotEfHo
+                if self.Homat.shape[1] > 0:
+                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+
+                    Hor = np.dot(self.Homat.T, self.residuals)
+                    HotF = np.dot(self.Homat.T, self.Fmat)
+                    HotFF = np.dot(self.Homat.T, self.FFmat)
+                    HotD = np.dot(self.Homat.T, self.DF)
+                    HotE = np.dot(self.Homat.T, self.Emat)
+                    HotEE = np.dot(self.Homat.T, self.EEmat)
+                    self.AoGr = np.dot(self.Aomat.T, Hor)
+                    self.AoGF = np.dot(self.Aomat.T, HotF)
+                    self.AoGFF = np.dot(self.Aomat.T, HotFF)
+                    self.AoGD = np.dot(self.Aomat.T, HotD)
+                    self.AoGE = np.dot(self.Aomat.T, HotE)
+                    self.AoGEE = np.dot(self.Aomat.T, HotEE)
+                else:
+                    self.Wovec = np.zeros(0)
+                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                    self.AoGF = np.zeros((0, self.GtF.shape[1]))
+                    self.AoGFF = np.zeros((0, GtFF.shape[1]))
+                    self.AoGD = np.zeros((0, GtD.shape[1]))
+                    self.AoGE = np.zeros((0, GtE.shape[1]))
+                    self.AoGEE = np.zeros((0, GtEE.shape[1]))
 
 
 
@@ -1434,7 +1935,7 @@ class ptaPulsar(object):
                 #       advanced indexing
                 self.lAGF = self.AGF[:,bf]
 
-                if not likfunc in ['mark2', 'mark3', 'mark3fa', 'mark4', 'mark7', 'mark9']:
+                if not likfunc in ['mark1', 'mark2', 'mark3', 'mark3fa', 'mark4', 'mark7', 'mark9']:
                     self.lAGE = np.append(self.AGE[:,bf], self.AGD[:,bfdm], axis=1)
 
                 if likfunc in ['mark9', 'mark10']:
@@ -1449,7 +1950,7 @@ class ptaPulsar(object):
                 self.lFmat = self.Fmat[:,bf]
                 #self.lGGtF = self.GGtF[:,bf]  # Not used
 
-                if not likfunc in ['mark2', 'mark3', 'mark3fa', 'mark4', 'mark7', 'mark9']:
+                if not likfunc in ['mark1', 'mark2', 'mark3', 'mark3fa', 'mark4', 'mark7', 'mark9']:
                     self.lEmat = np.append(self.Fmat[:,bf], self.DF[:,bfdm], axis=1)
                     #self.lGGtE = np.append(self.GGtF[:,bf], self.GGtD[:,bfdm], axis=1) # Not used
 
@@ -1487,9 +1988,14 @@ class ptaLikelihood(object):
     pamplitudeind = None
     initialised = False
     pardes = None
+    haveStochSources = False
+    haveDetSources = False
 
     # What likelihood function to use
     likfunc = 'mark3'
+
+    # Whether we evaluate the complement of the compressed likelihood
+    evallikcomp = False
 
     # Whether we use the option of forcing the frequency lines to be ordered in
     # the prior
@@ -1501,7 +2007,8 @@ class ptaLikelihood(object):
     npfdm = None    # Number of frequencies per pulsar (DM)
     npe = None      # Number of frequencies per pulsar (rn + DM)
     npobs = None    # Number of observations per pulsar
-    npgs = None     # Number of non-projected observations per pulsar (columns Gmat)
+    npgs = None     # Number of non-projected observations per pulsar (columns Hmat)
+    npgos = None    # Number of orthogonal non-projected observations per pulsar (columns Homat)
 
     # The Phi, Theta, and Sigma matrices
     Phi = None          # mark1, mark3, mark?, mark6
@@ -1520,6 +2027,10 @@ class ptaLikelihood(object):
     EGGNGGE = None      #                      mark6
     NGGF = None         #        mark3, mark?  mark6
 
+    # Whether we have already called the likelihood in one call, so we can skip
+    # some things in comploglikelihood
+    skipUpdateToggle = False
+
 
     def __init__(self, filename=None):
         self.ptapsrs = []
@@ -1534,6 +2045,9 @@ class ptaLikelihood(object):
         self.initialised = False
         self.likfunc = 'mark3'
         self.orderFrequencyLines = False
+        self.haveStochSources = False
+        self.haveDetSources = False
+        self.skipUpdateToggle = False
 
         if filename is not None:
             self.initFromFile(filename)
@@ -1656,7 +2170,7 @@ class ptaLikelihood(object):
         newsignal.bvary = np.array([True, True], dtype=np.bool)
         newsignal.npsrfreqindex = freqindex
 
-        # 1 = frequency, 1 = amplitude
+        # 0 = frequency, 1 = amplitude
         newsignal.pmin = np.array([-9.0, -18])
         newsignal.pmax = np.array([-5.0, -9.0])
         newsignal.pstart = np.array([-7, -10.0])
@@ -1757,7 +2271,7 @@ class ptaLikelihood(object):
             newsignal.ntotpars = len(newsignal.bvary)
 
             newsignal.pmin = np.array([-14.0, 0.02, 1.0e-11])
-            newsignal.pmax = np.array([5.0, 6.98, 3.0e-9])
+            newsignal.pmax = np.array([-6.5, 6.98, 3.0e-9])
             newsignal.pstart = np.array([-13.0, 2.01, 1.0e-10])
             newsignal.pwidth = np.array([0.1, 0.1, 5.0e-11])
 
@@ -1857,7 +2371,7 @@ class ptaLikelihood(object):
             newsignal.pstart = np.array([-14.0, 2.01, 1.0e-10])
             newsignal.pwidth = np.array([0.1, 0.1, 5.0e-11])
 
-        newsignal.corr = 'uniform'
+        newsignal.corr = 'dipole'
         newsignal.Tmax = Tmax
         newsignal.nindex = index
         newsignal.corrmat = dipolecorrmat(self.ptapsrs)
@@ -1961,10 +2475,39 @@ class ptaLikelihood(object):
         self.ptasignals.append(newsignal)
         """
 
+    def addSignalBWM(self, psrind, index):
+        newsignal = ptasignal()
+        newsignal.pulsarind = psrind
+
+        newsignal.stype = 'bwm'
+        newsignal.npars = 5
+        newsignal.ntotpars = 5
+        newsignal.bvary = np.array([True]*5, dtype=np.bool)
+
+        # Find out the maximum and minimum TOA
+        toamax = self.ptapsrs[0].toas[0]
+        toamin = self.ptapsrs[0].toas[0]
+        for psr in self.ptapsrs:
+            if toamax < np.max(psr.toas):
+                toamax = np.max(psr.toas)
+            if toamin > np.min(psr.toas):
+                toamin = np.min(psr.toas)
+
+        # 0 = burst TOA, 1 = amplitude, 2 = raj, 3 = decj, 4 = polarisation
+        newsignal.pmin = np.array([toamin, -18.0, 0.0, 0.0, 0.0])
+        newsignal.pmax = np.array([toamax, -10.0, 2*np.pi, np.pi, np.pi])
+        newsignal.pstart = np.array([0.5*(toamax-toamin), -15.0, 3.0, 1.0, 1.0])
+        newsignal.pwidth = np.array([30*24*3600.0, 0.1, 0.1, 0.1, 0.1])
+
+        newsignal.corr = 'gr'
+        newsignal.nindex = index
+        self.ptasignals.append(newsignal)
+
 
 
 
     # TODO: see if we can implement the RJMCMC for the Fourier modes
+    # TODO: these quantities should depend on the model, not the likelihood function
     def allocateAuxiliaries(self):
         # First figure out how large we have to make the arrays
         npsrs = len(self.ptapsrs)
@@ -1975,6 +2518,7 @@ class ptaLikelihood(object):
         self.npffdm = np.zeros(npsrs, dtype=np.int)
         self.npobs = np.zeros(npsrs, dtype=np.int)
         self.npgs = np.zeros(npsrs, dtype=np.int)
+        self.npgos = np.zeros(npsrs, dtype=np.int)
         for ii in range(npsrs):
             if not self.likfunc in ['mark2']:
                 self.npf[ii] = len(self.ptapsrs[ii].Ffreqs)
@@ -1986,7 +2530,7 @@ class ptaLikelihood(object):
             if self.likfunc in ['mark4', 'mark4ln']:
                 self.npu[ii] = len(self.ptapsrs[ii].avetoas)
 
-            if self.likfunc in ['mark6', 'mark6fa', 'mark8', 'mark10']:
+            if self.likfunc in ['mark1', 'mark6', 'mark6fa', 'mark8', 'mark10']:
                 self.npfdm[ii] = len(self.ptapsrs[ii].Fdmfreqs)
                 self.npffdm[ii] = len(self.ptapsrs[ii].Fdmfreqs)
 
@@ -1994,18 +2538,20 @@ class ptaLikelihood(object):
                 self.npffdm[ii] += len(self.ptapsrs[ii].SFdmfreqs)
 
             self.npobs[ii] = len(self.ptapsrs[ii].toas)
-            self.npgs[ii] = self.ptapsrs[ii].Gmat.shape[1]
+            self.npgs[ii] = self.ptapsrs[ii].Hmat.shape[1]
+            self.npgos[ii] = self.ptapsrs[ii].Homat.shape[1]
             self.ptapsrs[ii].Nvec = np.zeros(len(self.ptapsrs[ii].toas))
-            self.ptapsrs[ii].Nwvec = np.zeros(self.ptapsrs[ii].Gmat.shape[1])
+            self.ptapsrs[ii].Nwvec = np.zeros(self.ptapsrs[ii].Hmat.shape[1])
+            self.ptapsrs[ii].Nwovec = np.zeros(self.ptapsrs[ii].Homat.shape[1])
 
         if self.likfunc == 'mark1':
             self.Phi = np.zeros((np.sum(self.npf), np.sum(self.npf)))
             self.Thetavec = np.zeros(np.sum(self.npfdm))
             self.GNGldet = np.zeros(npsrs)
             self.rGr = np.zeros(npsrs)
-            self.rGFa = np.zeros(npsrs)
-            self.aFGFa = np.zeros(npsrs)
-            self.avec = np.zeros(np.sum(self.npf))
+
+            self.Gr = np.zeros(np.sum(self.npgs))
+            self.GCG = np.zeros((np.sum(self.npgs), np.sum(self.npgs)))
         elif self.likfunc == 'mark2':
             self.GNGldet = np.zeros(npsrs)
             self.rGr = np.zeros(npsrs)
@@ -2072,6 +2618,7 @@ class ptaLikelihood(object):
             incGWB=False, gwbModel='powerlaw', \
             incDipole=False, dipoleModel='powerlaw', \
             incAniGWB=False, anigwbModel='powerlaw', lAniGWB=1, \
+            incBWM=False, \
             varyEfac=False, incEquad=False, separateEfacs=False, \
             incCEquad=False, \
             incSingleFreqNoise=False, \
@@ -2083,6 +2630,8 @@ class ptaLikelihood(object):
             dmFrequencyLines=None, \
                                         # [0, 3, 2, ..., 4]
             orderFrequencyLines=False, \
+            compression = 'None', \
+            evalCompressionComplement = None, \
             likfunc='mark3'):
         # For every pulsar, construct the auxiliary quantities like the Fourier
         # design matrix etc
@@ -2095,8 +2644,10 @@ class ptaLikelihood(object):
         self.orderFrequencyLines = orderFrequencyLines
 
         for m2psr in self.ptapsrs:
-            Tstart = np.min([np.min(self.ptapsrs[0].toas), Tstart])
-            Tfinish = np.max([np.max(self.ptapsrs[0].toas), Tfinish])
+            Tstart = np.min([np.min(m2psr.toas), Tstart])
+            Tfinish = np.max([np.max(m2psr.toas), Tfinish])
+            #Tstart = np.min([np.min(self.ptapsrs[0].toas), Tstart])
+            #Tfinish = np.max([np.max(self.ptapsrs[0].toas), Tfinish])
 
         # After processing the parameters, store the number of single frequency lines
         psrSingleFreqNoiseModes = np.zeros(len(self.ptapsrs), dtype=np.int)
@@ -2109,8 +2660,8 @@ class ptaLikelihood(object):
             if incDM:
                 m2psr.addDMQuadratic()
 
-            if ndmfreqmodes is None:
-                ndmfreqmodes = nfreqmodes
+                if ndmfreqmodes is None:
+                    ndmfreqmodes = nfreqmodes
 
             nSingleFreqs = 0
             if incSingleFreqNoise:
@@ -2131,7 +2682,16 @@ class ptaLikelihood(object):
 
             m2psr.createAuxiliaries(Tmax, nfreqmodes, ndmfreqmodes, not separateEfacs, \
                             nSingleFreqs=nSingleFreqs, nSingleDMFreqs=nSingleDMFreqs, \
-                                    likfunc=likfunc)
+                                    likfunc=likfunc, compression=compression)
+
+            # If the compressionComplement is defined, overwrite the default
+            if compression == 'None':
+                self.evallikcomp = False
+            else:
+                self.evallikcomp = True
+
+            if evalCompressionComplement != None:
+                self.evallikcomp = evalCompressionComplement
 
             # When selecting Fourier modes, like in mark7/mark8, the binclude vector
             # indicates whether or not a frequency is included in the likelihood. By
@@ -2165,33 +2725,46 @@ class ptaLikelihood(object):
             if incRedNoise:
                 self.addSignalRedNoise(ii, index, Tmax, noiseModel, fc)
                 index += self.ptasignals[-1].npars
+                self.haveStochSources = True
 
             if incDM:
                 self.addSignalDMV(ii, index, Tmax, dmModel)
                 index += self.ptasignals[-1].npars
+                self.haveStochSources = True
 
             for jj in range(psrSingleFreqNoiseModes[ii]):
                 self.addSignalNoiseFrequencyLine(ii, index, jj)
                 index += self.ptasignals[-1].npars
+                self.haveStochSources = True
 
             for jj in range(psrSingleDMFreqNoiseModes[ii]):
                 self.addSignalDMFrequencyLine(ii, index, jj)
                 index += self.ptasignals[-1].npars
+                self.haveStochSources = True
 
         if incGWB:
             self.addSignalGWB(index, Tmax, gwbModel)
             index += self.ptasignals[-1].npars
+            self.haveStochSources = True
 
         if incClock:
-            self.addSignalGWB(index, Tmax, clockModel)
+            self.addSignalClock(index, Tmax, clockModel)
             index += self.ptasignals[-1].npars
+            self.haveStochSources = True
 
         if incDipole:
             self.addSignalDipole(index, Tmax, dipoleModel)
             index += self.ptasignals[-1].npars
+            self.haveStochSources = True
 
         if incAniGWB:
             self.addSignalAniGWB(index, Tmax, anigwbModel, lAniGWB)
+            index += self.ptasignals[-1].npars
+            self.haveStochSources = True
+
+        if incBWM:
+            self.addSignalBWM(-1, index)
+            self.haveDetSources = True
             index += self.ptasignals[-1].npars
 
 
@@ -2209,6 +2782,7 @@ class ptaLikelihood(object):
         self.allocateAuxiliaries()
         self.initPrior()
         self.pardes = self.getModelParameterList()
+
 
     def getModelParameterList(self):
         pardes = []
@@ -2260,7 +2834,14 @@ class ptaLikelihood(object):
                     flagname = 'powerlaw'
 
                     if jj < 3:
-                        flagvalue = ['RN-Amplitude', 'RN-spectral-index', 'low-frequency-cutoff'][jj]
+                        if sig.corr == 'gr':
+                            flagvalue = ['GWB-Amplitude', 'GWB-spectral-index', 'low-frequency-cutoff'][jj]
+                        elif sig.corr == 'uniform':
+                            flagvalue = ['CLK-Amplitude', 'CLK-spectral-index', 'low-frequency-cutoff'][jj]
+                        elif sig.corr == 'dipole':
+                            flagvalue = ['DIP-Amplitude', 'DIP-spectral-index', 'low-frequency-cutoff'][jj]
+                        else:
+                            flagvalue = ['RN-Amplitude', 'RN-spectral-index', 'low-frequency-cutoff'][jj]
                     else:
                         # Index counting same as above
                         clmind = jj - 3 + 1
@@ -2276,6 +2857,9 @@ class ptaLikelihood(object):
                 elif sig.stype == 'frequencyline':
                     flagname = 'frequencyline'
                     flagvalue = ['Line-Freq', 'Line-Ampl'][jj]
+                elif sig.stype == 'bwm':
+                    flagname = 'BurstWithMemory'
+                    flagvalue = ['burst-arrival', 'amplitude', 'raj', 'decj', 'polarisation'][jj]
                 else:
                     flagname = 'none'
                     flagvalue = 'none'
@@ -2428,56 +3012,66 @@ class ptaLikelihood(object):
     (based on efac/equad)
     For two-component noise model, fill the total weights vector
     """
-    def setPsrNoise(self, parameters):
+    def setPsrNoise(self, parameters, selection=None):
         # For every pulsar, set the noise vector to zero
         for m2psr in self.ptapsrs:
             if m2psr.twoComponentNoise:
                 m2psr.Nwvec[:] = 0
+                m2psr.Nwovec[:] = 0
             #else:
             m2psr.Nvec[:] = 0
+            m2psr.Qamp = 0
+
+        if selection is None:
+            selection = np.array([1]*len(self.ptasignals), dtype=np.bool)
 
         # Loop over all white noise signals, and fill the pulsar Nvec
-        for m2signal in self.ptasignals:
-            if m2signal.stype == 'efac':
-                if m2signal.npars == 1:
-                    pefac = parameters[m2signal.nindex]
-                else:
-                    pefac = m2signal.pstart[0]
+        for ss in range(len(self.ptasignals)):
+            m2signal = self.ptasignals[ss]
+            if selection[ss]:
+                if m2signal.stype == 'efac':
+                    if m2signal.npars == 1:
+                        pefac = parameters[m2signal.nindex]
+                    else:
+                        pefac = m2signal.pstart[0]
 
-                if self.ptapsrs[m2signal.pulsarind].twoComponentNoise:
-                    self.ptapsrs[m2signal.pulsarind].Nwvec += \
-                            self.ptapsrs[m2signal.pulsarind].Wvec * pefac**2
-                #else:
-                self.ptapsrs[m2signal.pulsarind].Nvec += m2signal.Nvec * pefac**2
+                    if self.ptapsrs[m2signal.pulsarind].twoComponentNoise:
+                        self.ptapsrs[m2signal.pulsarind].Nwvec += \
+                                self.ptapsrs[m2signal.pulsarind].Wvec * pefac**2
+                        self.ptapsrs[m2signal.pulsarind].Nwovec += \
+                                self.ptapsrs[m2signal.pulsarind].Wovec * pefac**2
+                    #else:
+                    self.ptapsrs[m2signal.pulsarind].Nvec += m2signal.Nvec * pefac**2
 
-                #if m2signal.bvary[0]:
-                #    pefac = parameters[m2signal.nindex]
-                #else:
-                #    pefac = parameters[m2signal.ntotindex]
-                #self.ptapsrs[m2signal.pulsarind].Nvec += m2signal.Nvec * pefac**2
-            elif m2signal.stype == 'equad':
-                if m2signal.npars == 1:
-                    pequadsqr = 10**(2*parameters[m2signal.nindex])
-                else:
-                    pequadsqr = 10**(2*m2signal.pstart[0])
+                    #if m2signal.bvary[0]:
+                    #    pefac = parameters[m2signal.nindex]
+                    #else:
+                    #    pefac = parameters[m2signal.ntotindex]
+                    #self.ptapsrs[m2signal.pulsarind].Nvec += m2signal.Nvec * pefac**2
+                elif m2signal.stype == 'equad':
+                    if m2signal.npars == 1:
+                        pequadsqr = 10**(2*parameters[m2signal.nindex])
+                    else:
+                        pequadsqr = 10**(2*m2signal.pstart[0])
 
-                if self.ptapsrs[m2signal.pulsarind].twoComponentNoise:
-                    self.ptapsrs[m2signal.pulsarind].Nwvec += pequadsqr
-                #else:
-                self.ptapsrs[m2signal.pulsarind].Nvec += m2signal.Nvec * pequadsqr
-            elif m2signal.stype == 'jitter':
-                if m2signal.npars == 1:
-                    pequadsqr = 10**(2*parameters[m2signal.nindex])
-                else:
-                    pequadsqr = 10**(2*m2signal.pstart[0])
+                    if self.ptapsrs[m2signal.pulsarind].twoComponentNoise:
+                        self.ptapsrs[m2signal.pulsarind].Nwvec += pequadsqr
+                        self.ptapsrs[m2signal.pulsarind].Nwovec += pequadsqr
+                    #else:
+                    self.ptapsrs[m2signal.pulsarind].Nvec += m2signal.Nvec * pequadsqr
+                elif m2signal.stype == 'jitter':
+                    if m2signal.npars == 1:
+                        pequadsqr = 10**(2*parameters[m2signal.nindex])
+                    else:
+                        pequadsqr = 10**(2*m2signal.pstart[0])
 
-                self.ptapsrs[m2signal.pulsarind].Qamp = pequadsqr
+                    self.ptapsrs[m2signal.pulsarind].Qamp = pequadsqr
 
-                #if m2signal.bvary[0]:
-                #    pequadsqr = 10**(2*parameters[m2signal.nindex])
-                #else:
-                #    pequadsqr = 10**(2*parameters[m2signal.ntotindex])
-                #self.ptapsrs[m2signal.pulsarind].Nvec += m2signal.Nvec * pequadsqr
+                    #if m2signal.bvary[0]:
+                    #    pequadsqr = 10**(2*parameters[m2signal.nindex])
+                    #else:
+                    #    pequadsqr = 10**(2*parameters[m2signal.ntotindex])
+                    #self.ptapsrs[m2signal.pulsarind].Nvec += m2signal.Nvec * pequadsqr
 
 
     """
@@ -2663,6 +3257,7 @@ class ptaLikelihood(object):
 
                         # Fill the Theta matrix
                         self.Thetavec[findex:findex+2*nfreq] += pcdoubled
+
                 elif m2signal.stype == 'frequencyline':
                     # For a frequency line, the FFmatrix is assumed to be set elsewhere
                     findex = np.sum(self.npff[:m2signal.pulsarind]) + \
@@ -2679,6 +3274,37 @@ class ptaLikelihood(object):
 
                     pcdoubled = np.array([sparameters[1], sparameters[1]])
                     self.Thetavec[findex:findex+2] += 10**pcdoubled
+
+    """
+    Update the deterministic signals for the new values of the parameters. This
+    updated signal is used in the likelihood functions
+    """
+    def updateDetSources(self, parameters, selection=None):
+        npsrs = len(self.ptapsrs)
+
+        if selection is None:
+            selection = np.array([1]*len(self.ptasignals), dtype=np.bool)
+
+        # Loop over all signals, and construct the deterministic signals
+        for ss in range(len(self.ptasignals)):
+            m2signal = self.ptasignals[ss]
+            if selection[ss]:
+                # Create a parameters array for this particular signal
+                sparameters = m2signal.pstart.copy()
+                sparameters[m2signal.bvary] = \
+                        parameters[m2signal.nindex:m2signal.nindex+m2signal.npars]
+                if m2signal.stype == 'bwm':
+                    for pp in range(len(self.ptapsrs)):
+                        if m2signal.pulsarind == pp or m2signal.pulsarind == -1:
+                            bwmsig = bwmsignal(sparameters, \
+                                    self.ptapsrs[pp].raj, self.ptapsrs[pp].decj, \
+                                    self.ptapsrs[pp].toas)
+
+                            self.ptapsrs[pp].detresiduals = self.ptapsrs[pp].residuals - bwmsig
+
+                            if self.ptapsrs[pp].twoComponentNoise:
+                                Gr = np.dot(self.ptapsrs[pp].Hmat.T, self.ptapsrs[pp].detresiduals)
+                                self.ptapsrs[pp].AGr = np.dot(self.ptapsrs[pp].Amat.T, Gr)
 
 
 
@@ -2938,20 +3564,22 @@ class ptaLikelihood(object):
                 else:
                     m2psr.SFmat = singleFreqFourierModes(m2psr.toas, 10**m2psr.SFfreqs[::2])
                     m2psr.FFmat = np.append(m2psr.Fmat, m2psr.SFmat, axis=1)
-                    #GtSF = np.dot(m2psr.Gmat.T, m2psr.SFmat)
-                    #GGtSF = np.dot(m2psr.Gmat, GtSF)
+                    #GtSF = np.dot(m2psr.Hmat.T, m2psr.SFmat)
+                    #GGtSF = np.dot(m2psr.Hmat, GtSF)
                     #m2psr.GGtFF = np.append(m2psr.GGtF, GGtSF, axis=1)
-                    #m2psr.GGtFF = np.dot(m2psr.Gmat, GtFF)
+                    #m2psr.GGtFF = np.dot(m2psr.Hmat, GtFF)
 
+                    """
                     if m2psr.twoComponentNoise:
-                        #GtSF = np.dot(m2psr.Gmat.T, m2psr.SFmat)
+                        #GtSF = np.dot(m2psr.Hmat.T, m2psr.SFmat)
                         AGSF = np.dot(m2psr.AG, m2psr.SFmat)
                         m2psr.AGFF = np.append(m2psr.AGF, AGSF, axis=1)
 
-                        #GtFF = np.dot(m2psr.Gmat.T, m2psr.FFmat)
+                        #GtFF = np.dot(m2psr.Hmat.T, m2psr.FFmat)
                         #GtFF = np.append(m2psr.GtF, GtSF, axis=1)
 
                         #m2psr.AGFF = np.dot(m2psr.Amat.T, GtFF)
+                    """
 
             if m2psr.dmfrequencyLinesAdded > 0:
                 m2psr.SFdmmat = singleFreqFourierModes(m2psr.toas, 10**m2psr.SFdmfreqs[::2])
@@ -2959,8 +3587,8 @@ class ptaLikelihood(object):
                 m2psr.DFF = np.append(m2psr.DF, m2psr.DSF, axis=1)
 
                 m2psr.EEmat = np.append(m2psr.FFmat, m2psr.DF, axis=1)
-                GtEE = np.dot(m2psr.Gmat.T, m2psr.EEmat)
-                m2psr.GGtEE = np.dot(m2psr.Gmat, GtEE)
+                GtEE = np.dot(m2psr.Hmat.T, m2psr.EEmat)
+                m2psr.GGtEE = np.dot(m2psr.Hmat, GtEE)
 
                 if m2psr.twoComponentNoise:
                     m2psr.AGFF = np.dot(m2psr.Amat.T, GtFF)
@@ -2968,18 +3596,64 @@ class ptaLikelihood(object):
                     if self.likfunc in ['mark6', 'mark6fa', 'mark8', 'mark10']:
                         m2psr.AGEE = np.dot(m2psr.Amat.T, GtEE)
 
+    """
+    Complement loglikelihood. This is not really the full log-likelihood by itself.
+    It is the part of the log-likelihood that is complementary to the compressed
+    log-likelihood. This way, we can still do data compression and evidence
+    calculation simultaneously
+
+    This function is basically equal to mark2loglikelihood, but now for the
+    complement
+    """
+    def comploglikelihood(self, parameters):
+        npsrs = len(self.ptapsrs)
+
+        # MARK A
+
+        # If this is already evaluated in the likelihood, do not do it here
+        if not self.skipUpdateToggle:
+            self.setPsrNoise(parameters)
+
+            if self.haveDetSources:
+                self.updateDetSources(parameters)
+
+        # MARK C
+
+        # Armed with the Noise (and it's inverse), we'll construct the
+        # auxiliaries for all pulsars
+        for ii in range(npsrs):
+            if self.ptapsrs[ii].twoComponentNoise:
+                self.rGr[ii] = np.sum(self.ptapsrs[ii].AoGr ** 2 / self.ptapsrs[ii].Nwovec)
+                self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nwovec))
+            else:
+                Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
+                NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Hocmat.T).T
+                GcNiGc = np.dot(self.ptapsrs[ii].Hocmat.T, NiGc)
+                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].detresiduals)
+
+                try:
+                    cf = sl.cho_factor(GcNiGc)
+                    self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nvec)) + \
+                            2*np.sum(np.log(np.diag(cf[0])))
+                    GcNiGcr = sl.cho_solve(cf, GcNir)
+                except np.linalg.LinAlgError:
+                    print "comploglikelihood: GcNiGc singular"
+
+                self.rGr[ii] = np.dot(self.ptapsrs[ii].detresiduals, Nir) \
+                        - np.dot(GcNir, GcNiGcr)
+
+        # Now we are ready to return the log-likelihood
+        return -0.5*np.sum(self.npgos)*np.log(2*np.pi) \
+                -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet)
+
+
 
     """
     mark1 loglikelihood of the pta model/likelihood implementation
 
-    This likelihood is similar to mark3, but it uses the frequency coefficients
-    explicitly in the likelihood. Mark3 marginalises over them analytically.
-    Therefore, this mark1 version requires some extra parameters in the model,
-    all part of an extra auxiliary 'signal'.
-    
-    TODO: (Including DM variations not yet implemented)
+    This is the full likelihood, without any Woodbury expansions. Seems to be
+    slower than the woodbury one, even with equal dimensionality and compression
 
-    DEPRECATED!!
     """
     def mark1loglikelihood(self, parameters):
         npsrs = len(self.ptapsrs)
@@ -2988,48 +3662,78 @@ class ptaLikelihood(object):
 
         self.constructPhiAndTheta(parameters)
 
-        # Loop over all white noise signals, and fill the pulsar Nvec, and the
-        # Fourier coefficients
-        for m2signal in self.ptasignals:
-            if m2signal.stype == 'fouriercoeff':
-                findex = np.sum(self.npf[:m2signal.pulsarind])
-                nfour = self.npf[m2signal.pulsarind]
-                if nfour != m2signal.npars:
-                    raise ValueError('ERROR: len(nfour) not correct')
-                self.avec[findex:findex+nfour] = parameters[m2signal.nindex:m2signal.nindex+m2signal.npars]
+        if self.haveDetSources:
+            self.updateDetSources(parameters)
 
+        # MARK A
 
         # Armed with the Noise (and it's inverse), we'll construct the
         # auxiliaries for all pulsars
+        GtFtot = []
+        GtDtot = []
+        self.GCG[:] = 0
         for ii in range(npsrs):
-            findex = np.sum(self.npf[:ii])
-            nfreq = int(self.npf[ii]/2)
+            gindex = np.sum(self.npgs[:ii])
+            ng = self.npgs[ii]
 
-            # Fill the auxiliaries
-            nobs = len(self.ptapsrs[ii].toas)
-            ng = self.ptapsrs[ii].Gmat.shape[1]
-            self.rGr[ii] = np.sum(self.ptapsrs[ii].GGr ** 2 / self.ptapsrs[ii].Nvec)
+            # Two-component noise or not does not matter
+            self.GCG[gindex:gindex+ng, gindex:gindex+ng] = \
+                    np.dot(self.ptapsrs[ii].Hmat.T, (self.ptapsrs[ii].Nvec * self.ptapsrs[ii].Hmat.T).T)
 
-            GGtFa = np.dot(self.ptapsrs[ii].GGtF, self.avec[findex:findex+2*nfreq])
-            self.rGFa[ii] = np.sum(self.ptapsrs[ii].GGr * GGtFa / self.ptapsrs[ii].Nvec)
-            self.aFGFa[ii] = np.sum(GGtFa**2 / self.ptapsrs[ii].Nvec)
-            self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nvec)) * ng / nobs
-        
+            # Create the total GtF and GtD lists for addition of Red(DM) noise
+            GtFtot.append(self.ptapsrs[ii].GtF)
+            GtDtot.append(self.ptapsrs[ii].GtD)
 
-        # Now that all arrays are filled, we can proceed to do some linear
-        # algebra. First we'll invert Phi. For a single pulsar, this will be
-        # diagonal
+            self.Gr[gindex:gindex+ng] = np.dot(self.ptapsrs[ii].Hmat.T, self.ptapsrs[ii].detresiduals)
+
+        # MARK B
+
+        # Create the total GCG matrix (only works with Phi for now)
+        # TODO: include Theta for DM
+        GtF = sl.block_diag(*GtFtot)
+        # MARK C
+
+        self.GCG += blockmul(self.Phi, GtF.T, self.npf, self.npgs)
+
+        """
+        # This is much much slower than the block multiplication
         if npsrs == 1:
-            PhiLD = np.sum(np.log(np.diag(self.Phi)))
-            aPhia = np.sum(self.avec * self.avec / np.diag(self.Phi))
+            self.GCG += np.dot(GtF, (np.diag(self.Phi) * GtF).T)
         else:
-            cf = sl.cho_factor(self.Phi)
-            PhiLD = 2*np.sum(np.log(np.diag(cf[0])))
-            aPhia = np.dot(self.avec, sl.cho_solve(cf, self.avec))
+            self.GCG += np.dot(GtF, np.dot(self.Phi, GtF.T))
+        """
 
-        # Now we are ready to return the log-likelihood
-        return -0.5*np.sum(self.rGr) - 0.5*np.sum(self.aFGFa) + np.sum(self.rGFa) \
-               -0.5*np.sum(self.GNGldet) - 0.5*aPhia - 0.5*PhiLD
+        # Mark D
+
+
+        GtD = sl.block_diag(*GtDtot)
+
+        # MARK E
+
+        # Do not directly multiply. Use block multiplication.
+        # TODO: For even more speed, these two could be combined
+        #self.GCG += np.dot(GtD, (self.Thetavec * GtD).T)
+        self.GCG += blockmul(np.diag(self.Thetavec), GtD.T, self.npfdm, self.npgs)
+
+        # MARK F
+
+        # Do the inversion
+        try:
+            cf = sl.cho_factor(self.GCG)
+            GNGldet = 2*np.sum(np.log(np.diag(cf[0])))
+            xi2 = np.dot(self.Gr, sl.cho_solve(cf, self.Gr))
+        except np.linalg.LinAlgError as err:
+            U, s, Vh = sl.svd(self.GCG)
+            if not np.all(s > 0):
+                raise ValueError("ERROR: GCG singular according to SVD")
+            GNGldet = np.sum(np.log(s))
+            xi2 = np.dot(self.Gr, np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, self.Gr))))
+            # print "  -- msg: ", err.message
+
+        # MARK G
+
+        return -0.5 * np.sum(self.npgs)*np.log(2*np.pi) \
+                -0.5 * xi2 - 0.5 * GNGldet
 
 
 
@@ -3045,23 +3749,23 @@ class ptaLikelihood(object):
 
         self.setPsrNoise(parameters)
 
+        if self.haveDetSources:
+            self.updateDetSources(parameters)
+
         # MARK C
 
         # Armed with the Noise (and it's inverse), we'll construct the
         # auxiliaries for all pulsars
         for ii in range(npsrs):
-            findex = np.sum(self.npf[:ii])
-            nfreq = int(self.npf[ii]/2)
-
             if self.ptapsrs[ii].twoComponentNoise:
                 # This is equivalent to np.dot(np.diag(1.0/Nwvec, AGF))
                 self.rGr[ii] = np.sum(self.ptapsrs[ii].AGr ** 2 / self.ptapsrs[ii].Nwvec)
                 self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nwvec))
             else:
-                Nir = self.ptapsrs[ii].residuals / self.ptapsrs[ii].Nvec
-                NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Gcmat.T).T
-                GcNiGc = np.dot(self.ptapsrs[ii].Gcmat.T, NiGc)
-                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].residuals)
+                Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
+                NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Hcmat.T).T
+                GcNiGc = np.dot(self.ptapsrs[ii].Hcmat.T, NiGc)
+                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].detresiduals)
 
                 try:
                     cf = sl.cho_factor(GcNiGc)
@@ -3071,7 +3775,7 @@ class ptaLikelihood(object):
                 except np.linalg.LinAlgError:
                     print "MAJOR ERROR"
 
-                self.rGr[ii] = np.dot(self.ptapsrs[ii].residuals, Nir) \
+                self.rGr[ii] = np.dot(self.ptapsrs[ii].detresiduals, Nir) \
                         - np.dot(GcNir, GcNiGcr)
 
         # Now we are ready to return the log-likelihood
@@ -3112,12 +3816,15 @@ class ptaLikelihood(object):
 
         # MARK A
 
-
         self.setPsrNoise(parameters)
 
         # MARK B
 
         self.constructPhiAndTheta(parameters)
+
+        # MARK ??
+        if self.haveDetSources:
+            self.updateDetSources(parameters)
 
         # MARK C
 
@@ -3136,11 +3843,11 @@ class ptaLikelihood(object):
                 self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nwvec))
                 self.FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].AGF.T, NGGF)
             else:
-                Nir = self.ptapsrs[ii].residuals / self.ptapsrs[ii].Nvec
-                NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Gcmat.T).T
-                GcNiGc = np.dot(self.ptapsrs[ii].Gcmat.T, NiGc)
+                Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
+                NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Hcmat.T).T
+                GcNiGc = np.dot(self.ptapsrs[ii].Hcmat.T, NiGc)
                 NiF = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Fmat.T).T
-                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].residuals)
+                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].detresiduals)
                 GcNiF = np.dot(NiGc.T, self.ptapsrs[ii].Fmat)
 
                 try:
@@ -3152,9 +3859,9 @@ class ptaLikelihood(object):
                 except np.linalg.LinAlgError:
                     print "MAJOR ERROR"
 
-                self.rGr[ii] = np.dot(self.ptapsrs[ii].residuals, Nir) \
+                self.rGr[ii] = np.dot(self.ptapsrs[ii].detresiduals, Nir) \
                         - np.dot(GcNir, GcNiGcr)
-                self.rGF[findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].residuals, NiF) \
+                self.rGF[findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].detresiduals, NiF) \
                         - np.dot(GcNir, GcNiGcF)
                 self.FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = \
                         np.dot(NiF.T, self.ptapsrs[ii].Fmat) - np.dot(GcNiF.T, GcNiGcF)
@@ -3223,6 +3930,9 @@ class ptaLikelihood(object):
 
         self.constructPhiAndTheta(parameters)
 
+        if self.haveDetSources:
+            self.updateDetSources(parameters)
+
         # MARK C
 
         # Armed with the Noise (and it's inverse), we'll construct the
@@ -3240,11 +3950,11 @@ class ptaLikelihood(object):
                 self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nwvec))
                 self.FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].AGF.T, NGGF)
             else:
-                Nir = self.ptapsrs[ii].residuals / self.ptapsrs[ii].Nvec
-                NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Gcmat.T).T
-                GcNiGc = np.dot(self.ptapsrs[ii].Gcmat.T, NiGc)
+                Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
+                NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Hcmat.T).T
+                GcNiGc = np.dot(self.ptapsrs[ii].Hcmat.T, NiGc)
                 NiF = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Fmat.T).T
-                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].residuals)
+                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].detresiduals)
                 GcNiF = np.dot(NiGc.T, self.ptapsrs[ii].Fmat)
 
                 try:
@@ -3256,9 +3966,9 @@ class ptaLikelihood(object):
                 except np.linalg.LinAlgError:
                     print "MAJOR ERROR"
 
-                self.rGr[ii] = np.dot(self.ptapsrs[ii].residuals, Nir) \
+                self.rGr[ii] = np.dot(self.ptapsrs[ii].detresiduals, Nir) \
                         - np.dot(GcNir, GcNiGcr)
-                self.rGF[findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].residuals, NiF) \
+                self.rGF[findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].detresiduals, NiF) \
                         - np.dot(GcNir, GcNiGcF)
                 self.FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = \
                         np.dot(NiF.T, self.ptapsrs[ii].Fmat) - np.dot(GcNiF.T, GcNiGcF)
@@ -3323,6 +4033,8 @@ class ptaLikelihood(object):
 
 
 
+
+
     """
     mark4 loglikelihood of the pta model/likelihood implementation
 
@@ -3339,6 +4051,9 @@ class ptaLikelihood(object):
         # MARK B
 
         self.constructPhiAndTheta(parameters)
+
+        if self.haveDetSources:
+            self.updateDetSources(parameters)
 
         # MARK C
 
@@ -3359,11 +4074,11 @@ class ptaLikelihood(object):
                 self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nwvec))
                 self.UGGNGGU[uindex:uindex+nus, uindex:uindex+nus] = np.dot(self.ptapsrs[ii].AGU.T, NGGU)
             else:
-                Nir = self.ptapsrs[ii].residuals / self.ptapsrs[ii].Nvec
-                NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Gcmat.T).T
-                GcNiGc = np.dot(self.ptapsrs[ii].Gcmat.T, NiGc)
+                Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
+                NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Hcmat.T).T
+                GcNiGc = np.dot(self.ptapsrs[ii].Hcmat.T, NiGc)
                 NiU = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].U.T).T
-                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].residuals)
+                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].detresiduals)
                 GcNiU = np.dot(NiGc.T, self.ptapsrs[ii].Umat)
 
                 try:
@@ -3375,9 +4090,9 @@ class ptaLikelihood(object):
                 except np.linalg.LinAlgError:
                     print "MAJOR ERROR"
 
-                self.rGr[ii] = np.dot(self.ptapsrs[ii].residuals, Nir) \
+                self.rGr[ii] = np.dot(self.ptapsrs[ii].detresiduals, Nir) \
                         - np.dot(GcNir, GcNiGcr)
-                self.rGU[uindex:uindex+nus] = np.dot(self.ptapsrs[ii].residuals, NiU) \
+                self.rGU[uindex:uindex+nus] = np.dot(self.ptapsrs[ii].detresiduals, NiU) \
                         - np.dot(GcNir, GcNiGcU)
                 self.UGGNGGU[uindex:uindex+nus, uindex:uindex+nus] = \
                         np.dot(NiU.T, self.ptapsrs[ii].U) - np.dot(GcNiU.T, GcNiGcU)
@@ -3471,6 +4186,9 @@ class ptaLikelihood(object):
 
         self.constructPhiAndTheta(parameters)
 
+        if self.haveDetSources:
+            self.updateDetSources(parameters)
+
         # MARK C
 
         # Armed with the Noise (and it's inverse), we'll construct the
@@ -3488,11 +4206,11 @@ class ptaLikelihood(object):
                 self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nwvec))
                 self.UGGNGGU[uindex:uindex+nus, uindex:uindex+nus] = np.dot(self.ptapsrs[ii].AGU.T, NGGU)
             else:
-                Nir = self.ptapsrs[ii].residuals / self.ptapsrs[ii].Nvec
-                NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Gcmat.T).T
-                GcNiGc = np.dot(self.ptapsrs[ii].Gcmat.T, NiGc)
+                Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
+                NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Hcmat.T).T
+                GcNiGc = np.dot(self.ptapsrs[ii].Hcmat.T, NiGc)
                 NiU = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].U.T).T
-                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].residuals)
+                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].detresiduals)
                 GcNiU = np.dot(NiGc.T, self.ptapsrs[ii].Umat)
 
                 try:
@@ -3504,9 +4222,9 @@ class ptaLikelihood(object):
                 except np.linalg.LinAlgError:
                     print "MAJOR ERROR"
 
-                self.rGr[ii] = np.dot(self.ptapsrs[ii].residuals, Nir) \
+                self.rGr[ii] = np.dot(self.ptapsrs[ii].detresiduals, Nir) \
                         - np.dot(GcNir, GcNiGcr)
-                self.rGU[uindex:uindex+nus] = np.dot(self.ptapsrs[ii].residuals, NiU) \
+                self.rGU[uindex:uindex+nus] = np.dot(self.ptapsrs[ii].detresiduals, NiU) \
                         - np.dot(GcNir, GcNiGcU)
                 self.UGGNGGU[uindex:uindex+nus, uindex:uindex+nus] = \
                         np.dot(NiU.T, self.ptapsrs[ii].U) - np.dot(GcNiU.T, GcNiGcU)
@@ -3597,6 +4315,9 @@ class ptaLikelihood(object):
         # The white noise
         self.setPsrNoise(parameters)
 
+        if self.haveDetSources:
+            self.updateDetSources(parameters)
+
         # Armed with the Noise (and it's inverse), we'll construct the
         # auxiliaries for all pulsars
         for ii in range(npsrs):
@@ -3613,11 +4334,11 @@ class ptaLikelihood(object):
                 self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nwvec))
                 self.EGGNGGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm, findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].AGE.T, NGGE)
             else:
-                Nir = self.ptapsrs[ii].residuals / self.ptapsrs[ii].Nvec
-                NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Gcmat.T).T
-                GcNiGc = np.dot(self.ptapsrs[ii].Gcmat.T, NiGc)
+                Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
+                NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Hcmat.T).T
+                GcNiGc = np.dot(self.ptapsrs[ii].Hcmat.T, NiGc)
                 NiE = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Emat.T).T
-                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].residuals)
+                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].detresiduals)
                 GcNiE = np.dot(NiGc.T, self.ptapsrs[ii].Emat)
 
                 try:
@@ -3629,9 +4350,9 @@ class ptaLikelihood(object):
                 except np.linalg.LinAlgError:
                     print "MAJOR ERROR"
 
-                self.rGr[ii] = np.dot(self.ptapsrs[ii].residuals, Nir) \
+                self.rGr[ii] = np.dot(self.ptapsrs[ii].detresiduals, Nir) \
                         - np.dot(GcNir, GcNiGcr)
-                self.rGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].residuals, NiE) \
+                self.rGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].detresiduals, NiE) \
                         - np.dot(GcNir, GcNiGcE)
                 self.EGGNGGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm, findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = \
                         np.dot(NiE.T, self.ptapsrs[ii].Emat) - np.dot(GcNiE.T, GcNiGcE)
@@ -3679,7 +4400,7 @@ class ptaLikelihood(object):
                     np.diag(1.0 / self.Thetavec[np.sum(self.npfdm[:ii]):np.sum(self.npfdm[:ii+1])])
 
             # Include the cross terms of Phi in Sigma.
-            for jj in range(ii, npsrs):
+            for jj in range(ii+1, npsrs):
                 inda2 = np.sum(self.npf[:jj])+np.sum(self.npfdm[:jj])
                 indaph2 = np.sum(self.npf[:jj])
                 indb2 = np.sum(self.npf[:jj+1])+np.sum(self.npfdm[:jj])
@@ -3710,6 +4431,7 @@ class ptaLikelihood(object):
             SigmaLD = np.sum(np.log(s))
             rGSigmaGr = np.dot(self.rGE, np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, self.rGE))))
 
+
         # Now we are ready to return the log-likelihood
         return -0.5*np.sum(self.npgs)*np.log(2*np.pi) \
                 -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) \
@@ -3732,6 +4454,9 @@ class ptaLikelihood(object):
         # The white noise
         self.setPsrNoise(parameters)
 
+        if self.haveDetSources:
+            self.updateDetSources(parameters)
+
         # Armed with the Noise (and it's inverse), we'll construct the
         # auxiliaries for all pulsars
         for ii in range(npsrs):
@@ -3748,11 +4473,11 @@ class ptaLikelihood(object):
                 self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nwvec))
                 self.EGGNGGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm, findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].AGE.T, NGGE)
             else:
-                Nir = self.ptapsrs[ii].residuals / self.ptapsrs[ii].Nvec
-                NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Gcmat.T).T
-                GcNiGc = np.dot(self.ptapsrs[ii].Gcmat.T, NiGc)
+                Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
+                NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Hcmat.T).T
+                GcNiGc = np.dot(self.ptapsrs[ii].Hcmat.T, NiGc)
                 NiE = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Emat.T).T
-                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].residuals)
+                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].detresiduals)
                 GcNiE = np.dot(NiGc.T, self.ptapsrs[ii].Emat)
 
                 try:
@@ -3764,9 +4489,9 @@ class ptaLikelihood(object):
                 except np.linalg.LinAlgError:
                     print "MAJOR ERROR"
 
-                self.rGr[ii] = np.dot(self.ptapsrs[ii].residuals, Nir) \
+                self.rGr[ii] = np.dot(self.ptapsrs[ii].detresiduals, Nir) \
                         - np.dot(GcNir, GcNiGcr)
-                self.rGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].residuals, NiE) \
+                self.rGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].detresiduals, NiE) \
                         - np.dot(GcNir, GcNiGcE)
                 self.EGGNGGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm, findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = \
                         np.dot(NiE.T, self.ptapsrs[ii].Emat) - np.dot(GcNiE.T, GcNiGcE)
@@ -3870,6 +4595,9 @@ class ptaLikelihood(object):
         # The white noise
         self.setPsrNoise(parameters)
 
+        if self.haveDetSources:
+            self.updateDetSources(parameters)
+
         # If the included frequencies are passed by numbers -- not indicator
         # functions --, then obtain the indicators from the numbers
         if psrnfinc != None and psrnfdminc != None:
@@ -3904,11 +4632,11 @@ class ptaLikelihood(object):
                 self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nwvec))
                 self.FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].lAGF.T, NGGF)
             else:
-                Nir = self.ptapsrs[ii].residuals / self.ptapsrs[ii].Nvec
-                NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Gcmat.T).T
-                GcNiGc = np.dot(self.ptapsrs[ii].Gcmat.T, NiGc)
+                Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
+                NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Hcmat.T).T
+                GcNiGc = np.dot(self.ptapsrs[ii].Hcmat.T, NiGc)
                 NiF = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].lFmat.T).T
-                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].residuals)
+                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].detresiduals)
                 GcNiF = np.dot(NiGc.T, self.ptapsrs[ii].lFmat)
 
                 try:
@@ -3920,9 +4648,9 @@ class ptaLikelihood(object):
                 except np.linalg.LinAlgError:
                     print "MAJOR ERROR"
 
-                self.rGr[ii] = np.dot(self.ptapsrs[ii].residuals, Nir) \
+                self.rGr[ii] = np.dot(self.ptapsrs[ii].detresiduals, Nir) \
                         - np.dot(GcNir, GcNiGcr)
-                self.rGF[findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].residuals, NiF) \
+                self.rGF[findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].detresiduals, NiF) \
                         - np.dot(GcNir, GcNiGcF)
                 self.FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = \
                         np.dot(NiF.T, self.ptapsrs[ii].lFmat) - np.dot(GcNiF.T, GcNiGcF)
@@ -4021,6 +4749,9 @@ class ptaLikelihood(object):
         # The red signals
         self.constructPhiAndTheta(parameters)
 
+        if self.haveDetSources:
+            self.updateDetSources(parameters)
+
         # MARK C
 
         # If the included frequencies are passed by numbers -- not indicator
@@ -4064,11 +4795,11 @@ class ptaLikelihood(object):
                 self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nwvec))
                 self.EGGNGGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm, findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].lAGE.T, NGGE)
             else:
-                Nir = self.ptapsrs[ii].residuals / self.ptapsrs[ii].Nvec
-                NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Gcmat.T).T
-                GcNiGc = np.dot(self.ptapsrs[ii].Gcmat.T, NiGc)
+                Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
+                NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Hcmat.T).T
+                GcNiGc = np.dot(self.ptapsrs[ii].Hcmat.T, NiGc)
                 NiE = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].lEmat.T).T
-                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].residuals)
+                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].detresiduals)
                 GcNiE = np.dot(NiGc.T, self.ptapsrs[ii].lEmat)
 
                 try:
@@ -4080,9 +4811,9 @@ class ptaLikelihood(object):
                 except np.linalg.LinAlgError:
                     print "MAJOR ERROR"
 
-                self.rGr[ii] = np.dot(self.ptapsrs[ii].residuals, Nir) \
+                self.rGr[ii] = np.dot(self.ptapsrs[ii].detresiduals, Nir) \
                         - np.dot(GcNir, GcNiGcr)
-                self.rGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].residuals, NiE) \
+                self.rGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].detresiduals, NiE) \
                         - np.dot(GcNir, GcNiGcE)
                 self.EGGNGGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm, findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = \
                         np.dot(NiE.T, self.ptapsrs[ii].lEmat) - np.dot(GcNiE.T, GcNiGcE)
@@ -4111,6 +4842,7 @@ class ptaLikelihood(object):
                 print "Fallback to SVD for Phi"
 
         # MARK G
+        print "WARNING: mark8loglikelihood not yet fixed for more than one pulsar"
 
         ThetaLD = np.sum(np.log(lThetavec))
 
@@ -4159,6 +4891,9 @@ class ptaLikelihood(object):
 
         self.constructPhiAndTheta(parameters)
 
+        if self.haveDetSources:
+            self.updateDetSources(parameters)
+
         # MARK C
 
         # Armed with the Noise (and it's inverse), we'll construct the
@@ -4176,11 +4911,11 @@ class ptaLikelihood(object):
                 self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nwvec))
                 self.FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].AGFF.T, NGGF)
             else:
-                Nir = self.ptapsrs[ii].residuals / self.ptapsrs[ii].Nvec
-                NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Gcmat.T).T
-                GcNiGc = np.dot(self.ptapsrs[ii].Gcmat.T, NiGc)
+                Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
+                NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Hcmat.T).T
+                GcNiGc = np.dot(self.ptapsrs[ii].Hcmat.T, NiGc)
                 NiF = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].FFmat.T).T
-                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].residuals)
+                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].detresiduals)
                 GcNiF = np.dot(NiGc.T, self.ptapsrs[ii].FFmat)
 
                 try:
@@ -4192,9 +4927,9 @@ class ptaLikelihood(object):
                 except np.linalg.LinAlgError:
                     print "MAJOR ERROR"
 
-                self.rGr[ii] = np.dot(self.ptapsrs[ii].residuals, Nir) \
+                self.rGr[ii] = np.dot(self.ptapsrs[ii].detresiduals, Nir) \
                         - np.dot(GcNir, GcNiGcr)
-                self.rGF[findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].residuals, NiF) \
+                self.rGF[findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].detresiduals, NiF) \
                         - np.dot(GcNir, GcNiGcF)
                 self.FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = \
                         np.dot(NiF.T, self.ptapsrs[ii].FFmat) - np.dot(GcNiF.T, GcNiGcF)
@@ -4260,6 +4995,9 @@ class ptaLikelihood(object):
         # The white noise
         self.setPsrNoise(parameters)
 
+        if self.haveDetSources:
+            self.updateDetSources(parameters)
+
         # Armed with the Noise (and it's inverse), we'll construct the
         # auxiliaries for all pulsars
         for ii in range(npsrs):
@@ -4276,11 +5014,11 @@ class ptaLikelihood(object):
                 self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nwvec))
                 self.EGGNGGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm, findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].AGE.T, NGGE)
             else:
-                Nir = self.ptapsrs[ii].residuals / self.ptapsrs[ii].Nvec
-                NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Gcmat.T).T
-                GcNiGc = np.dot(self.ptapsrs[ii].Gcmat.T, NiGc)
+                Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
+                NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Hcmat.T).T
+                GcNiGc = np.dot(self.ptapsrs[ii].Hcmat.T, NiGc)
                 NiE = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Emat.T).T
-                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].residuals)
+                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].detresiduals)
                 GcNiE = np.dot(NiGc.T, self.ptapsrs[ii].Emat)
 
                 try:
@@ -4292,9 +5030,9 @@ class ptaLikelihood(object):
                 except np.linalg.LinAlgError:
                     print "MAJOR ERROR"
 
-                self.rGr[ii] = np.dot(self.ptapsrs[ii].residuals, Nir) \
+                self.rGr[ii] = np.dot(self.ptapsrs[ii].detresiduals, Nir) \
                         - np.dot(GcNir, GcNiGcr)
-                self.rGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].residuals, NiE) \
+                self.rGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].detresiduals, NiE) \
                         - np.dot(GcNir, GcNiGcE)
                 self.EGGNGGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm, findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = \
                         np.dot(NiE.T, self.ptapsrs[ii].Emat) - np.dot(GcNiE.T, GcNiGcE)
@@ -4322,6 +5060,8 @@ class ptaLikelihood(object):
 
         ThetaLD = np.sum(np.log(self.Thetavec))
 
+        print "WARNGIN: mark10loglikelihood not yet fixed for more than one pulsar"
+
         # Construct and decompose Sigma
         di = np.diag_indices(np.sum(self.npff))
         didm = np.diag_indices(np.sum(self.npffdm))
@@ -4343,10 +5083,6 @@ class ptaLikelihood(object):
         return -0.5*np.sum(self.npgs)*np.log(2*np.pi) \
                 -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) \
                 +0.5*rGSigmaGr - 0.5*PhiLD - 0.5*SigmaLD - 0.5*ThetaLD
-
-
-
-
 
 
 
@@ -4377,6 +5113,11 @@ class ptaLikelihood(object):
                 ll = self.mark8loglikelihood(parameters)
             elif self.likfunc == 'mark9':
                 ll = self.mark9loglikelihood(parameters)
+
+            if self.evallikcomp:
+                self.skipUpdateToggle = True
+                ll += self.comploglikelihood(parameters)
+                self.skipUpdateToggle = False
         else:
             ll = -1e99
 
@@ -4588,11 +5329,8 @@ class ptaLikelihood(object):
 
         self.setPsrNoise(parameters)
 
-        self.constructPhiAndTheta(parameters)
-
-        # The time-domain matrices for red noise and DM variations
-        Cr = np.zeros((np.sum(self.npobs), np.sum(self.npobs)))     # Time domain red signals
-        Cdm = np.zeros((np.sum(self.npobs), np.sum(self.npobs)))     # Time domain red signals
+        if self.haveStochSources:
+            self.constructPhiAndTheta(parameters)
 
         # Allocate some auxiliary matrices
         Cov = np.zeros((np.sum(self.npobs), np.sum(self.npobs)))
@@ -4607,9 +5345,11 @@ class ptaLikelihood(object):
         for ii in range(npsrs):
             nindex = np.sum(self.npobs[:ii])
             findex = np.sum(self.npf[:ii])
+            fdmindex = np.sum(self.npfdm[:ii])
             gindex = np.sum(self.npgs[:ii])
             npobs = self.npobs[ii]
             nppf = self.npf[ii]
+            nppfdm = self.npfdm[ii]
             npgs = self.npgs[ii]
             #if self.ptapsrs[ii].twoComponentNoise:
             #    pass
@@ -4617,8 +5357,10 @@ class ptaLikelihood(object):
             #    pass
             Cov[nindex:nindex+npobs, nindex:nindex+npobs] = np.diag(self.ptapsrs[ii].Nvec)
             totFmat[nindex:nindex+npobs, findex:findex+nppf] = self.ptapsrs[ii].Fmat
-            totDFmat[nindex:nindex+npobs, findex:findex+nppf] = self.ptapsrs[ii].DF
-            totDmat[nindex:nindex+npobs, nindex:nindex+npobs] = self.ptapsrs[ii].Dmat
+
+            if self.ptapsrs[ii].DF is not None:
+                totDFmat[nindex:nindex+npobs, fdmindex:fdmindex+nppfdm] = self.ptapsrs[ii].DF
+                totDmat[nindex:nindex+npobs, nindex:nindex+npobs] = self.ptapsrs[ii].Dmat
 
             totG[nindex:nindex+npobs, gindex:gindex+npgs] = self.ptapsrs[ii].Gmat
             tottoas[nindex:nindex+npobs] = self.ptapsrs[ii].toas
@@ -4626,6 +5368,10 @@ class ptaLikelihood(object):
 
 
         if timedomain:
+            # The time-domain matrices for red noise and DM variations
+            Cr = np.zeros((np.sum(self.npobs), np.sum(self.npobs)))     # Time domain red signals
+            Cdm = np.zeros((np.sum(self.npobs), np.sum(self.npobs)))    # Time domain red DM signals
+
             # Do time-domain stuff explicitly here, for now
             for m2signal in self.ptasignals:
                 sparameters = m2signal.pstart.copy()
@@ -4665,20 +5411,25 @@ class ptaLikelihood(object):
         else:
             # Construct them from Phi/Theta
             Cov += np.dot(totFmat, np.dot(self.Phi, totFmat.T))
-            Cov += np.dot(totDFmat, np.dot(np.diag(self.Thetavec), totDFmat.T))
+            if self.Thetavec is not None and len(self.Thetavec) == totDFmat.shape[1]:
+                Cov += np.dot(totDFmat, np.dot(np.diag(self.Thetavec), totDFmat.T))
 
         # Create the projected covariance matrix, and decompose it
+        totG = np.eye(Cov.shape[0])
         GCG = np.dot(totG.T, np.dot(Cov, totG))
-        cf = sl.cholesky(GCG).T
+
+        try:
+            cf = sl.cholesky(GCG).T
+        except np.linalg.LinAlgError as err:
+            U, s, Vh = sl.svd(GCG)
+            if not np.all(s > 0):
+                raise ValueError("ERROR: GCG singular according to SVD")
+            # TODO: check if this is the right order?
+            cf = np.dot(U, np.diag(np.sqrt(s)))
 
         # Generate the data in the Cholesky-basis
         xi = np.random.randn(GCG.shape[0])
         ygen = np.dot(totG, np.dot(cf, xi))
-
-        # Display the data
-        plt.errorbar(tottoas, ygen, yerr=tottoaerrs, fmt='.', c='blue')
-        plt.grid(True)
-        plt.show()
 
         # Save the data
         tindex = 0
@@ -4686,6 +5437,25 @@ class ptaLikelihood(object):
             nobs = len(self.ptapsrs[ii].residuals)
             self.ptapsrs[ii].residuals = ygen[tindex:tindex+nobs]
             tindex += nobs
+
+        # Add the deterministic sources:
+        if self.haveDetSources:
+            self.updateDetSources(parameters)
+
+            for psr in self.ptapsrs:
+                psr.residuals = 2 * psr.residuals + psr.detresiduals
+
+        """
+        # Display the data
+        #plt.errorbar(tottoas, ygen, yerr=tottoaerrs, fmt='.', c='blue')
+        plt.errorbar(self.ptapsrs[0].toas, \
+                self.ptapsrs[0].residuals, \
+                yerr=self.ptapsrs[0].toaerrs, fmt='.', c='blue')
+                
+        plt.grid(True)
+        plt.show()
+        """
+
 
         if filename != None:
             h5file = h5.File(filename, 'a')
@@ -5085,7 +5855,83 @@ class ptaLikelihood(object):
 
         np.savetxt('anitest.txt', np.array([amp, ll]).T)
 
+"""
+This function creates a new set of simulated PTA datasets, based on a set of
+existing par/tim files.
 
+@param parlist: the par-files of the pulsars.
+@param timlist: the tim-files of the pulsars. Using as input for the simulation
+@param simlist: the tim-files with generated TOAs, based on the original tim-files
+@param parameters: parameters of the model from which to generate the mock data
+@param h5file: the hdf5-file we will create which holds the newly simulated data
+@param ....: all the same parameters given to 'initModel', from which the model
+             is built. The model should be compatible with 'parameters'
+    
+"""
+def simulateFullSet(parlist, timlist, simlist, parameters, h5file, \
+            nfreqmodes=20, ndmfreqmodes=None, \
+            incRedNoise=False, noiseModel='powerlaw', fc=None, \
+            incDM=False, dmModel='powerlaw', \
+            incClock=False, clockModel='powerlaw', \
+            incGWB=False, gwbModel='powerlaw', \
+            incDipole=False, dipoleModel='powerlaw', \
+            incAniGWB=False, anigwbModel='powerlaw', lAniGWB=1, \
+            incBWM=False, \
+            varyEfac=False, incEquad=False, separateEfacs=False, \
+            incCEquad=False, \
+            incSingleFreqNoise=False, \
+                                        # True
+            singlePulsarMultipleFreqNoise=None, \
+                                        # [True, ..., False]
+            multiplePulsarMultipleFreqNoise=None, \
+                                        # [0, 3, 2, ..., 4]
+            dmFrequencyLines=None, \
+                                        # [0, 3, 2, ..., 4]
+            orderFrequencyLines=False, \
+            compression = 'None', \
+            evalCompressionComplement = None, \
+            likfunc='mark3'):
+
+    if len(parlist) != len(timlist) or len(parlist) != len(simlist):
+        raise IOError("ERROR: list of par/tim/sim files should be of equal size")
+
+    # Create the hdf5-file from the par/tim files
+    t2df = DataFile(h5file)
+    for ii in range(len(parlist)):
+        t2df.addpulsar(parlist[ii], timlist[ii])
+
+    # Create the model
+    likob = ptaLikelihood(h5file)
+    likob.initModel(nfreqmodes=nfreqmodes, ndmfreqmodes=ndmfreqmodes, \
+            incRedNoise=incRedNoise, noiseModel=noiseModel, fc=fc, \
+            incDM=incDM, dmModel=dmModel, \
+            incClock=incClock, clockModel=clockModel, \
+            incGWB=incGWB, gwbModel=gwbModel, \
+            incDipole=incDipole, dipoleModel=dipoleModel, \
+            incAniGWB=incAniGWB, anigwbModel=anigwbModel, lAniGWB=lAniGWB, \
+            incBWM=incBWM, varyEfac=varyEfac, \
+            incEquad=incEquad, separateEfacs=separateEfacs, \
+            incCEquad=incCEquad, incSingleFreqNoise=incSingleFreqNoise, \
+            singlePulsarMultipleFreqNoise=singlePulsarMultipleFreqNoise, \
+            multiplePulsarMultipleFreqNoise=multiplePulsarMultipleFreqNoise, \
+            dmFrequencyLines=dmFrequencyLines, \
+            orderFrequencyLines=orderFrequencyLines, \
+            compression=compression, \
+            evalCompressionComplement=evalCompressionComplement, \
+            likfunc=likfunc)
+
+    # Generate the signal, and write to the hdf5-file
+    likob.gensig(parameters=parameters, filename=h5file)
+
+    for ii in range(len(parlist)):
+        psr = t2.tempopulsar(parlist[ii], timlist[ii])
+        psr.stoas[:] -= psr.residuals() / 86400.0
+
+        psr.stoas[:] += likob.ptapsrs[ii].residuals / 86400.0
+        psr.savetim(simlist[ii])
+
+        print "Writing mock TOAs of ", parlist[ii], "/", likob.ptapsrs[ii].name, \
+                " to ", simlist[ii]
 
 
 
@@ -5274,41 +6120,37 @@ def make2dplot(x, y, w=None, **kwargs):
 Given an mcmc chain file, plot the credible region for the GWB
 
 """
-def makechainplot2d(chainfilename, par1=72, par2=73, xmin=None, xmax=None, ymin=None, ymax=None, title=r"GWB credible regions"):
-  emceechain = np.loadtxt(chainfilename)
-
+def makechainplot2d(chain, par1=72, par2=73, xmin=None, xmax=None, ymin=None, ymax=None, title=r"GWB credible regions"):
   if xmin is None:
     #xmin = 0
-    xmin = min(emceechain[:,par1+2])
+    xmin = min(chain[:,par1])
   if xmax is None:
     #xmax = 70
-    xmax = max(emceechain[:,par1+2])
+    xmax = max(chain[:,par1])
   if ymin is None:
     #ymin = 1
-    ymin = min(emceechain[:,par2+2])
+    ymin = min(chain[:,par2])
   if ymax is None:
     #ymax = 7
-    ymax = max(emceechain[:,par2+2])
+    ymax = max(chain[:,par2])
 
   # Process the parameters
 
-  make2dplot(emceechain[:,par1+2], emceechain[:,par2+2], title=title, \
+  make2dplot(chain[:,par1], chain[:,par2], title=title, \
 	  xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax)
 
 """
 Given an mcmc chain file, plot the credible region for the GWB
 
 """
-def makechainplot1d(chainfilename, par=72, xmin=None, xmax=None, title=r"GWB marginalised posterior"):
-  emceechain = np.loadtxt(chainfilename)
-
+def makechainplot1d(chain, par=72, xmin=None, xmax=None, title=r"GWB marginalised posterior"):
   if xmin is None:
     xmin = 0
   if xmax is None:
     xmax = 70
 
   plt.figure()
-  plt.hist(emceechain[:, par+2], 100, color="k", histtype="step", range=(xmin, xmax))
+  plt.hist(chain[:, par], 100, color="k", histtype="step", range=(xmin, xmax))
   plt.title(title)
 
 
@@ -5438,34 +6280,19 @@ def makescanplot(scanfilename):
 Given a MultiNest file, plot the important credible regions
 
 """
-def makemnplots(mnchainfilename, par1=72, par2=73, minmaxfile=None, xmin=0, xmax=70, ymin=1, ymax=7, title='MultiNest credible regions'):
-  mnchain = np.loadtxt(mnchainfilename)
-
-  if minmaxfile is not None:
-    minmax = np.loadtxt(minmaxfile)
-
-  nDimensions = mnchain.shape[1]-2
-
-  # Rescale the hypercube parameters
-  if minmaxfile is not None:
-    for i in range(nDimensions):
-      mnchain[:,i+2] = minmax[i,0] + mnchain[:,i+2] * (minmax[i,1] - minmax[i,0])
-
+def makemnplots(mnchain, par1=72, par2=73, xmin=0, xmax=70, ymin=1, ymax=7, title='MultiNest credible regions'):
+  nDimensions = mnchain.shape[1]
 
   # The list of 1D parameters we'd like to check:
-#  list1d = np.array([0, 4, 5, nDimensions-2, nDimensions-1])
   list1d = np.array([par1, par2])
 
   # Create 1d histograms
   for i in list1d:
-#    plt.figure()
-#    plt.hist(mnchain[:,i+2], 100, color="k", histtype="step")
-#    plt.title("Dimension {0:d} (No weight)".format(i))
     plt.figure()
-    plt.hist(mnchain[:,i+2], 100, weights=mnchain[:,0], color="k", histtype="step")
+    plt.hist(mnchain[:,i], 100, color="k", histtype="step")
     plt.title("Dimension {0:d}".format(i))
 
-  make2dplot(mnchain[:,par1+2], mnchain[:,par2+2], mnchain[:,0], title=title)
+  make2dplot(mnchain[:,par1], mnchain[:,par2], title=title)
 
 
 
@@ -5495,12 +6322,12 @@ def makednestplots(par1=72, par2=73, xmin=0, xmax=70, ymin=1, ymax=7, title='DNe
 
 
 """
-Given an mcmc chain file, plot the log-spectrum
+Given an mcmc chain, plot the log-spectrum
 
 """
-def makespectrumplot(chainfilename, parstart=1, numfreqs=10, freqs=None, \
+def makespectrumplot(chain, parstart=1, numfreqs=10, freqs=None, \
         Apl=None, gpl=None, Asm=None, asm=None, fcsm=0.1, plotlog=False, \
-        lcolor='black', Tmax=None):
+        lcolor='black', Tmax=None, Aref=None):
     if freqs is None:
         ufreqs = np.log10(np.arange(1, 1+numfreqs))
     else:
@@ -5510,13 +6337,11 @@ def makespectrumplot(chainfilename, parstart=1, numfreqs=10, freqs=None, \
     yval = np.zeros(len(ufreqs))
     yerr = np.zeros(len(ufreqs))
 
-    emceechain = np.loadtxt(chainfilename)
-
     if len(ufreqs) != (numfreqs):
         print "WARNING: parameter range does not correspond to #frequencies"
 
     for ii in range(numfreqs):
-        fmin, fmax = confinterval(emceechain[:, parstart+2+ii], sigmalevel=1)
+        fmin, fmax = confinterval(chain[:, parstart+ii], sigmalevel=1)
         yval[ii] = (fmax + fmin) * 0.5
         yerr[ii] = (fmax - fmin) * 0.5
 
@@ -5574,83 +6399,6 @@ def makespectrumplot(chainfilename, parstart=1, numfreqs=10, freqs=None, \
     plt.grid(True)
 
 
-"""
-Given a MultiNest chain file, plot the log-spectrum
-
-"""
-def makemnspectrumplot(mnchainfilename, minmaxfile=None, parstart=1, parstop=10, freqs=None):
-    ufreqs = np.log10(np.sort(np.array(list(set(freqs)))))
-    #ufreqs = np.array(list(set(freqs)))
-    yval = np.zeros(parstop-parstart)
-    yerr = np.zeros(parstop-parstart)
-
-    if len(ufreqs) != (parstop - parstart):
-        print "WARNING: parameter range does not correspond to #frequencies"
-
-    spd = 24 * 3600.0
-    spy = 365.25 * spd
-    pfreqs = 10 ** ufreqs
-    #Aing = 5.0e-14
-    Aing = 10**(-13.00)
-    Aing = 10**(-10.00)
-    #yinj = (Aing**2 * spy**3 / (12*np.pi*np.pi * (5*spy))) * ((pfreqs * spy) ** (-13.0/3.0))
-    yinj = (Aing**2 * spy**3 / (12*np.pi*np.pi * (5*spy))) * ((pfreqs * spy) ** (-2.33))
-    #print pfreqs * spy
-    #print np.log10(yinj)
-
-    mnchain = np.loadtxt(mnchainfilename)
-    #emceechain = np.loadtxt(chainfilename)
-
-    if minmaxfile is not None:
-        minmax = np.loadtxt(minmaxfile)
-
-    nDimensions = mnchain.shape[1]-2
-
-    # Rescale the hypercube parameters
-    if minmaxfile is not None:
-        for i in range(nDimensions):
-            mnchain[:,i+2] = minmax[i,0] + mnchain[:,i+2] * (minmax[i,1] - minmax[i,0])
-
-
-    for ii in range(parstop - parstart):
-        fmin, fmax = confinterval(mnchain[:, parstart+2+ii], sigmalevel=1, weights=mnchain[:,0])
-        yval[ii] = (fmax + fmin) * 0.5
-        yerr[ii] = (fmax - fmin) * 0.5
-
-    fig = plt.figure()
-
-    #plt.plot(ufreqs, yval, 'k.-')
-    plt.errorbar(ufreqs, yval, yerr=yerr, fmt='.', c='black')
-    plt.plot(ufreqs, np.log10(yinj), 'k--')
-    plt.title("Periodogram")
-    plt.xlabel("Frequency [log(f)]")
-    plt.ylabel("Power [log(r)]")
-    plt.grid(True)
-
-
-"""
-Given a MultiNest file, plot the credible region for the GWB
-
-"""
-def makemnplot2d(mnchainfilename, par1=26, par2=27, xmin=0, xmax=70, ymin=1, ymax=7):
-  mnchain = np.loadtxt(mnchainfilename)
-
-  nDimensions = mnchain.shape[1]-2
-
-  # Create 1d histograms
-#  for i in list1d[np.where(list1d < nDimensions)]:
-#    plt.figure()
-#    plt.hist(mnchain[:,i+2], 100, color="k", histtype="step")
-#    plt.title("Dimension {0:d} (No weight)".format(i))
-#    plt.figure()
-#    plt.hist(mnchain[:,i+2], 100, weights=mnchain[:,0], color="k", histtype="step")
-#    plt.title("Dimension {0:d}".format(i))
-
-  # make2dplot(emceechain[:,2], emceechain[:,3], title=r'Red noise credible regions')
-#  make2dplot(mnchain[:,nDimensions], mnchain[:,nDimensions+1], title=r'GWB credible regions (No weights)')
-
-  make2dplot(mnchain[:,par1], mnchain[:,par2], title=r'credible regions', xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax)
-
 
 
 """
@@ -5658,15 +6406,13 @@ Given an mcmc chain file, plot the upper limit of one variable as a function of
 another
 
 """
-def upperlimitplot2d(chainfilename, par1=72, par2=73, ymin=None, ymax=None):
-  emceechain = np.loadtxt(chainfilename)
-
+def upperlimitplot2d(chain, par1=72, par2=73, ymin=None, ymax=None):
   if ymin is None:
     #ymin = 1
-    ymin = min(emceechain[:,par2+2])
+    ymin = min(chain[:,par2])
   if ymax is None:
     #ymax = 7
-    ymax = max(emceechain[:,par2+2])
+    ymax = max(chain[:,par2])
 
   bins = 40
   yedges = np.linspace(ymin, ymax, bins+1)
@@ -5679,15 +6425,15 @@ def upperlimitplot2d(chainfilename, par1=72, par2=73, ymin=None, ymax=None):
   for i in range(bins):
     # Obtain the indices in the range of the bin
     indices = np.flatnonzero(np.logical_and(
-      emceechain[:,par2+2] > yedges[i],
-      emceechain[:,par2+2] < yedges[i+1]))
+      chain[:,par2] > yedges[i],
+      chain[:,par2] < yedges[i+1]))
 
     # Obtain the 1-sided x-sigma upper limit
-    a, b = confinterval(emceechain[:,par1+2][indices], sigmalevel=1, onesided=True)
+    a, b = confinterval(chain[:,par1][indices], sigmalevel=1, onesided=True)
     sigma1[i] = np.exp(b)
-    a, b = confinterval(emceechain[:,par1+2][indices], sigmalevel=2, onesided=True)
+    a, b = confinterval(chain[:,par1][indices], sigmalevel=2, onesided=True)
     sigma2[i] = np.exp(b)
-    a, b = confinterval(emceechain[:,par1+2][indices], sigmalevel=3, onesided=True)
+    a, b = confinterval(chain[:,par1][indices], sigmalevel=3, onesided=True)
     sigma3[i] = np.exp(b)
 
   plt.figure()
@@ -5732,22 +6478,27 @@ chain, plot the different walkers independently
 Maximum number of figures is an optional parameter (for emcee can be large)
 
 """
-def makellplot(chainfilename, numfigs=2):
+def makellplot(chainfilename, numfigs=2, emceesort=False):
   emceechain = np.loadtxt(chainfilename)
 
-  uniquechains = set(emceechain[:,0])
+  if emceesort:
+      uniquechains = set(emceechain[:,0])
 
-  styles = ['b-', 'g-', 'r-', 'c-', 'm-', 'y-', 'k-',
-      'b--', 'g--', 'r--', 'c--', 'm--', 'y--', 'k--',
-      'b:', 'g:', 'r:', 'c:', 'm:', 'y:', 'k:']
+      styles = ['b-', 'g-', 'r-', 'c-', 'm-', 'y-', 'k-',
+          'b--', 'g--', 'r--', 'c--', 'm--', 'y--', 'k--',
+          'b:', 'g:', 'r:', 'c:', 'm:', 'y:', 'k:']
 
-  # For each chain, plot the ll range
-  for i in uniquechains:
-      if i < numfigs*len(styles):
-          if i % len(styles) == 0:
-              plt.figure()
-              plt.plot(np.arange(emceechain[(emceechain[:,0]==i),1].size), \
-                      emceechain[(emceechain[:,0]==i),1], styles[int(i % len(styles))])
+      # For each chain, plot the ll range
+      for i in uniquechains:
+          if i < numfigs*len(styles):
+              if i % len(styles) == 0:
+                  plt.figure()
+                  plt.plot(np.arange(emceechain[(emceechain[:,0]==i),1].size), \
+                          emceechain[(emceechain[:,0]==i),1], styles[int(i % len(styles))])
+  else:
+      plt.figure()
+      plt.plot(np.arange(emceechain[:,1].size), \
+              emceechain[:,1], 'b-')
 
   plt.xlabel("Sample number")
   plt.ylabel("Log-likelihood")
@@ -5805,14 +6556,13 @@ this function spits out a lot of plots summarising all relevant results of the
 MCMC
 """
 def makeresultsplot(likob, chainfilename, outputdir):
-    emceechain = np.loadtxt(chainfilename)
+    (logpost, loglik, emceechain, labels) = ReadMCMCFile(chainfilename)
 
     # List all varying parameters
     dopar = np.array([1]*likob.dimensions, dtype=np.bool)
 
     # First make a plot of all efac's
     efacparind, efacpsrind, efacnames = likob.getEfacNumbers()
-
     dopar[efacparind] = False
 
     if len(efacparind) > 0:
@@ -5829,7 +6579,7 @@ def makeresultsplot(likob, chainfilename, outputdir):
             yerr = np.zeros(maxpar-minpar)
 
             for ii in range(maxpar-minpar):
-                fmin, fmax = confinterval(emceechain[:, efacparind[ii]+2], sigmalevel=1)
+                fmin, fmax = confinterval(emceechain[:, efacparind[ii]], sigmalevel=1)
                 yval[ii] = (fmax + fmin) * 0.5
                 yerr[ii] = (fmax - fmin) * 0.5
 
@@ -5885,7 +6635,7 @@ def makeresultsplot(likob, chainfilename, outputdir):
             raise ValueError("ERROR: len(freqs) != maxpar-minpar")
 
         for jj in range(maxpar-minpar):
-            fmin, fmax = confinterval(emceechain[:, minpar+jj+2], sigmalevel=1)
+            fmin, fmax = confinterval(emceechain[:, minpar+jj], sigmalevel=1)
             yval[jj] = (fmax + fmin) * 0.5
             yerr[jj] = (fmax - fmin) * 0.5
 
@@ -5903,9 +6653,17 @@ def makeresultsplot(likob, chainfilename, outputdir):
         plt.savefig(fileout+'.eps')
 
     # Make a triplot of all the other parameters
-    if np.sum(dopar) > 0:
+    if np.sum(dopar) > 1:
         indices = np.flatnonzero(np.array(dopar == True))
-        triplot(chainfilename, indices)
+        fileout = outputdir+'/triplot'
+        triplot(emceechain, parlabels=labels, plotparameters=indices)
+        plt.savefig(fileout+'.png')
+        plt.savefig(fileout+'.eps')
+    if np.sum(dopar) == 1:
+        # Make a single plot
+        indices = np.flatnonzero(np.array(dopar == True))
+        f, axarr = plt.subplots(nrows=1, ncols=1)
+        makesubplot1d(axarr, emceechain[:,indices[0]])
         fileout = outputdir+'/triplot'
         plt.savefig(fileout+'.png')
         plt.savefig(fileout+'.eps')
@@ -6340,9 +7098,157 @@ def RunDNest(likob, mcmcFile=None, numParticles=1, newLevelInterval=500,\
 
 
 
+"""
+Run a generic PTMCMC algorithm.
+"""
+def RunPTMCMC(likob, steps, chainsdir, initfile=None, resize=0.088):
+    # Save the parameters to file
+    likob.saveModelParameters(chainsdir + '/ptparameters.txt')
+
+    ndim = likob.dimensions
+    pwidth = likob.pwidth.copy()
+
+    if initfile is not None:
+        # Read the starting position of the random walkers from a file
+        print "Obtaining initial positions from '" + initfile + "'"
+        burnindata = np.loadtxt(initfile)
+        burnindata = burnindata[:,3:]
+        nsteps = burnindata.shape[0]
+        dim = burnindata.shape[1]
+        if(ndim != dim):
+            print "ERROR: burnin file not same dimensions!"
+            print "mismatch: ", ndim, dim
+            exit()
+
+        # Get starting position
+        indices = np.random.randint(0, nsteps, 1)
+        p0 = burnindata[indices[0]]
+
+        # Estimate covariances as being the standarddeviation
+        pwidth = resize * np.std(burnindata, axis=0)
+
+        del burnindata
+    else:
+        # Set the starting position of the random walker (add a small perturbation to
+        # get away from a possible zero)
+        #    p0 = np.random.rand(ndim)*pwidth+pstart
+        p0 = likob.pstart + likob.pwidth
+        pwidth *= resize
 
 
+    # Set the initial covariances
+    cov = np.diag(pwidth**2)
+
+    sampler = ptmcmc.PTSampler(ndim, likob.loglikelihood, likob.logprior, cov=cov, \
+            outDir=chainsdir, verbose=True)
+
+    sampler.sample(p0, steps, thin=1)
+
+"""
+Obtain the MCMC chain as a numpy array, and a list of parameter indices
+
+@param chainfile: name of the MCMC file
+@param parametersfile: name of the file with the parameter labels
+@param mcmctype: what method was used to generate the mcmc chain (auto=autodetect)
+                    other options are: 'emcee', 'MultiNest', 'ptmcmc'
+@param nolabels: set to true if ok to print without labels
+
+@return: logposterior (1D), loglikelihood (1D), parameter-chain (2D), parameter-labels(1D)
+"""
+def ReadMCMCFile(chainfile, parametersfile=None, sampler='auto', nolabels=False):
+    if sampler.lower() == 'auto':
+        # Auto-detect the sampler
+        parametersfile = chainfile+'.parameters.txt'
+        mnparametersfile = chainfile+'.mnparameters.txt'
+        ptparametersfile = chainfile+'/ptparameters.txt'
+
+        # Determine the type of sampler we've been using through the parameters
+        # file
+        if os.path.exists(mnparametersfile):
+            sampler = 'MultiNest'
+            parametersfile = mnparametersfile
+            chainfile = chainfile
+            figurefileeps = chainfile+'.fig.eps'
+            figurefilepng = chainfile+'.fig.png'
+        elif os.path.exists(ptparametersfile):
+            sampler = 'PTMCMC'
+            parametersfile = ptparametersfile
+            if os.path.exists(chainfile+'/chain_1.0.txt'):
+                figurefileeps = chainfile+'/chain_1.0.fig.eps'
+                figurefilepng = chainfile+'chain_1.0.fig.png'
+                chainfile = chainfile+'/chain_1.0.txt'
+            elif os.path.exists(chainfile+'/chain_1.txt'):
+                figurefileeps = chainfile+'/chain_1.fig.eps'
+                figurefilepng = chainfile+'chain_1.fig.png'
+                chainfile = chainfile+'/chain_1.txt'
+            else:
+                raise IOError, "No valid chain found for PTMCMC_Generic"
+        elif os.path.exists(parametersfile):
+            sampler = 'emcee'
+            chainfile = chainfile
+            figurefileeps = chainfile+'.fig.eps'
+            figurefilepng = chainfile+'.fig.png'
+        else:
+            if not nolabels:
+                raise IOError, "No valid parameters file found!"
+
+            else:
+                chainfile = chainfile
+                figurefileeps = chainfile+'.fig.eps'
+                figurefilepng = chainfile+'.fig.png'
+                sampler = 'emcee'
+    elif sampler.lower() == 'MultiNest':
+        parametersfile = mnparametersfile
+        figurefileeps = chainfile+'.fig.eps'
+        figurefilepng = chainfile+'.fig.png'
+    elif sampler.lower() == 'emcee':
+        figurefileeps = chainfile+'.fig.eps'
+        figurefilepng = chainfile+'.fig.png'
+    elif sampler.lower() == 'ptmcmc':
+        parametersfile = ptparametersfile
+        if os.path.exists(chainfile+'/chain_1.0.txt'):
+            figurefileeps = chainfile+'/chain_1.0.fig.eps'
+            figurefilepng = chainfile+'chain_1.0.fig.png'
+            chainfile = chainfile+'/chain_1.0.txt'
+        elif os.path.exists(chainfile+'/chain_1.txt'):
+            figurefileeps = chainfile+'/chain_1.fig.eps'
+            figurefilepng = chainfile+'chain_1.fig.png'
+            chainfile = chainfile+'/chain_1.txt'
+
+    if not nolabels:
+        # Read the parameter labels
+        if os.path.exists(parametersfile):
+            parfile = open(parametersfile)
+            lines=[line.strip() for line in parfile]
+            parlabels=[]
+            for i in range(len(lines)):
+                lines[i]=lines[i].split()
+
+                if int(lines[i][0]) >= 0:
+                    # If the parameter has an index
+                    parlabels.append(lines[i][5])
+        else:
+            raise IOError, "No valid parameters file found!"
+    else:
+        parlabels = None
+
+    if os.path.exists(parametersfile):
+        chain = np.loadtxt(chainfile)
+    else:
+        raise IOError, "No valid chain-file found!"
+
+    if sampler.lower() == 'emcee':
+        logpost = chain[:,1]
+        loglik = None
+        samples = chain[:,2:]
+    elif sampler.lower() == 'multinest':
+        loglik = chain[:,-1]
+        logpost = None
+        samples = chain[:,:-1]
+    elif sampler.lower() == 'ptmcmc':
+        logpost = chain[:,0]
+        loglik = chain[:,1]
+        samples = chain[:,3:]
 
 
-
-
+    return (logpost, loglik, samples, parlabels)
