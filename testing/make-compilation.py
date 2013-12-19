@@ -20,8 +20,8 @@ size3, size4, size5 = h/2, h/4, h/6
 # the figures in a single file
 pngfiles = glob.glob(os.path.join('./', '*.png'))
 pulsars = list(set([pngfile[2:7] for pngfile in pngfiles]))
-models = ['efacequad', 'cont0', 'cont0coarse', 'cont1', 'cont1coarse', 'cont2', 'cont2coarse']
-#models = ['FQ', 'FQP', 'FCP', 'FQCP', 'FQP1', 'FCP1', 'FQCP1']
+#models = ['efacequad', 'cont0', 'cont0coarse', 'cont1', 'cont1coarse', 'cont2', 'cont2coarse']
+models = ['FQ', 'FQP', 'FCP', 'FQCP', 'FQP1', 'FCP1', 'FQCP1']
 
 figx = ['']*len(models)
 figy = ['']*len(models)
@@ -41,7 +41,6 @@ for psr in pulsars:
     print "Preparing compilation of pulsar {0}...".format(psr)
     c = canvas.Canvas("compilations/{0}.pdf".format(psr), pagesize=landscape(elevenSeventeen))
 
-    #evidences = [0.0] * len(models)
     evidences = []
     for ii in range(len(models)):
         pngfile = psr + '-' + models[ii] + '-post_equal_weights.dat.fig.png'
@@ -56,7 +55,6 @@ for psr in pulsars:
         if os.path.isfile(statsfile):
             # Read in the evidence for this model
             lines = open(statsfile).readlines()
-            #evidences[ii] = float(re.search(r'Global Log-Evidence           :\s*(\S*)\s*\+/-\s*(\S*)',lines[0]).group(1))
             evidences.append(float(re.search(r'Global Log-Evidence           :\s*(\S*)\s*\+/-\s*(\S*)',lines[0]).group(1)))
 
     sortind = np.array(evidences).argsort()
