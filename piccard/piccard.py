@@ -145,7 +145,7 @@ class DataFile(object):
         else:
             datagroup = self.h5file.create_group("Data")
 
-        # Load pulsar data from the JPL Cython tempo2 library
+        # Load pulsar data from the libstempo library
         os.chdir(dirname)
         t2pulsar = t2.tempopulsar(relparfile, reltimfile)
         os.chdir(savedir)
@@ -2748,7 +2748,7 @@ class ptaLikelihood(object):
             self.haveStochSources = True
 
         if incClock:
-            self.addSignalGWB(index, Tmax, clockModel)
+            self.addSignalClock(index, Tmax, clockModel)
             index += self.ptasignals[-1].npars
             self.haveStochSources = True
 
@@ -3630,7 +3630,7 @@ class ptaLikelihood(object):
                             2*np.sum(np.log(np.diag(cf[0])))
                     GcNiGcr = sl.cho_solve(cf, GcNir)
                 except np.linalg.LinAlgError:
-                    print "MAJOR ERROR"
+                    print "comploglikelihood: GcNiGc singular"
 
                 self.rGr[ii] = np.dot(self.ptapsrs[ii].detresiduals, Nir) \
                         - np.dot(GcNir, GcNiGcr)
@@ -5325,10 +5325,6 @@ class ptaLikelihood(object):
         if self.haveStochSources:
             self.constructPhiAndTheta(parameters)
 
-        # The time-domain matrices for red noise and DM variations
-        Cr = np.zeros((np.sum(self.npobs), np.sum(self.npobs)))     # Time domain red signals
-        Cdm = np.zeros((np.sum(self.npobs), np.sum(self.npobs)))     # Time domain red signals
-
         # Allocate some auxiliary matrices
         Cov = np.zeros((np.sum(self.npobs), np.sum(self.npobs)))
         totFmat = np.zeros((np.sum(self.npobs), np.sum(self.npf)))
@@ -5342,9 +5338,11 @@ class ptaLikelihood(object):
         for ii in range(npsrs):
             nindex = np.sum(self.npobs[:ii])
             findex = np.sum(self.npf[:ii])
+            fdmindex = np.sum(self.npfdm[:ii])
             gindex = np.sum(self.npgs[:ii])
             npobs = self.npobs[ii]
             nppf = self.npf[ii]
+            nppfdm = self.npfdm[ii]
             npgs = self.npgs[ii]
             #if self.ptapsrs[ii].twoComponentNoise:
             #    pass
@@ -5352,8 +5350,10 @@ class ptaLikelihood(object):
             #    pass
             Cov[nindex:nindex+npobs, nindex:nindex+npobs] = np.diag(self.ptapsrs[ii].Nvec)
             totFmat[nindex:nindex+npobs, findex:findex+nppf] = self.ptapsrs[ii].Fmat
-            totDFmat[nindex:nindex+npobs, findex:findex+nppf] = self.ptapsrs[ii].DF
-            totDmat[nindex:nindex+npobs, nindex:nindex+npobs] = self.ptapsrs[ii].Dmat
+
+            if self.ptapsrs[ii].DF is not None:
+                totDFmat[nindex:nindex+npobs, fdmindex:fdmindex+nppfdm] = self.ptapsrs[ii].DF
+                totDmat[nindex:nindex+npobs, nindex:nindex+npobs] = self.ptapsrs[ii].Dmat
 
             totG[nindex:nindex+npobs, gindex:gindex+npgs] = self.ptapsrs[ii].Gmat
             tottoas[nindex:nindex+npobs] = self.ptapsrs[ii].toas
@@ -5361,6 +5361,10 @@ class ptaLikelihood(object):
 
 
         if timedomain:
+            # The time-domain matrices for red noise and DM variations
+            Cr = np.zeros((np.sum(self.npobs), np.sum(self.npobs)))     # Time domain red signals
+            Cdm = np.zeros((np.sum(self.npobs), np.sum(self.npobs)))    # Time domain red DM signals
+
             # Do time-domain stuff explicitly here, for now
             for m2signal in self.ptasignals:
                 sparameters = m2signal.pstart.copy()
@@ -5400,11 +5404,21 @@ class ptaLikelihood(object):
         else:
             # Construct them from Phi/Theta
             Cov += np.dot(totFmat, np.dot(self.Phi, totFmat.T))
-            Cov += np.dot(totDFmat, np.dot(np.diag(self.Thetavec), totDFmat.T))
+            if self.Thetavec is not None and len(self.Thetavec) == totDFmat.shape[1]:
+                Cov += np.dot(totDFmat, np.dot(np.diag(self.Thetavec), totDFmat.T))
 
         # Create the projected covariance matrix, and decompose it
+        totG = np.eye(Cov.shape[0])
         GCG = np.dot(totG.T, np.dot(Cov, totG))
-        cf = sl.cholesky(GCG).T
+
+        try:
+            cf = sl.cholesky(GCG).T
+        except np.linalg.LinAlgError as err:
+            U, s, Vh = sl.svd(GCG)
+            if not np.all(s > 0):
+                raise ValueError("ERROR: GCG singular according to SVD")
+            # TODO: check if this is the right order?
+            cf = np.dot(U, np.diag(np.sqrt(s)))
 
         # Generate the data in the Cholesky-basis
         xi = np.random.randn(GCG.shape[0])
@@ -5422,8 +5436,9 @@ class ptaLikelihood(object):
             self.updateDetSources(parameters)
 
             for psr in self.ptapsrs:
-                psr.residuals = 2 * psr.residuals - psr.detresiduals
+                psr.residuals = 2 * psr.residuals + psr.detresiduals
 
+        """
         # Display the data
         #plt.errorbar(tottoas, ygen, yerr=tottoaerrs, fmt='.', c='blue')
         plt.errorbar(self.ptapsrs[0].toas, \
@@ -5432,6 +5447,7 @@ class ptaLikelihood(object):
                 
         plt.grid(True)
         plt.show()
+        """
 
 
         if filename != None:
@@ -5832,7 +5848,83 @@ class ptaLikelihood(object):
 
         np.savetxt('anitest.txt', np.array([amp, ll]).T)
 
+"""
+This function creates a new set of simulated PTA datasets, based on a set of
+existing par/tim files.
 
+@param parlist: the par-files of the pulsars.
+@param timlist: the tim-files of the pulsars. Using as input for the simulation
+@param simlist: the tim-files with generated TOAs, based on the original tim-files
+@param parameters: parameters of the model from which to generate the mock data
+@param h5file: the hdf5-file we will create which holds the newly simulated data
+@param ....: all the same parameters given to 'initModel', from which the model
+             is built. The model should be compatible with 'parameters'
+    
+"""
+def simulateFullSet(parlist, timlist, simlist, parameters, h5file, \
+            nfreqmodes=20, ndmfreqmodes=None, \
+            incRedNoise=False, noiseModel='powerlaw', fc=None, \
+            incDM=False, dmModel='powerlaw', \
+            incClock=False, clockModel='powerlaw', \
+            incGWB=False, gwbModel='powerlaw', \
+            incDipole=False, dipoleModel='powerlaw', \
+            incAniGWB=False, anigwbModel='powerlaw', lAniGWB=1, \
+            incBWM=False, \
+            varyEfac=False, incEquad=False, separateEfacs=False, \
+            incCEquad=False, \
+            incSingleFreqNoise=False, \
+                                        # True
+            singlePulsarMultipleFreqNoise=None, \
+                                        # [True, ..., False]
+            multiplePulsarMultipleFreqNoise=None, \
+                                        # [0, 3, 2, ..., 4]
+            dmFrequencyLines=None, \
+                                        # [0, 3, 2, ..., 4]
+            orderFrequencyLines=False, \
+            compression = 'None', \
+            evalCompressionComplement = None, \
+            likfunc='mark3'):
+
+    if len(parlist) != len(timlist) or len(parlist) != len(simlist):
+        raise IOError("ERROR: list of par/tim/sim files should be of equal size")
+
+    # Create the hdf5-file from the par/tim files
+    t2df = DataFile(h5file)
+    for ii in range(len(parlist)):
+        t2df.addpulsar(parlist[ii], timlist[ii])
+
+    # Create the model
+    likob = ptaLikelihood(h5file)
+    likob.initModel(nfreqmodes=nfreqmodes, ndmfreqmodes=ndmfreqmodes, \
+            incRedNoise=incRedNoise, noiseModel=noiseModel, fc=fc, \
+            incDM=incDM, dmModel=dmModel, \
+            incClock=incClock, clockModel=clockModel, \
+            incGWB=incGWB, gwbModel=gwbModel, \
+            incDipole=incDipole, dipoleModel=dipoleModel, \
+            incAniGWB=incAniGWB, anigwbModel=anigwbModel, lAniGWB=lAniGWB, \
+            incBWM=incBWM, varyEfac=varyEfac, \
+            incEquad=incEquad, separateEfacs=separateEfacs, \
+            incCEquad=incCEquad, incSingleFreqNoise=incSingleFreqNoise, \
+            singlePulsarMultipleFreqNoise=singlePulsarMultipleFreqNoise, \
+            multiplePulsarMultipleFreqNoise=multiplePulsarMultipleFreqNoise, \
+            dmFrequencyLines=dmFrequencyLines, \
+            orderFrequencyLines=orderFrequencyLines, \
+            compression=compression, \
+            evalCompressionComplement=evalCompressionComplement, \
+            likfunc=likfunc)
+
+    # Generate the signal, and write to the hdf5-file
+    likob.gensig(parameters=parameters, filename=h5file)
+
+    for ii in range(len(parlist)):
+        psr = t2.tempopulsar(parlist[ii], timlist[ii])
+        psr.stoas[:] -= psr.residuals() / 86400.0
+
+        psr.stoas[:] += likob.ptapsrs[ii].residuals / 86400.0
+        psr.savetim(simlist[ii])
+
+        print "Writing mock TOAs of ", parlist[ii], "/", likob.ptapsrs[ii].name, \
+                " to ", simlist[ii]
 
 
 
