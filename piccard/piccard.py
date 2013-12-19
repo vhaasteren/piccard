@@ -2371,7 +2371,7 @@ class ptaLikelihood(object):
             newsignal.pstart = np.array([-14.0, 2.01, 1.0e-10])
             newsignal.pwidth = np.array([0.1, 0.1, 5.0e-11])
 
-        newsignal.corr = 'uniform'
+        newsignal.corr = 'dipole'
         newsignal.Tmax = Tmax
         newsignal.nindex = index
         newsignal.corrmat = dipolecorrmat(self.ptapsrs)
