@@ -2834,7 +2834,14 @@ class ptaLikelihood(object):
                     flagname = 'powerlaw'
 
                     if jj < 3:
-                        flagvalue = ['RN-Amplitude', 'RN-spectral-index', 'low-frequency-cutoff'][jj]
+                        if sig.stype == 'gr':
+                            flagvalue = ['GWB-Amplitude', 'GWB-spectral-index', 'low-frequency-cutoff'][jj]
+                        elif sig.stype == 'uniform':
+                            flagvalue = ['CLK-Amplitude', 'CLK-spectral-index', 'low-frequency-cutoff'][jj]
+                        elif sig.stype == 'dipole':
+                            flagvalue = ['DIP-Amplitude', 'DIP-spectral-index', 'low-frequency-cutoff'][jj]
+                        else:
+                            flagvalue = ['RN-Amplitude', 'RN-spectral-index', 'low-frequency-cutoff'][jj]
                     else:
                         # Index counting same as above
                         clmind = jj - 3 + 1
@@ -7135,7 +7142,7 @@ def RunPTMCMC(likob, steps, chainsdir, initfile=None, resize=0.088):
     sampler = ptmcmc.PTSampler(ndim, likob.loglikelihood, likob.logprior, cov=cov, \
             outDir=chainsdir, verbose=True)
 
-    sampler.sample(p0, steps)
+    sampler.sample(p0, steps, thin=1)
 
 """
 Obtain the MCMC chain as a numpy array, and a list of parameter indices
