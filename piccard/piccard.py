@@ -2834,11 +2834,11 @@ class ptaLikelihood(object):
                     flagname = 'powerlaw'
 
                     if jj < 3:
-                        if sig.stype == 'gr':
+                        if sig.corr == 'gr':
                             flagvalue = ['GWB-Amplitude', 'GWB-spectral-index', 'low-frequency-cutoff'][jj]
-                        elif sig.stype == 'uniform':
+                        elif sig.corr == 'uniform':
                             flagvalue = ['CLK-Amplitude', 'CLK-spectral-index', 'low-frequency-cutoff'][jj]
-                        elif sig.stype == 'dipole':
+                        elif sig.corr == 'dipole':
                             flagvalue = ['DIP-Amplitude', 'DIP-spectral-index', 'low-frequency-cutoff'][jj]
                         else:
                             flagvalue = ['RN-Amplitude', 'RN-spectral-index', 'low-frequency-cutoff'][jj]
