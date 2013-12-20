@@ -991,10 +991,6 @@ class ptasignal(object):
     # Quantities for EFAC/EQUAD
     Nvec = None             # For in the mark3+ likelihood
 
-    # If this pulsar has only one efac/equad parameter, use computational
-    # shortcut, using:
-    accelNoise = False      # Works only for efac-only (implement automagically?)
-
     # Quantities for spectral noise
     Tmax = None
     corrmat = None
@@ -1309,6 +1305,58 @@ class ptaPulsar(object):
     def addDMQuadratic(self):
         self.Mmat, self.Gmat, self.Gcmat, self.ptmpars, self.ptmdescription = \
                 self.getModifiedDesignMatrix(addDMQSD=True, removeJumps=False)
+
+
+    """
+    Estimate how many frequency modes are required for this pulsar. This
+    function uses a simplified method, based on van Haasteren (2013). Given a
+    red-noise spectrum (power-law here), a high-fidelity compression technique
+    is used.
+
+    @param noiseAmp:    the expected amplitude we want to be fully sensitive to
+    @param noiseSi:     the spectral index of the signal we want to be fully
+                        sensitive to
+    @param Tmax:        time baseline, if not determined from this pulsar
+    @param threshold:   the fidelity with which the signal has to be
+                        reconstructed
+    """
+    def numfreqsFromSpectrum(self, noiseAmp, noiseSi, \
+            Tmax=None, threshold=0.9999):
+        spd = 24 * 3600.0
+        spy = 365.25 * spd
+        ntoas = len(self.toas)
+        nfreqs = int(ntoas/2)
+
+        if Tmax is None:
+            Tmax = np.max(self.toas) - np.min(self.toas)
+
+        # Construct the Fourier modes, and the frequency coefficients (for
+        # noiseAmp=1)
+        (Fmat, Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
+        freqpy = Ffreqs * spy
+        pcdoubled = (spy**3 / (12*np.pi*np.pi * Tmax)) * freqpy ** (-noiseSi)
+
+        # Find the Cholesky decomposition of the projected radiometer-noise
+        # covariance matrix
+        GNG = np.dot(self.Gmat.T, (self.toaerrs**2 * self.Gmat.T).T)
+        try:
+            L = sl.cholesky(GNG).T
+            cf = sl.cho_factor(L)
+            Li = sl.cho_solve(cf, np.eye(GNG.shape[0]))
+        except np.linalg.LinAlgError as err:
+            raise ValueError("ERROR: GNG singular according to Cholesky")
+
+        # Construct the transformed Phi-matrix, and perform SVD. That matrix
+        # should have a few singular values (nfreqs not precisely determined)
+        LGF = np.dot(Li, np.dot(self.Gmat.T, Fmat))
+        Phiw = np.dot(LGF, (pcdoubled * LGF).T)
+        U, s, Vh = sl.svd(Phiw)
+
+        # From the eigenvalues in s, we can determine the number of frequencies
+        fisherelements = s**2 / (1 + noiseAmp**2 * s)**2
+        cumev = np.cumsum(fisherelements)
+        totrms = np.sum(fisherelements)
+        return int((np.flatnonzero( (cumev/totrms) >= threshold )[0] + 1)/2)
 
 
     """
@@ -2498,6 +2546,9 @@ class ptaLikelihood(object):
         newsignal.nindex = index
         self.ptasignals.append(newsignal)
 
+    """
+    Note: This function is not (yet) ready for use
+    """
     def addSignalFourierCoeff(self, psrind, index, Tmax, isDM=False):
         newsignal = ptasignal()
         newsignal.pulsarind = psrind
@@ -2577,6 +2628,10 @@ class ptaLikelihood(object):
         newsignal.nindex = index
         self.ptasignals.append(newsignal)
 
+    
+    """
+    Find the number of frequency lines, given a list of signal dictionaries
+    """
 
 
 
@@ -2683,6 +2738,36 @@ class ptaLikelihood(object):
             self.EGGNGGE = np.zeros((np.sum(self.npff)+np.sum(self.npffdm), \
                     np.sum(self.npff)+np.sum(self.npffdm)))
 
+    """
+    Based on somewhat simpler quantities, this function makes a full model
+    dictionary. Standard use would be to save that dictionary in a json file, so
+    that it does not need to be manually created by the user
+
+    @param nfreqmodes:      blah
+    @param dmnfreqmodes:    blah
+    """
+    def makeModel(self,  nfreqmodes=20, ndmfreqmodes=None, \
+            incRedNoise=False, noiseModel='powerlaw', fc=None, \
+            incDM=False, dmModel='powerlaw', \
+            incClock=False, clockModel='powerlaw', \
+            incGWB=False, gwbModel='powerlaw', \
+            incDipole=False, dipoleModel='powerlaw', \
+            incAniGWB=False, anigwbModel='powerlaw', lAniGWB=1, \
+            incBWM=False, \
+            varyEfac=False, incEquad=False, separateEfacs=False, \
+            incCEquad=False, \
+            incSingleFreqNoise=False, \
+                                        # True
+            singlePulsarMultipleFreqNoise=None, \
+                                        # [True, ..., False]
+            multiplePulsarMultipleFreqNoise=None, \
+                                        # [0, 3, 2, ..., 4]
+            dmFrequencyLines=None
+                                        # [0, 3, 2, ..., 4]
+                                        ):
+        # Figure out what the model actually is
+        return modeldict
+
 
     # Initialise the model
     def initModel(self, nfreqmodes=20, ndmfreqmodes=None, \
@@ -2720,10 +2805,8 @@ class ptaLikelihood(object):
         for m2psr in self.ptapsrs:
             Tstart = np.min([np.min(m2psr.toas), Tstart])
             Tfinish = np.max([np.max(m2psr.toas), Tfinish])
-            #Tstart = np.min([np.min(self.ptapsrs[0].toas), Tstart])
-            #Tfinish = np.max([np.max(self.ptapsrs[0].toas), Tfinish])
 
-        # After processing the parameters, store the number of single frequency lines
+        # Store the number of single frequency lines
         psrSingleFreqNoiseModes = np.zeros(len(self.ptapsrs), dtype=np.int)
         psrSingleDMFreqNoiseModes = np.zeros(len(self.ptapsrs), dtype=np.int)
 
@@ -2842,20 +2925,139 @@ class ptaLikelihood(object):
             index += self.ptasignals[-1].npars
 
 
-        # If the frequency coefficients are included explicitly (mark1
-        # likelihood), we need a couple of extra signals
-        if likfunc=='mark1':
-            for ii in range(len(self.ptapsrs)):
-                self.addSignalFourierCoeff(ii, index, Tmax)
+        self.allocateAuxiliaries()
+        self.initPrior()
+        self.pardes = self.getModelParameterList()
+
+    """
+    Initialise the model. Require all options to be explicitly set
+    @param numNoiseFreqs:       Number of noise frequencies in our model (or
+                                that is described by the model), per pulsar
+    @param numDMFreqs:          Same, but for DM variations, per pulsar
+    @param numSingleFreqs:      Number of floating noise frequencies per pulsar
+    @param numSingleDMFreqs:    Number of floating DM frequencies per pulsar
+    @param dmModel:             Which DM model to use
+    """
+    def initFullModel(self, \
+            separateEfacs, \
+            numNoiseFreqs, numDMFreqs, \
+            #numSingleFreqs, numSingleDMFreqs, \
+            dmModel,
+            orderFrequencyLines=False, \
+            likfunc='mark3'):
+        if len(self.ptapsrs) < 1:
+            raise IOError, "No pulsars loaded"
+
+        # Details about the likelihood function
+        self.likfunc = likfunc
+        self.orderFrequencyLines = orderFrequencyLines
+
+        # Determine the time baseline of the array of pulsars
+        Tstart = np.min(self.ptapsrs[0].toas)
+        Tfinish = np.max(self.ptapsrs[0].toas)
+        for m2psr in self.ptapsrs:
+            Tstart = np.min([np.min(m2psr.toas), Tstart])
+            Tfinish = np.max([np.max(m2psr.toas), Tfinish])
+        Tmax = Tfinish - Tstart
+
+        # If the compressionComplement is defined, overwrite the default
+        if evalCompressionComplement != None:
+            self.evallikcomp = evalCompressionComplement
+        elif compression == 'None':
+            self.evallikcomp = False
+        else:
+            self.evallikcomp = True
+
+        # Modify design matrices, and create pulsar Auxiliary quantities
+        for pindex, m2psr in enumerate(self.ptapsrs):
+            # If we model DM variations, we will need to include QSD
+            # marginalisation for DM. Modify design matrix accordingly
+            if dmModel[pindex] != 'None':
+                m2psr.addDMQuadratic()
+
+            # For every pulsar, construct the auxiliary quantities like the Fourier
+            # design matrix etc
+            m2psr.createAuxiliaries(Tmax, nfreqmodes, ndmfreqmodes, not separateEfacs, \
+                            nSingleFreqs=nSingleFreqs, nSingleDMFreqs=nSingleDMFreqs, \
+                                    likfunc=likfunc, compression=compression)
+
+            # When selecting Fourier modes, like in mark7/mark8, the binclude vector
+            # indicates whether or not a frequency is included in the likelihood. By
+            # default they are all 'on'
+            if self.likfunc == 'mark7' or self.likfunc == 'mark8':
+                m2psr.setLimitedModeAuxiliaries([1]*numNoiseFreqs[pindex], \
+                        [1]*numDMFreqs[pindex], likfunc=self.likfunc)
+
+        # Initialise the ptasignal objects
+        self.ptasignals = []
+        index = 0
+        for ii, m2psr in enumerate(self.ptapsrs):
+            # When adding efac signals, there may be many
+            noldsignals = len(self.ptasignals)
+            self.addSignalEfac(ii, index, separateEfacs, varyEfac)
+            nnewsignals = len(self.ptasignals)
+            for jj in range(noldsignals, nnewsignals):
+                index += self.ptasignals[jj].npars
+
+            if incEquad:
+                self.addSignalEquad(ii, index)
+                index += self.ptasignals[-1].npars
+                
+            if incCEquad:
+                self.addSignalEquad(ii, index, coarsegrained=True)
                 index += self.ptasignals[-1].npars
 
-                if incDM:
-                    self.addSignalFourierCoeff(ii, index, Tmax, isDM=True)
-                    index += self.ptasignals[-1].npars
+            if incRedNoise:
+                self.addSignalRedNoise(ii, index, Tmax, noiseModel, fc)
+                index += self.ptasignals[-1].npars
+                self.haveStochSources = True
+
+            if incDM:
+                self.addSignalDMV(ii, index, Tmax, dmModel)
+                index += self.ptasignals[-1].npars
+                self.haveStochSources = True
+
+            for jj in range(numSingleFreqs[ii]):
+                self.addSignalNoiseFrequencyLine(ii, index, jj)
+                index += self.ptasignals[-1].npars
+                self.haveStochSources = True
+
+            for jj in range(numSingleDMFreqs[ii]):
+                self.addSignalDMFrequencyLine(ii, index, jj)
+                index += self.ptasignals[-1].npars
+                self.haveStochSources = True
+
+        if incGWB:
+            self.addSignalGWB(index, Tmax, gwbModel)
+            index += self.ptasignals[-1].npars
+            self.haveStochSources = True
+
+        if incClock:
+            self.addSignalClock(index, Tmax, clockModel)
+            index += self.ptasignals[-1].npars
+            self.haveStochSources = True
+
+        if incDipole:
+            self.addSignalDipole(index, Tmax, dipoleModel)
+            index += self.ptasignals[-1].npars
+            self.haveStochSources = True
+
+        if incAniGWB:
+            self.addSignalAniGWB(index, Tmax, anigwbModel, lAniGWB)
+            index += self.ptasignals[-1].npars
+            self.haveStochSources = True
+
+        if incBWM:
+            self.addSignalBWM(-1, index)
+            self.haveDetSources = True
+            index += self.ptasignals[-1].npars
+
 
         self.allocateAuxiliaries()
         self.initPrior()
         self.pardes = self.getModelParameterList()
+
+
 
 
     def getModelParameterList(self):
@@ -5388,6 +5590,9 @@ class ptaLikelihood(object):
     """
     Simple signal generation, use frequency domain for power-law signals by
     default
+
+    NOTE: the G-matrix is ignored when generating data (so generating pre-fit
+    data)
     """
     def gensig(self, parameters=None, filename=None, timedomain=False):
         if parameters == None:
@@ -5483,8 +5688,12 @@ class ptaLikelihood(object):
                 Cov += np.dot(totDFmat, np.dot(np.diag(self.Thetavec), totDFmat.T))
 
         # Create the projected covariance matrix, and decompose it
-        totG = np.eye(Cov.shape[0])
-        GCG = np.dot(totG.T, np.dot(Cov, totG))
+        # WARNING: for now we are ignoring the G-matrix when generating data
+        if True:
+            totG = np.eye(Cov.shape[0])
+            GCG = Cov
+        else:
+            GCG = np.dot(totG.T, np.dot(Cov, totG))
 
         try:
             cf = sl.cholesky(GCG).T
