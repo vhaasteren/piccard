@@ -47,15 +47,6 @@ from . import rjmcmchammer as rjemcee  # Internal module
 from .triplot import *
 from . import PTMCMC_generic as ptmcmc
 
-"""
-# Set the environment variables for MultiNest and other stuff
-ldlibpath = os.getenv('LD_LIBRARY_PATH')
-if ldlibpath == None:
-    ldlibpath = ''
-ldlibpath += ':/home/haasteren/local/lib'
-os.environ['LD_LIBRARY_PATH'] = ldlibpath
-"""
-
 try:
     import statsmodels.api as smapi
     sm = smapi
@@ -81,6 +72,7 @@ try:    # If MultiNest is not installed, do not use it
     pymultinest = pymultinest
 except ImportError:
     pymultinest = None
+
 
 # For DM calculations, use this constant
 # See You et al. (2007) - http://arxiv.org/abs/astro-ph/0702366
@@ -977,7 +969,7 @@ class ptasignal(object):
     ntotpars = 0            # Total number of parameters (also non-varying)
     nindex = 0              # Index in parameters array
     npsrfreqindex = 0       # Index of frequency line for this psr (which line)
-    k
+
                             #   Do not double-count frequencies (so not modes, but
                             #   freqs)
     npsrdmfreqindex = 0     # Index of DM frequency line for this psr (which line)
@@ -1531,14 +1523,14 @@ class ptaPulsar(object):
             ndmf = 0
             nf = 0
 
-            if nfreqs is not None:
+            if nfreqs is not None and nfreqs != 0:
                 (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
                 nf = -1
             else:
                 self.Fmat = np.zeros((len(self.toas), 0))
                 self.Ffreqs = np.zeros(0)
 
-            if ndmfreqs is not None:
+            if ndmfreqs is not None and ndmfreqs != 0:
                 (self.Fdmmat, self.Fdmfreqs) = fourierdesignmatrix(self.toas, 2*ndmfreqs, Tmax)
                 self.Dmat = np.diag(DMk / (self.freqs**2))
                 self.DF = np.dot(self.Dmat, self.Fdmmat)
@@ -2880,6 +2872,7 @@ class ptaLikelihood(object):
 
         return psrSignals
 
+
     """
     Check the read-in signal dictionary. Reject improperly defined models
 
@@ -2992,6 +2985,7 @@ class ptaLikelihood(object):
             self.EGGNGGE = np.zeros((np.sum(self.npff)+np.sum(self.npffdm), \
                     np.sum(self.npff)+np.sum(self.npffdm)))
 
+
     """
     Based on somewhat simpler quantities, this function makes a full model
     dictionary. Standard use would be to save that dictionary in a json file, so
@@ -3000,7 +2994,7 @@ class ptaLikelihood(object):
     @param nfreqmodes:      blah
     @param dmnfreqmodes:    blah
     """
-    def makeModel(self,  nfreqmodes=20, ndmfreqmodes=None, \
+    def makeModel(self,  nfreqs=20, ndmfreqs=None, \
             incRedNoise=False, noiseModel='powerlaw', fc=None, \
             incDM=False, dmModel='powerlaw', \
             incClock=False, clockModel='powerlaw', \
@@ -3016,10 +3010,348 @@ class ptaLikelihood(object):
                                         # [True, ..., False]
             multiplePulsarMultipleFreqNoise=None, \
                                         # [0, 3, 2, ..., 4]
-            dmFrequencyLines=None
+            dmFrequencyLines=None,
                                         # [0, 3, 2, ..., 4]
-                                        ):
-        # Figure out what the model actually is
+            orderFrequencyLines=False, \
+            compression = 'None', \
+            evalCompressionComplement = None, \
+            likfunc='mark3'):
+        # We have to determine the number of frequencies we'll need
+        numNoiseFreqs = np.zeros(len(self.ptapsrs), dtype=np.int)
+        numDMFreqs = np.zeros(len(self.ptapsrs), dtype=np.int)
+        numSingleFreqs = np.zeros(len(self.ptapsrs), dtype=np.int)
+        numSingleDMFreqs = np.zeros(len(self.ptapsrs), dtype=np.int)
+
+        # Figure out what the frequencies per pulsar are
+        for pindex, m2psr in enumerate(self.ptapsrs):
+            if incDM:
+                if ndmfreqs is None or ndmfreqs=="None":
+                    ndmfreqs = nfreqs
+            else:
+                ndmfreqs = 0
+
+            if incSingleFreqNoise:
+                numSingleFreqs[pindex] = 1
+            elif singlePulsarMultipleFreqNoise is not None:
+                if singlePulsarMultipleFreqNoise[pindex]:
+                    numSingleFreqs[pindex] = 1
+            elif multiplePulsarMultipleFreqNoise is not None:
+                numSingleFreqs[pindex] = multiplePulsarMultipleFreqNoise[pindex]
+
+            if dmFrequencyLines is not None:
+                numSingleDMFreqs[pindex] = dmFrequencyLines[pindex]
+
+            numNoiseFreqs[pindex] = nfreqs
+            numDMFreqs[pindex] = ndmfreqs
+
+        signals = []
+
+        for ii, m2psr in enumerate(self.ptapsrs):
+            if separateEfacs:
+                uflagvals = list(set(m2psr.flags))  # Unique flags
+                for flagval in uflagvals:
+                    newsignal = dict({
+                        "stype":"efac",
+                        "corr":"single",
+                        "pulsarind":ii,
+                        "flagname":"efacequad",
+                        "flagvalue":flagval,
+                        "bvary":[int(varyEfac)],
+                        "pmin":[0.001],
+                        "pmax":[10.0],
+                        "pwidth":[0.1],
+                        "pstart":[1.0]
+                        })
+                    signals.append(newsignal)
+            else:
+                newsignal = dict({
+                    "stype":"efac",
+                    "corr":"single",
+                    "pulsarind":ii,
+                    "flagname":"pulsarname",
+                    "flagvalue":m2psr.name,
+                    "bvary":[int(varyEfac)],
+                    "pmin":[0.001],
+                    "pmax":[10.0],
+                    "pwidth":[0.1],
+                    "pstart":[1.0]
+                    })
+                signals.append(newsignal)
+
+            if incEquad:
+                newsignal = dict({
+                    "stype":"equad",
+                    "corr":"single",
+                    "pulsarind":ii,
+                    "flagname":"pulsarname",
+                    "flagvalue":m2psr.name,
+                    "bvary":[1],
+                    "pmin":[-10.0],
+                    "pmax":[-5.0],
+                    "pwidth":[0.1],
+                    "pstart":[-8.0]
+                    })
+                signals.append(newsignal)
+
+            if incCEquad:
+                newsignal = dict({
+                    "stype":"jitter",
+                    "corr":"single",
+                    "pulsarind":ii,
+                    "flagname":"pulsarname",
+                    "flagvalue":m2psr.name,
+                    "bvary":[1],
+                    "pmin":[-10.0],
+                    "pmax":[-5.0],
+                    "pwidth":[0.1],
+                    "pstart":[-8.0]
+                    })
+                signals.append(newsignal)
+
+            if incRedNoise:
+                if noiseModel=='spectrum':
+                    nfreqs = numNoiseFreqs[ii]
+                    bvary = [1]*nfreqs
+                    pmin = [-18.0]*nfreqs
+                    pmax = [-7.0]*nfreqs
+                    pstart = [-10.0]*nfreqs
+                    pwidth = [0.1]*nfreqs
+                elif noiseModel=='powerlaw':
+                    bvary = [1, 1, 0]
+                    pmin = [-20.0, 0.02, 1.0e-11]
+                    pmax = [-10.0, 6.98, 3.0e-9]
+                    pstart = [-14.0, 2.01, 1.0e-10]
+                    pwidth = [0.1, 0.1, 5.0e-11]
+                elif noiseModel=='spectralModel':
+                    bvary = [1, 1, 1]
+                    pmin = [-28.0, 0.0, -4.0]
+                    pmax = [-14.0, 12.0, 2.0]
+                    pstart = [-22.0, 2.0, -1.0]
+                    pwidth = [-0.2, 0.1, 0.1]
+
+                newsignal = dict({
+                    "stype":noiseModel,
+                    "corr":"single",
+                    "pulsarind":ii,
+                    "flagname":"pulsarname",
+                    "flagvalue":m2psr.name,
+                    "bvary":bvary,
+                    "pmin":pmin,
+                    "pmax":pmax,
+                    "pwidth":pwidth,
+                    "pstart":pstart
+                    })
+                signals.append(newsignal)
+
+            if incDM:
+                if dmModel=='dmspectrum':
+                    nfreqs = numDMFreqs[ii]
+                    bvary = [1]*nfreqs
+                    pmin = [-14.0]*nfreqs
+                    pmax = [-3.0]*nfreqs
+                    pstart = [-7.0]*nfreqs
+                    pwidth = [0.1]*nfreqs
+                elif noiseModel=='dmpowerlaw':
+                    bvary = [1, 1, 0]
+                    pmin = [-14.0, 0.02, 1.0e-11]
+                    pmax = [-6.5, 6.98, 3.0e-9]
+                    pstart = [-13.0, 2.01, 1.0e-10]
+                    pwidth = [0.1, 0.1, 5.0e-11]
+
+                newsignal = dict({
+                    "stype":noiseModel,
+                    "corr":"single",
+                    "pulsarind":ii,
+                    "flagname":"pulsarname",
+                    "flagvalue":m2psr.name,
+                    "bvary":bvary,
+                    "pmin":pmin,
+                    "pmax":pmax,
+                    "pwidth":pwidth,
+                    "pstart":pstart
+                    })
+                signals.append(newsignal)
+
+            for jj in range(numSingleFreqs[ii]):
+                newsignal = dict({
+                    "stype":'frequencyline',
+                    "corr":"single",
+                    "pulsarind":ii,
+                    "flagname":"pulsarname",
+                    "flagvalue":m2psr.name,
+                    "bvary":[1, 1],
+                    "pmin":[-9.0, -18.0],
+                    "pmax":[-5.0, -9.0],
+                    "pwidth":[-0.1, -0.1],
+                    "pstart":[-7.0, -10.0]
+                    })
+                signals.append(newsignal)
+
+            for jj in range(numSingleDMFreqs[ii]):
+                newsignal = dict({
+                    "stype":'dmfrequencyline',
+                    "corr":"single",
+                    "pulsarind":ii,
+                    "flagname":"pulsarname",
+                    "flagvalue":m2psr.name,
+                    "bvary":[1, 1],
+                    "pmin":[-9.0, -18.0],
+                    "pmax":[-5.0, -9.0],
+                    "pwidth":[-0.1, -0.1],
+                    "pstart":[-7.0, -10.0]
+                    })
+                signals.append(newsignal)
+
+        if incGWB:
+            if gwbModel=='spectrum':
+                nfreqs = np.max(numNoiseFreqs)
+                bvary = [1]*nfreqs
+                pmin = [-18.0]*nfreqs
+                pmax = [-7.0]*nfreqs
+                pstart = [-10.0]*nfreqs
+                pwidth = [0.1]*nfreqs
+            elif gwbModel=='powerlaw':
+                bvary = [1, 1, 0]
+                pmin = [-17.0, 1.02, 1.0e-11]
+                pmax = [-10.0, 6.98, 3.0e-9]
+                pstart = [-15.0, 2.01, 1.0e-10]
+                pwidth = [0.1, 0.1, 5.0e-11]
+
+            newsignal = dict({
+                "stype":gwbModel,
+                "corr":"gr",
+                "pulsarind":-1,
+                "bvary":bvary,
+                "pmin":pmin,
+                "pmax":pmax,
+                "pwidth":pwidth,
+                "pstart":pstart
+                })
+            signals.append(newsignal)
+
+        if incClock:
+            if clockModel=='spectrum':
+                nfreqs = np.max(numNoiseFreqs)
+                bvary = [1]*nfreqs
+                pmin = [-18.0]*nfreqs
+                pmax = [-7.0]*nfreqs
+                pstart = [-10.0]*nfreqs
+                pwidth = [0.1]*nfreqs
+            elif clockModel=='powerlaw':
+                bvary = [1, 1, 0]
+                pmin = [-17.0, 1.02, 1.0e-11]
+                pmax = [-10.0, 6.98, 3.0e-9]
+                pstart = [-15.0, 2.01, 1.0e-10]
+                pwidth = [0.1, 0.1, 5.0e-11]
+
+            newsignal = dict({
+                "stype":clockModel,
+                "corr":"uniform",
+                "pulsarind":-1,
+                "bvary":bvary,
+                "pmin":pmin,
+                "pmax":pmax,
+                "pwidth":pwidth,
+                "pstart":pstart
+                })
+            signals.append(newsignal)
+
+        if incDipole:
+            if dipoleModel=='spectrum':
+                nfreqs = np.max(numNoiseFreqs)
+                bvary = [1]*nfreqs
+                pmin = [-18.0]*nfreqs
+                pmax = [-7.0]*nfreqs
+                pstart = [-10.0]*nfreqs
+                pwidth = [0.1]*nfreqs
+            elif dipoleModel=='powerlaw':
+                bvary = [1, 1, 0]
+                pmin = [-17.0, 1.02, 1.0e-11]
+                pmax = [-10.0, 6.98, 3.0e-9]
+                pstart = [-15.0, 2.01, 1.0e-10]
+                pwidth = [0.1, 0.1, 5.0e-11]
+
+            newsignal = dict({
+                "stype":dipoleModel,
+                "corr":"dipole",
+                "pulsarind":-1,
+                "bvary":bvary,
+                "pmin":pmin,
+                "pmax":pmax,
+                "pwidth":pwidth,
+                "pstart":pstart
+                })
+            signals.append(newsignal)
+
+        if incAniGWB:
+            nclm = (lAniGWB+1)**2-1
+            clmvary = [1]*nclm
+            clmmin = [-5.0]*nclm
+            clmmax = [5.0]*nclm
+            clmstart = [0.0]*nclm
+            clmwidth = [0.2]*nclm
+            if anigwbModel=='spectrum':
+                nfreqs = np.max(numNoiseFreqs)
+                bvary = [1]*nfreqs + clmvary
+                pmin = [-18.0]*nfreqs + clmmin
+                pmax = [-7.0]*nfreqs + clmmax
+                pstart = [-10.0]*nfreqs + clmstart
+                pwidth = [0.1]*nfreqs + clmwidth
+            elif anigwbModel=='powerlaw':
+                bvary = [1, 1, 0] + clmvary
+                pmin = [-17.0, 1.02, 1.0e-11] + clmmin
+                pmax = [-10.0, 6.98, 3.0e-9] + clmmax
+                pstart = [-15.0, 2.01, 1.0e-10] + clmstart
+                pwidth = [0.1, 0.1, 5.0e-11] + clmwidth
+
+            newsignal = dict({
+                "stype":anigwbModel,
+                "corr":"anisotropicgwb",
+                "pulsarind":-1,
+                "bvary":bvary,
+                "pmin":pmin,
+                "pmax":pmax,
+                "pwidth":pwidth,
+                "pstart":pstart,
+                "lAniGWB":lAniGWB
+                })
+            signals.append(newsignal)
+
+        if incBWM:
+            toamax = self.ptapsrs[0].toas[0]
+            toamin = self.ptapsrs[0].toas[0]
+            for psr in self.ptapsrs:
+                if toamax < np.max(psr.toas):
+                    toamax = np.max(psr.toas)
+                if toamin > np.min(psr.toas):
+                    toamin = np.min(psr.toas)
+            newsignal = dict({
+                "stype":'bwm',
+                "corr":"gr",
+                "pulsarind":-1,
+                "bvary":[1, 1, 1, 1, 1],
+                "pmin":[toamin, -18.0, 0.0, 0.0, 0.0],
+                "pmax":[toamax, -10.0, 2*np.pi, np.pi, np.pi],
+                "pwidth":[30*24*3600.0, 0.1, 0.1, 0.1, 0.1],
+                "pstart":[0.5*(toamax-toamin), -15.0, 3.0, 1.0, 1.0]
+                })
+            signals.append(newsignal)
+
+        # The list of signals
+        modeldict = dict({
+            "file version":2013.12,
+            "author":"piccard-makeModel",
+            "numpulsars":len(self.ptapsrs),
+            "pulsarnames":[self.ptapsrs[ii].name for ii in range(len(self.ptapsrs))],
+            "numNoiseFreqs":list(numNoiseFreqs),
+            "numDMFreqs":list(numDMFreqs),
+            "compression":str(compression),
+            "orderFrequencyLines":str(orderFrequencyLines),
+            "evalCompressionComplement":str(evalCompressionComplement),
+            "likfunc":likfunc,
+            "signals":signals
+            })
+
         return modeldict
 
 
@@ -3054,7 +3386,10 @@ class ptaLikelihood(object):
         Tstart = np.min(self.ptapsrs[0].toas)
         Tfinish = np.max(self.ptapsrs[0].toas)
         self.likfunc = likfunc
-        self.orderFrequencyLines = orderFrequencyLines
+        if orderFrequencyLines == "True":
+            self.orderFrequencyLines = True
+        else:
+            self.orderFrequencyLines = False
 
         for m2psr in self.ptapsrs:
             Tstart = np.min([np.min(m2psr.toas), Tstart])
@@ -3184,29 +3519,25 @@ class ptaLikelihood(object):
         self.pardes = self.getModelParameterList()
 
     """
-    Initialise the model. Require all options to be explicitly set
-    @param numNoiseFreqs:       Number of noise frequencies in our model (or
-                                that is described by the model), per pulsar
-    @param numDMFreqs:          Same, but for DM variations, per pulsar
-    @param numSingleFreqs:      Number of floating noise frequencies per pulsar
-    @param numSingleDMFreqs:    Number of floating DM frequencies per pulsar
-
-    TODO: Or just use the entire JSON dictionary?
+    Initialise the model.
+    @param numNoiseFreqs:       Dictionary with the full model
     """
-    def initFullModel(self, \
-            signals, \
-            numNoiseFreqs, numDMFreqs, \
-            #numSingleFreqs, numSingleDMFreqs, \
-            #dmModel, \
-            orderFrequencyLines=False, \
-            likfunc='mark3', \
-            comression='None', \
-            evalCompressionComplement=None, \
-            signals=None):
+    def initFullModel(self, fullmodel):
+        numNoiseFreqs = fullmodel['numNoiseFreqs']
+        numDMFreqs = fullmodel['numDMFreqs']
+        compression = fullmodel['compression']
+        evalCompressionComplement = fullmodel['evalCompressionComplement']
+        orderFrequencyLines = fullmodel['orderFrequencyLines']
+        likfunc = fullmodel['likfunc']
+        signals = fullmodel['signals']
+
         if len(self.ptapsrs) < 1:
             raise IOError, "No pulsars loaded"
 
-        if signals is None or not self.checkSignalDictionary(signals):
+        if fullmodel['numpulsars'] != len(self.ptapsrs):
+            raise IOError, "Model does not have the right number of pulsars"
+
+        if not self.checkSignalDictionary(signals):
             raise IOError, "Signal dictionary not properly defined"
 
         # Details about the likelihood function
@@ -3222,7 +3553,7 @@ class ptaLikelihood(object):
         Tmax = Tfinish - Tstart
 
         # If the compressionComplement is defined, overwrite the default
-        if evalCompressionComplement != None:
+        if evalCompressionComplement != 'None':
             self.evallikcomp = evalCompressionComplement
         elif compression == 'None':
             self.evallikcomp = False
@@ -3235,6 +3566,12 @@ class ptaLikelihood(object):
         numSingleDMFreqs = self.getNumberOfSignals(signals, \
                 stype='dmfrequencyline', corr='single')
 
+        # Find out how many efac signals there are, and translate that to a
+        # separateEfacs boolean array (for two-component noise analysis)
+        numEfacs = self.getNumberOfSignals(signals, \
+                stype='efac', corr='single')
+        separateEfacs = numEfacs > 1
+
         # Keep track of how many we have added
         doneSingleFreqs = np.zeros(len(numSingleFreqs))
         doneSingleDMFreqs = np.zeros(len(numSingleDMFreqs))
@@ -3243,12 +3580,14 @@ class ptaLikelihood(object):
         for pindex, m2psr in enumerate(self.ptapsrs):
             # If we model DM variations, we will need to include QSD
             # marginalisation for DM. Modify design matrix accordingly
-            if dmModel[pindex] != 'None':
+            #if dmModel[pindex] != 'None':
+            if numDMFreqs[pindex] > 0:
                 m2psr.addDMQuadratic()
 
             # For every pulsar, construct the auxiliary quantities like the Fourier
             # design matrix etc
-            m2psr.createAuxiliaries(Tmax, nfreqmodes, ndmfreqmodes, not separateEfacs, \
+            m2psr.createAuxiliaries(Tmax, numNoiseFreqs[pindex], \
+                    numDMFreqs[pindex], not separateEfacs[pindex], \
                             nSingleFreqs=numSingleFreqs[pindex], \
                             nSingleDMFreqs=numSingleDMFreqs[pindex], \
                             likfunc=likfunc, compression=compression)
@@ -3281,50 +3620,54 @@ class ptaLikelihood(object):
             elif signal['stype'] in ['powerlaw', 'spectrum', 'spectralModel']:
                 # Any time-correlated signal
                 if signal['corr'] == 'anisotropicgwb':
-                    self.addSignalEquad(signal['stype'], signal['corr'], \
+                    self.addSignalTimeCorrelated(signal['stype'], signal['corr'], \
                             signal['pulsarind'], index, Tmax, \
                             signal['bvary'], signal['pmin'], signal['pmax'], \
                             signal['pwidth'], signal['pstart'], \
                             signal['lAniGWB'])
                     index += self.ptasignals[-1].npars
+                    self.haveStochSources = True
                 else:
-                    self.addSignalEquad(signal['stype'], signal['corr'], \
+                    self.addSignalTimeCorrelated(signal['stype'], signal['corr'], \
                             signal['pulsarind'], index, Tmax, \
                             signal['bvary'], signal['pmin'], signal['pmax'], \
                             signal['pwidth'], signal['pstart'])
                     index += self.ptasignals[-1].npars
+                    self.haveStochSources = True
             elif signal['stype'] in ['dmpowerlaw', 'dmspectrum']:
                 # A DM variation signal
-                self.addSignalEquad(signal['stype'], signal['corr'], \
+                self.addSignalDMV(signal['stype'], signal['corr'], \
                         signal['pulsarind'], index, Tmax, \
                         signal['bvary'], signal['pmin'], signal['pmax'], \
                         signal['pwidth'], signal['pstart'])
                 index += self.ptasignals[-1].npars
+                self.haveStochSources = True
             elif signal['stype'] == 'frequencyline':
                 # Single free-floating frequency line
                 self.addSignalFrequencyLine(signal['stype'], \
-                        signal['pulsarind'], index, ]
+                        signal['pulsarind'], index, \
                         doneSingleFreqs[signal['pulsarind']], \
                         signal['bvary'], signal['pmin'], signal['pmax'], \
                         signal['pwidth'], signal['pstart'])
                 doneSingleFreqs[signal['pulsarind']] += 1
                 index += self.ptasignals[-1].npars
+                self.haveStochSources = True
             elif signal['stype'] == 'dmfrequencyline':
                 # Single free-floating frequency line
                 self.addSignalFrequencyLine(signal['stype'], \
-                        signal['pulsarind'], index, ]
+                        signal['pulsarind'], index, \
                         doneSingleDMFreqs[signal['pulsarind']], \
                         signal['bvary'], signal['pmin'], signal['pmax'], \
                         signal['pwidth'], signal['pstart'])
                 doneSingleDMFreqs[signal['pulsarind']] += 1
                 index += self.ptasignals[-1].npars
+                self.haveStochSources = True
             elif signal['stype'] == 'bwm':
                 # A burst with memory
                 self.addSignalBWM(signal['stype'], signal['pulsarind'], index, \
                         signal['bvary'], signal['pmin'], signal['pmax'], \
                         signal['pwidth'], signal['pstart'])
                 index += self.ptasignals[-1].npars
-
 
 
         self.allocateAuxiliaries()
