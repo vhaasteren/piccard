@@ -39,6 +39,7 @@ import h5py as h5
 import matplotlib.pyplot as plt
 import os as os
 import sys
+import json
 
 from . import pytwalk                  # Internal module
 from . import pydnest                  # Internal module
@@ -988,6 +989,8 @@ class ptasignal(object):
     Tmax = None
     corrmat = None
 
+    # Quantities for correlated signals
+    Ffreqs = None
     aniCorr = None       # Anisotropic correlations are described by this class
 
 
@@ -1518,28 +1521,30 @@ class ptaPulsar(object):
     def createAuxiliaries(self, Tmax, nfreqs, ndmfreqs, twoComponent=False, \
             nSingleFreqs=0, nSingleDMFreqs=0, compression='None', \
             likfunc='mark3'):
+        # TODO: Make this flow somewhat better. There is some redundancy here
+        # now
+        ndmf = 0
+        nf = 0
+
+        if nfreqs is not None and nfreqs != 0:
+            (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
+            nf = -1
+        else:
+            self.Fmat = np.zeros((len(self.toas), 0))
+            self.Ffreqs = np.zeros(0)
+
+        if ndmfreqs is not None and ndmfreqs != 0:
+            (self.Fdmmat, self.Fdmfreqs) = fourierdesignmatrix(self.toas, 2*ndmfreqs, Tmax)
+            self.Dmat = np.diag(DMk / (self.freqs**2))
+            self.DF = np.dot(self.Dmat, self.Fdmmat)
+            ndmf = -1
+        else:
+            self.Dmat = np.zeros((len(self.freqs), 0))
+            self.DF = np.zeros((len(self.freqs), 0))
+            self.Fdmfreqs = np.zeros(0)
+
 
         if likfunc == 'mark1':
-            ndmf = 0
-            nf = 0
-
-            if nfreqs is not None and nfreqs != 0:
-                (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
-                nf = -1
-            else:
-                self.Fmat = np.zeros((len(self.toas), 0))
-                self.Ffreqs = np.zeros(0)
-
-            if ndmfreqs is not None and ndmfreqs != 0:
-                (self.Fdmmat, self.Fdmfreqs) = fourierdesignmatrix(self.toas, 2*ndmfreqs, Tmax)
-                self.Dmat = np.diag(DMk / (self.freqs**2))
-                self.DF = np.dot(self.Dmat, self.Fdmmat)
-                ndmf = -1
-            else:
-                self.Dmat = np.zeros((len(self.freqs), 0))
-                self.DF = np.zeros((len(self.freqs), 0))
-                self.Fdmfreqs = np.zeros(0)
-
             self.constructCompressionMatrix(compression, nfreqs=nf, ndmfreqs=ndmf)
 
             self.Gr = np.dot(self.Hmat.T, self.residuals)
@@ -2110,6 +2115,7 @@ class ptaLikelihood(object):
     likfunc = 'mark3'
 
     # Whether we evaluate the complement of the compressed likelihood
+    compression = 'None'
     evallikcomp = False
 
     # Whether we use the option of forcing the frequency lines to be ordered in
@@ -2418,7 +2424,7 @@ class ptaLikelihood(object):
         # Since this parameter space is so large, calculate the
         # best first-estimate values of these quantities
         # We assume that many auxiliaries have been set already (is done
-        # in initModel, so should be ok)
+        # in initModelOld, so should be ok)
         # TODO: check whether this works, and make smarter
         npars = newsignal.npars
         psr = self.ptapsrs[newsignal.pulsarind]
@@ -2785,6 +2791,13 @@ class ptaLikelihood(object):
             # Anisotropic GWB correlations
             newsignal.aniCorr = aniCorrelations(self.ptapsrs, lAniGWB)
 
+        if newsignal.corr != 'single':
+            # Also fill the Ffreqs array, since we are dealing with correlations
+            numfreqs = np.array([len(self.ptapsrs[ii].Ffreqs) \
+                    for ii in range(len(self.ptapsrs))])
+            ind = np.argmax(numfreqs)
+            newsignal.Ffreqs = self.ptapsrs[ind].Ffreqs.copy()
+
         self.ptasignals.append(newsignal)
 
     """
@@ -2860,7 +2873,7 @@ class ptaLikelihood(object):
     @param stype:   The signal type that must be matched
     @param corr:    Signal correlation that must be matched
     """
-    def getNumberOfSignals(self, signals, stype='powerlaw', corr='single'):
+    def getNumberOfSignalsFromDict(self, signals, stype='powerlaw', corr='single'):
         psrSignals = np.zeros(len(self.ptapsrs), dtype=np.int)
 
         for ii, signal in enumerate(signals):
@@ -2869,6 +2882,25 @@ class ptaLikelihood(object):
                     psrSignals[:] += 1
                 else:
                     psrSignals[signal['pulsarind']] += 1
+
+        return psrSignals
+
+    """
+    Find the number of signals per pulsar matching some criteria in the current
+    signal list.
+
+    @param stype:   The signal type that must be matched
+    @param corr:    Signal correlation that must be matched
+    """
+    def getNumberOfSignals(self, stype='powerlaw', corr='single'):
+        psrSignals = np.zeros(len(self.ptapsrs), dtype=np.int)
+
+        for ii, m2signal in enumerate(self.ptasignals):
+            if m2signal.stype == stype and m2signal.corr == corr:
+                if m2signal.pulsarind == -1:
+                    psrSignals[:] += 1
+                else:
+                    psrSignals[signal.pulsarind] += 1
 
         return psrSignals
 
@@ -2986,15 +3018,8 @@ class ptaLikelihood(object):
                     np.sum(self.npff)+np.sum(self.npffdm)))
 
 
-    """
-    Based on somewhat simpler quantities, this function makes a full model
-    dictionary. Standard use would be to save that dictionary in a json file, so
-    that it does not need to be manually created by the user
-
-    @param nfreqmodes:      blah
-    @param dmnfreqmodes:    blah
-    """
-    def makeModel(self,  nfreqs=20, ndmfreqs=None, \
+    # Initialise the model
+    def initModelOld(self, nfreqmodes=20, ndmfreqmodes=None, \
             incRedNoise=False, noiseModel='powerlaw', fc=None, \
             incDM=False, dmModel='powerlaw', \
             incClock=False, clockModel='powerlaw', \
@@ -3003,6 +3028,178 @@ class ptaLikelihood(object):
             incAniGWB=False, anigwbModel='powerlaw', lAniGWB=1, \
             incBWM=False, \
             varyEfac=False, incEquad=False, separateEfacs=False, \
+            incCEquad=False, \
+            incSingleFreqNoise=False, \
+                                        # True
+            singlePulsarMultipleFreqNoise=None, \
+                                        # [True, ..., False]
+            multiplePulsarMultipleFreqNoise=None, \
+                                        # [0, 3, 2, ..., 4]
+            dmFrequencyLines=None, \
+                                        # [0, 3, 2, ..., 4]
+            orderFrequencyLines=False, \
+            compression = 'None', \
+            evalCompressionComplement = None, \
+            likfunc='mark3'):
+        # For every pulsar, construct the auxiliary quantities like the Fourier
+        # design matrix etc
+        if len(self.ptapsrs) < 1:
+            raise IOError, "no pulsars found in hdf5 file"
+
+        Tstart = np.min(self.ptapsrs[0].toas)
+        Tfinish = np.max(self.ptapsrs[0].toas)
+        self.likfunc = likfunc
+        if orderFrequencyLines == "True":
+            self.orderFrequencyLines = True
+        else:
+            self.orderFrequencyLines = False
+
+        for m2psr in self.ptapsrs:
+            Tstart = np.min([np.min(m2psr.toas), Tstart])
+            Tfinish = np.max([np.max(m2psr.toas), Tfinish])
+
+        # Store the number of single frequency lines
+        psrSingleFreqNoiseModes = np.zeros(len(self.ptapsrs), dtype=np.int)
+        psrSingleDMFreqNoiseModes = np.zeros(len(self.ptapsrs), dtype=np.int)
+
+        # Total duration of the experiment
+        Tmax = Tfinish - Tstart
+        pindex = 0
+        for m2psr in self.ptapsrs:
+            if incDM:
+                m2psr.addDMQuadratic()
+
+                if ndmfreqmodes is None:
+                    ndmfreqmodes = nfreqmodes
+
+            nSingleFreqs = 0
+            if incSingleFreqNoise:
+                nSingleFreqs = 1
+                psrSingleFreqNoiseModes[pindex] = 1
+            elif singlePulsarMultipleFreqNoise is not None:
+                if singlePulsarMultipleFreqNoise[pindex]:
+                    nSingleFreqs = 1
+                    psrSingleFreqNoiseModes[pindex] = 1
+            elif multiplePulsarMultipleFreqNoise is not None:
+                nSingleFreqs = multiplePulsarMultipleFreqNoise[pindex]
+                psrSingleFreqNoiseModes[pindex] = multiplePulsarMultipleFreqNoise[pindex]
+
+            nSingleDMFreqs = 0
+            if dmFrequencyLines is not None:
+                nSingleDMFreqs = dmFrequencyLines[pindex]
+                psrSingleDMFreqNoiseModes[pindex] = dmFrequencyLines[pindex]
+
+            m2psr.createAuxiliaries(Tmax, nfreqmodes, ndmfreqmodes, not separateEfacs, \
+                            nSingleFreqs=nSingleFreqs, nSingleDMFreqs=nSingleDMFreqs, \
+                                    likfunc=likfunc, compression=compression)
+
+            # If the compressionComplement is defined, overwrite the default
+            if compression == 'None':
+                self.evallikcomp = False
+            else:
+                self.compression = compression
+                self.evallikcomp = True
+
+            if evalCompressionComplement != None:
+                self.evallikcomp = evalCompressionComplement
+
+            # When selecting Fourier modes, like in mark7/mark8, the binclude vector
+            # indicates whether or not a frequency is included in the likelihood. By
+            # default they are all 'on'
+            if self.likfunc == 'mark7' or self.likfunc == 'mark8':
+                m2psr.setLimitedModeAuxiliaries([1]*nfreqmodes, [1]*ndmfreqmodes, \
+                        likfunc=self.likfunc)
+
+            pindex += 1
+
+        # Initialise the ptasignal objects
+        # Currently: one efac per pulsar, and red noise
+        self.ptasignals = []
+        index = 0
+        for ii in range(len(self.ptapsrs)):
+            # When adding efac signals, there may be many
+            noldsignals = len(self.ptasignals)
+            self.addSignalEfacOld(ii, index, separateEfacs, varyEfac)
+            nnewsignals = len(self.ptasignals)
+            for jj in range(noldsignals, nnewsignals):
+                index += self.ptasignals[jj].npars
+
+            if incEquad:
+                self.addSignalEquadOld(ii, index)
+                index += self.ptasignals[-1].npars
+                
+            if incCEquad:
+                self.addSignalEquadOld(ii, index, coarsegrained=True)
+                index += self.ptasignals[-1].npars
+
+            if incRedNoise:
+                self.addSignalRedNoiseOld(ii, index, Tmax, noiseModel, fc)
+                index += self.ptasignals[-1].npars
+                self.haveStochSources = True
+
+            if incDM:
+                self.addSignalDMVOld(ii, index, Tmax, dmModel)
+                index += self.ptasignals[-1].npars
+                self.haveStochSources = True
+
+            for jj in range(psrSingleFreqNoiseModes[ii]):
+                self.addSignalNoiseFrequencyLineOld(ii, index, jj)
+                index += self.ptasignals[-1].npars
+                self.haveStochSources = True
+
+            for jj in range(psrSingleDMFreqNoiseModes[ii]):
+                self.addSignalDMFrequencyLineOld(ii, index, jj)
+                index += self.ptasignals[-1].npars
+                self.haveStochSources = True
+
+        if incGWB:
+            self.addSignalGWBOld(index, Tmax, gwbModel)
+            index += self.ptasignals[-1].npars
+            self.haveStochSources = True
+
+        if incClock:
+            self.addSignalClockOld(index, Tmax, clockModel)
+            index += self.ptasignals[-1].npars
+            self.haveStochSources = True
+
+        if incDipole:
+            self.addSignalDipoleOld(index, Tmax, dipoleModel)
+            index += self.ptasignals[-1].npars
+            self.haveStochSources = True
+
+        if incAniGWB:
+            self.addSignalAniGWBOld(index, Tmax, anigwbModel, lAniGWB)
+            index += self.ptasignals[-1].npars
+            self.haveStochSources = True
+
+        if incBWM:
+            self.addSignalBWMOld(-1, index)
+            self.haveDetSources = True
+            index += self.ptasignals[-1].npars
+
+
+        self.allocateAuxiliaries()
+        self.initPrior()
+        self.pardes = self.getModelParameterList()
+
+
+    """
+    Based on somewhat simpler quantities, this function makes a full model
+    dictionary. Standard use would be to save that dictionary in a json file, so
+    that it does not need to be manually created by the user
+
+    @param nfreqmodes:      blah
+    @param dmnfreqmodes:    blah
+    """
+    def makeModelDict(self,  nfreqs=20, ndmfreqs=None, \
+            incRedNoise=False, noiseModel='powerlaw', fc=None, \
+            incDM=False, dmModel='powerlaw', \
+            incClock=False, clockModel='powerlaw', \
+            incGWB=False, gwbModel='powerlaw', \
+            incDipole=False, dipoleModel='powerlaw', \
+            incAniGWB=False, anigwbModel='powerlaw', lAniGWB=1, \
+            incBWM=False, \
+            varyEfac=True, incEquad=False, separateEfacs=False, \
             incCEquad=False, \
             incSingleFreqNoise=False, \
                                         # True
@@ -3355,168 +3552,75 @@ class ptaLikelihood(object):
         return modeldict
 
 
-    # Initialise the model
-    def initModel(self, nfreqmodes=20, ndmfreqmodes=None, \
-            incRedNoise=False, noiseModel='powerlaw', fc=None, \
-            incDM=False, dmModel='powerlaw', \
-            incClock=False, clockModel='powerlaw', \
-            incGWB=False, gwbModel='powerlaw', \
-            incDipole=False, dipoleModel='powerlaw', \
-            incAniGWB=False, anigwbModel='powerlaw', lAniGWB=1, \
-            incBWM=False, \
-            varyEfac=False, incEquad=False, separateEfacs=False, \
-            incCEquad=False, \
-            incSingleFreqNoise=False, \
-                                        # True
-            singlePulsarMultipleFreqNoise=None, \
-                                        # [True, ..., False]
-            multiplePulsarMultipleFreqNoise=None, \
-                                        # [0, 3, 2, ..., 4]
-            dmFrequencyLines=None, \
-                                        # [0, 3, 2, ..., 4]
-            orderFrequencyLines=False, \
-            compression = 'None', \
-            evalCompressionComplement = None, \
-            likfunc='mark3'):
-        # For every pulsar, construct the auxiliary quantities like the Fourier
-        # design matrix etc
-        if len(self.ptapsrs) < 1:
-            raise IOError, "no pulsars found in hdf5 file"
+    """
+    Create the model dictionary, based on the currently used model
+    """
+    def getModelDict(self):
+        # We have to determine the number of frequencies we'll need
+        npsrs = len(self.ptapsrs)
+        numNoiseFreqs = [int(len(self.ptapsrs[ii].Ffreqs)/2) for ii in range(npsrs)]
+        numDMFreqs = [int(len(self.ptapsrs[ii].Fdmfreqs)/2) for ii in range(npsrs)]
+        numSingleFreqs = self.getNumberOfSignals(stype='frequencyline', \
+                corr='single')
+        numSingleDMFreqs = self.getNumberOfSignals(stype='dmfrequencyline', \
+                corr='single')
 
-        Tstart = np.min(self.ptapsrs[0].toas)
-        Tfinish = np.max(self.ptapsrs[0].toas)
-        self.likfunc = likfunc
-        if orderFrequencyLines == "True":
-            self.orderFrequencyLines = True
-        else:
-            self.orderFrequencyLines = False
+        signals = []
 
-        for m2psr in self.ptapsrs:
-            Tstart = np.min([np.min(m2psr.toas), Tstart])
-            Tfinish = np.max([np.max(m2psr.toas), Tfinish])
+        for ii, m2signal in enumerate(self.ptasignals):
+            newsignal = dict({
+                "pulsarind":m2signal.pulsarind,
+                "stype":m2signal.stype,
+                "corr":m2signal.corr,
+                "flagname":m2signal.flagname,
+                "flagvalue":m2signal.flagvalue,
+                "bvary":map(int, m2signal.bvary),
+                "pmin":list(m2signal.pmin),
+                "pmax":list(m2signal.pmax),
+                "pstart":list(m2signal.pstart),
+                "pwidth":list(m2signal.pwidth),
+                "lAniGWB":m2signal.aniCorr
+                })
+            signals.append(newsignal)
 
-        # Store the number of single frequency lines
-        psrSingleFreqNoiseModes = np.zeros(len(self.ptapsrs), dtype=np.int)
-        psrSingleDMFreqNoiseModes = np.zeros(len(self.ptapsrs), dtype=np.int)
+        modeldict = dict({
+            "file version":2013.12,
+            "author":"piccard-makeModel",
+            "numpulsars":len(self.ptapsrs),
+            "pulsarnames":[self.ptapsrs[ii].name for ii in range(len(self.ptapsrs))],
+            "numNoiseFreqs":list(numNoiseFreqs),
+            "numDMFreqs":list(numDMFreqs),
+            "compression":self.compression,
+            "orderFrequencyLines":str(self.orderFrequencyLines),
+            "evalCompressionComplement":str(self.evallikcomp),
+            "likfunc":self.likfunc,
+            "signals":signals
+            })
 
-        # Total duration of the experiment
-        Tmax = Tfinish - Tstart
-        pindex = 0
-        for m2psr in self.ptapsrs:
-            if incDM:
-                m2psr.addDMQuadratic()
-
-                if ndmfreqmodes is None:
-                    ndmfreqmodes = nfreqmodes
-
-            nSingleFreqs = 0
-            if incSingleFreqNoise:
-                nSingleFreqs = 1
-                psrSingleFreqNoiseModes[pindex] = 1
-            elif singlePulsarMultipleFreqNoise is not None:
-                if singlePulsarMultipleFreqNoise[pindex]:
-                    nSingleFreqs = 1
-                    psrSingleFreqNoiseModes[pindex] = 1
-            elif multiplePulsarMultipleFreqNoise is not None:
-                nSingleFreqs = multiplePulsarMultipleFreqNoise[pindex]
-                psrSingleFreqNoiseModes[pindex] = multiplePulsarMultipleFreqNoise[pindex]
-
-            nSingleDMFreqs = 0
-            if dmFrequencyLines is not None:
-                nSingleDMFreqs = dmFrequencyLines[pindex]
-                psrSingleDMFreqNoiseModes[pindex] = dmFrequencyLines[pindex]
-
-            m2psr.createAuxiliaries(Tmax, nfreqmodes, ndmfreqmodes, not separateEfacs, \
-                            nSingleFreqs=nSingleFreqs, nSingleDMFreqs=nSingleDMFreqs, \
-                                    likfunc=likfunc, compression=compression)
-
-            # If the compressionComplement is defined, overwrite the default
-            if compression == 'None':
-                self.evallikcomp = False
-            else:
-                self.evallikcomp = True
-
-            if evalCompressionComplement != None:
-                self.evallikcomp = evalCompressionComplement
-
-            # When selecting Fourier modes, like in mark7/mark8, the binclude vector
-            # indicates whether or not a frequency is included in the likelihood. By
-            # default they are all 'on'
-            if self.likfunc == 'mark7' or self.likfunc == 'mark8':
-                m2psr.setLimitedModeAuxiliaries([1]*nfreqmodes, [1]*ndmfreqmodes, \
-                        likfunc=self.likfunc)
-
-            pindex += 1
-
-        # Initialise the ptasignal objects
-        # Currently: one efac per pulsar, and red noise
-        self.ptasignals = []
-        index = 0
-        for ii in range(len(self.ptapsrs)):
-            # When adding efac signals, there may be many
-            noldsignals = len(self.ptasignals)
-            self.addSignalEfacOld(ii, index, separateEfacs, varyEfac)
-            nnewsignals = len(self.ptasignals)
-            for jj in range(noldsignals, nnewsignals):
-                index += self.ptasignals[jj].npars
-
-            if incEquad:
-                self.addSignalEquadOld(ii, index)
-                index += self.ptasignals[-1].npars
-                
-            if incCEquad:
-                self.addSignalEquadOld(ii, index, coarsegrained=True)
-                index += self.ptasignals[-1].npars
-
-            if incRedNoise:
-                self.addSignalRedNoiseOld(ii, index, Tmax, noiseModel, fc)
-                index += self.ptasignals[-1].npars
-                self.haveStochSources = True
-
-            if incDM:
-                self.addSignalDMVOld(ii, index, Tmax, dmModel)
-                index += self.ptasignals[-1].npars
-                self.haveStochSources = True
-
-            for jj in range(psrSingleFreqNoiseModes[ii]):
-                self.addSignalNoiseFrequencyLineOld(ii, index, jj)
-                index += self.ptasignals[-1].npars
-                self.haveStochSources = True
-
-            for jj in range(psrSingleDMFreqNoiseModes[ii]):
-                self.addSignalDMFrequencyLineOld(ii, index, jj)
-                index += self.ptasignals[-1].npars
-                self.haveStochSources = True
-
-        if incGWB:
-            self.addSignalGWBOld(index, Tmax, gwbModel)
-            index += self.ptasignals[-1].npars
-            self.haveStochSources = True
-
-        if incClock:
-            self.addSignalClockOld(index, Tmax, clockModel)
-            index += self.ptasignals[-1].npars
-            self.haveStochSources = True
-
-        if incDipole:
-            self.addSignalDipoleOld(index, Tmax, dipoleModel)
-            index += self.ptasignals[-1].npars
-            self.haveStochSources = True
-
-        if incAniGWB:
-            self.addSignalAniGWBOld(index, Tmax, anigwbModel, lAniGWB)
-            index += self.ptasignals[-1].npars
-            self.haveStochSources = True
-
-        if incBWM:
-            self.addSignalBWMOld(-1, index)
-            self.haveDetSources = True
-            index += self.ptasignals[-1].npars
+        return modeldict
 
 
-        self.allocateAuxiliaries()
-        self.initPrior()
-        self.pardes = self.getModelParameterList()
+    """
+    Initialise a model from a json file
+
+    @param filename:    Filename of the json file with the model
+    """
+    def initModelFromFile(self, filename):
+        with open(filename) as data_file:
+            model = json.load(data_file)
+        self.initFullModel(model)
+
+    """
+    Write the model to a json file
+
+    @param filename:    Filename of the json file with the model
+    """
+    def writeModelToFile(self, filename):
+        model = self.getModelDict()
+
+        with open(filename, 'w') as outfile:
+            json.dump(model, outfile, sort_keys=False, indent=4, separators=(',', ': '))
+
 
     """
     Initialise the model.
@@ -3555,20 +3659,22 @@ class ptaLikelihood(object):
         # If the compressionComplement is defined, overwrite the default
         if evalCompressionComplement != 'None':
             self.evallikcomp = evalCompressionComplement
+            self.compression = compression
         elif compression == 'None':
             self.evallikcomp = False
         else:
             self.evallikcomp = True
+            self.compression = compression
 
         # Find out how many single-frequency modes there are
-        numSingleFreqs = self.getNumberOfSignals(signals, \
+        numSingleFreqs = self.getNumberOfSignalsFromDict(signals, \
                 stype='frequencyline', corr='single')
-        numSingleDMFreqs = self.getNumberOfSignals(signals, \
+        numSingleDMFreqs = self.getNumberOfSignalsFromDict(signals, \
                 stype='dmfrequencyline', corr='single')
 
         # Find out how many efac signals there are, and translate that to a
         # separateEfacs boolean array (for two-component noise analysis)
-        numEfacs = self.getNumberOfSignals(signals, \
+        numEfacs = self.getNumberOfSignalsFromDict(signals, \
                 stype='efac', corr='single')
         separateEfacs = numEfacs > 1
 
@@ -4063,7 +4169,7 @@ class ptaLikelihood(object):
                         di = np.diag_indices(2*nfreq)
                         self.Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += pcdoubled
                     elif m2signal.corr in ['gr', 'uniform', 'dipole', 'anisotropicgwb']:
-                        freqpy = self.ptapsrs[0].Ffreqs * spy
+                        freqpy = m2signal.Ffreqs * spy
                         pcdoubled = (Amp**2 * spy**3 / (12*np.pi*np.pi * m2signal.Tmax)) * freqpy ** (-Si)
                         nfreq = len(freqpy)
 
@@ -4685,7 +4791,9 @@ class ptaLikelihood(object):
     Profiling execution time. Put MDC1 open challenge 1 in the file
     mdc1-open1.h5, and load with:
     ===============================================================================
-    setup_mark3 = "import numpy as np, piccard as pic, matplotlib.pyplot as plt ; m3lik = pic.ptaLikelihood() ; m3lik.initFromFile('mdc1-open1.h5') ; m3lik.initModel(15, modelIndependentGWB=False, modelIndependentNoise=False, modelIndependentDM=False, modelIndependentAniGWB=False, varyEfac=False, incRedNoise=True, incEquad=False, separateEfacs=False, incGWB=True, incDM=False, incAniGWB=False, lAniGWB=2, likfunc='mark3') ; m3lik.initPrior()"
+    setup_mark3 = "import numpy as np, piccard as pic, matplotlib.pyplot as plt
+    ; m3lik = pic.ptaLikelihood() ; m3lik.initFromFile('mdc1-open1.h5') ;
+    m3lik.initModelOld(15, modelIndependentGWB=False, modelIndependentNoise=False, modelIndependentDM=False, modelIndependentAniGWB=False, varyEfac=False, incRedNoise=True, incEquad=False, separateEfacs=False, incGWB=True, incDM=False, incAniGWB=False, lAniGWB=2, likfunc='mark3') ; m3lik.initPrior()"
     timeit.timeit('m3lik.logposterior(m3lik.pstart)', setup=setup_mark3, number=1000)
     ===============================================================================
 
@@ -5604,7 +5712,9 @@ class ptaLikelihood(object):
     Profiling execution time. Put J0437 of the ipta-2013 set in the file
     J0437.h5, and load with:
     =============================================================================
-    setup_mark8 = "import numpy as np, piccard as pic, matplotlib.pyplot as plt ; m3lik = pic.ptaLikelihood() ; m3lik.initFromFile('J0437.h5') ; m3lik.initModel(30, modelIndependentGWB=False, modelIndependentNoise=True, modelIndependentDM=True, modelIndependentAniGWB=False, varyEfac=True, incRedNoise=True, incEquad=True, separateEfacs=True, incGWB=False, incDM=True, incAniGWB=False, lAniGWB=2, likfunc='mark6') ; m3lik.initPrior()"
+    setup_mark8 = "import numpy as np, piccard as pic, matplotlib.pyplot as plt
+    ; m3lik = pic.ptaLikelihood() ; m3lik.initFromFile('J0437.h5') ;
+    m3lik.initModelOld(30, modelIndependentGWB=False, modelIndependentNoise=True, modelIndependentDM=True, modelIndependentAniGWB=False, varyEfac=True, incRedNoise=True, incEquad=True, separateEfacs=True, incGWB=False, incDM=True, incAniGWB=False, lAniGWB=2, likfunc='mark6') ; m3lik.initPrior()"
     =============================================================================
 
     Call with:
@@ -6758,7 +6868,7 @@ existing par/tim files.
 @param simlist: the tim-files with generated TOAs, based on the original tim-files
 @param parameters: parameters of the model from which to generate the mock data
 @param h5file: the hdf5-file we will create which holds the newly simulated data
-@param ....: all the same parameters given to 'initModel', from which the model
+@param ....: all the same parameters given to 'initModelOld', from which the model
              is built. The model should be compatible with 'parameters'
     
 """
@@ -6796,7 +6906,7 @@ def simulateFullSet(parlist, timlist, simlist, parameters, h5file, \
 
     # Create the model
     likob = ptaLikelihood(h5file)
-    likob.initModel(nfreqmodes=nfreqmodes, ndmfreqmodes=ndmfreqmodes, \
+    likob.initModelOld(nfreqmodes=nfreqmodes, ndmfreqmodes=ndmfreqmodes, \
             incRedNoise=incRedNoise, noiseModel=noiseModel, fc=fc, \
             incDM=incDM, dmModel=dmModel, \
             incClock=incClock, clockModel=clockModel, \
