@@ -1317,7 +1317,7 @@ class ptaPulsar(object):
                         reconstructed
     """
     def numfreqsFromSpectrum(self, noiseAmp, noiseSi, \
-            Tmax=None, threshold=0.9999):
+            Tmax=None, threshold=0.99):
         spd = 24 * 3600.0
         spy = 365.25 * spd
         ntoas = len(self.toas)
@@ -1506,7 +1506,7 @@ class ptaPulsar(object):
             Vmat, s, Vh = sl.svd(Ho)
             self.Homat = Vmat[:, :Ho.shape[1]]
             self.Hocmat = Vmat[:, Ho.shape[1]:]
-        elif compression == 'None':
+        elif compression == 'None' or compression is None:
             self.Hmat = self.Gmat
             self.Hcmat = self.Gcmat
             self.Homat = np.zeros((self.Hmat.shape[0], 0))
@@ -1539,7 +1539,7 @@ class ptaPulsar(object):
             self.DF = np.dot(self.Dmat, self.Fdmmat)
             ndmf = -1
         else:
-            self.Dmat = np.zeros((len(self.freqs), 0))
+            self.Dmat = np.diag(DMk / (self.freqs**2))
             self.DF = np.zeros((len(self.freqs), 0))
             self.Fdmfreqs = np.zeros(0)
 
@@ -2153,7 +2153,7 @@ class ptaLikelihood(object):
     skipUpdateToggle = False
 
 
-    def __init__(self, filename=None):
+    def __init__(self, h5filename=None, jsonfilename=None):
         self.ptapsrs = []
         self.ptasignals = []
 
@@ -2170,8 +2170,11 @@ class ptaLikelihood(object):
         self.haveDetSources = False
         self.skipUpdateToggle = False
 
-        if filename is not None:
-            self.initFromFile(filename)
+        if h5filename is not None:
+            self.initFromFile(h5filename)
+
+            if jsonfilename is not None:
+                self.initModelFromFile(jsonfilename)
 
     def initFromFile(self, filename):
         h5file = h5.File(filename, 'r+')
@@ -3210,9 +3213,9 @@ class ptaLikelihood(object):
             dmFrequencyLines=None,
                                         # [0, 3, 2, ..., 4]
             orderFrequencyLines=False, \
-            compression = 'None', \
-            evalCompressionComplement = None, \
-            likfunc='mark3'):
+            compression = 'frequencies', \
+            evalCompressionComplement = True, \
+            likfunc='mark1'):
         # We have to determine the number of frequencies we'll need
         numNoiseFreqs = np.zeros(len(self.ptapsrs), dtype=np.int)
         numDMFreqs = np.zeros(len(self.ptapsrs), dtype=np.int)
@@ -3253,7 +3256,7 @@ class ptaLikelihood(object):
                         "pulsarind":ii,
                         "flagname":"efacequad",
                         "flagvalue":flagval,
-                        "bvary":[int(varyEfac)],
+                        "bvary":[varyEfac],
                         "pmin":[0.001],
                         "pmax":[10.0],
                         "pwidth":[0.1],
@@ -3267,7 +3270,7 @@ class ptaLikelihood(object):
                     "pulsarind":ii,
                     "flagname":"pulsarname",
                     "flagvalue":m2psr.name,
-                    "bvary":[int(varyEfac)],
+                    "bvary":[varyEfac],
                     "pmin":[0.001],
                     "pmax":[10.0],
                     "pwidth":[0.1],
@@ -3282,7 +3285,7 @@ class ptaLikelihood(object):
                     "pulsarind":ii,
                     "flagname":"pulsarname",
                     "flagvalue":m2psr.name,
-                    "bvary":[1],
+                    "bvary":[True],
                     "pmin":[-10.0],
                     "pmax":[-5.0],
                     "pwidth":[0.1],
@@ -3297,7 +3300,7 @@ class ptaLikelihood(object):
                     "pulsarind":ii,
                     "flagname":"pulsarname",
                     "flagvalue":m2psr.name,
-                    "bvary":[1],
+                    "bvary":[True],
                     "pmin":[-10.0],
                     "pmax":[-5.0],
                     "pwidth":[0.1],
@@ -3308,19 +3311,19 @@ class ptaLikelihood(object):
             if incRedNoise:
                 if noiseModel=='spectrum':
                     nfreqs = numNoiseFreqs[ii]
-                    bvary = [1]*nfreqs
+                    bvary = [True]*nfreqs
                     pmin = [-18.0]*nfreqs
                     pmax = [-7.0]*nfreqs
                     pstart = [-10.0]*nfreqs
                     pwidth = [0.1]*nfreqs
                 elif noiseModel=='powerlaw':
-                    bvary = [1, 1, 0]
+                    bvary = [True, True, False]
                     pmin = [-20.0, 0.02, 1.0e-11]
                     pmax = [-10.0, 6.98, 3.0e-9]
                     pstart = [-14.0, 2.01, 1.0e-10]
                     pwidth = [0.1, 0.1, 5.0e-11]
                 elif noiseModel=='spectralModel':
-                    bvary = [1, 1, 1]
+                    bvary = [True, True, True]
                     pmin = [-28.0, 0.0, -4.0]
                     pmax = [-14.0, 12.0, 2.0]
                     pstart = [-22.0, 2.0, -1.0]
@@ -3343,13 +3346,13 @@ class ptaLikelihood(object):
             if incDM:
                 if dmModel=='dmspectrum':
                     nfreqs = numDMFreqs[ii]
-                    bvary = [1]*nfreqs
+                    bvary = [True]*nfreqs
                     pmin = [-14.0]*nfreqs
                     pmax = [-3.0]*nfreqs
                     pstart = [-7.0]*nfreqs
                     pwidth = [0.1]*nfreqs
                 elif noiseModel=='dmpowerlaw':
-                    bvary = [1, 1, 0]
+                    bvary = [True, True, False]
                     pmin = [-14.0, 0.02, 1.0e-11]
                     pmax = [-6.5, 6.98, 3.0e-9]
                     pstart = [-13.0, 2.01, 1.0e-10]
@@ -3376,7 +3379,7 @@ class ptaLikelihood(object):
                     "pulsarind":ii,
                     "flagname":"pulsarname",
                     "flagvalue":m2psr.name,
-                    "bvary":[1, 1],
+                    "bvary":[True, True],
                     "pmin":[-9.0, -18.0],
                     "pmax":[-5.0, -9.0],
                     "pwidth":[-0.1, -0.1],
@@ -3391,7 +3394,7 @@ class ptaLikelihood(object):
                     "pulsarind":ii,
                     "flagname":"pulsarname",
                     "flagvalue":m2psr.name,
-                    "bvary":[1, 1],
+                    "bvary":[True, True],
                     "pmin":[-9.0, -18.0],
                     "pmax":[-5.0, -9.0],
                     "pwidth":[-0.1, -0.1],
@@ -3402,13 +3405,13 @@ class ptaLikelihood(object):
         if incGWB:
             if gwbModel=='spectrum':
                 nfreqs = np.max(numNoiseFreqs)
-                bvary = [1]*nfreqs
+                bvary = [True]*nfreqs
                 pmin = [-18.0]*nfreqs
                 pmax = [-7.0]*nfreqs
                 pstart = [-10.0]*nfreqs
                 pwidth = [0.1]*nfreqs
             elif gwbModel=='powerlaw':
-                bvary = [1, 1, 0]
+                bvary = [True, True, False]
                 pmin = [-17.0, 1.02, 1.0e-11]
                 pmax = [-10.0, 6.98, 3.0e-9]
                 pstart = [-15.0, 2.01, 1.0e-10]
@@ -3429,13 +3432,13 @@ class ptaLikelihood(object):
         if incClock:
             if clockModel=='spectrum':
                 nfreqs = np.max(numNoiseFreqs)
-                bvary = [1]*nfreqs
+                bvary = [True]*nfreqs
                 pmin = [-18.0]*nfreqs
                 pmax = [-7.0]*nfreqs
                 pstart = [-10.0]*nfreqs
                 pwidth = [0.1]*nfreqs
             elif clockModel=='powerlaw':
-                bvary = [1, 1, 0]
+                bvary = [True, True, False]
                 pmin = [-17.0, 1.02, 1.0e-11]
                 pmax = [-10.0, 6.98, 3.0e-9]
                 pstart = [-15.0, 2.01, 1.0e-10]
@@ -3456,13 +3459,13 @@ class ptaLikelihood(object):
         if incDipole:
             if dipoleModel=='spectrum':
                 nfreqs = np.max(numNoiseFreqs)
-                bvary = [1]*nfreqs
+                bvary = [True]*nfreqs
                 pmin = [-18.0]*nfreqs
                 pmax = [-7.0]*nfreqs
                 pstart = [-10.0]*nfreqs
                 pwidth = [0.1]*nfreqs
             elif dipoleModel=='powerlaw':
-                bvary = [1, 1, 0]
+                bvary = [True, True, False]
                 pmin = [-17.0, 1.02, 1.0e-11]
                 pmax = [-10.0, 6.98, 3.0e-9]
                 pstart = [-15.0, 2.01, 1.0e-10]
@@ -3482,20 +3485,20 @@ class ptaLikelihood(object):
 
         if incAniGWB:
             nclm = (lAniGWB+1)**2-1
-            clmvary = [1]*nclm
+            clmvary = [True]*nclm
             clmmin = [-5.0]*nclm
             clmmax = [5.0]*nclm
             clmstart = [0.0]*nclm
             clmwidth = [0.2]*nclm
             if anigwbModel=='spectrum':
                 nfreqs = np.max(numNoiseFreqs)
-                bvary = [1]*nfreqs + clmvary
+                bvary = [True]*nfreqs + clmvary
                 pmin = [-18.0]*nfreqs + clmmin
                 pmax = [-7.0]*nfreqs + clmmax
                 pstart = [-10.0]*nfreqs + clmstart
                 pwidth = [0.1]*nfreqs + clmwidth
             elif anigwbModel=='powerlaw':
-                bvary = [1, 1, 0] + clmvary
+                bvary = [True, True, False] + clmvary
                 pmin = [-17.0, 1.02, 1.0e-11] + clmmin
                 pmax = [-10.0, 6.98, 3.0e-9] + clmmax
                 pstart = [-15.0, 2.01, 1.0e-10] + clmstart
@@ -3526,7 +3529,7 @@ class ptaLikelihood(object):
                 "stype":'bwm',
                 "corr":"gr",
                 "pulsarind":-1,
-                "bvary":[1, 1, 1, 1, 1],
+                "bvary":[True, True, True, True, True],
                 "pmin":[toamin, -18.0, 0.0, 0.0, 0.0],
                 "pmax":[toamax, -10.0, 2*np.pi, np.pi, np.pi],
                 "pwidth":[30*24*3600.0, 0.1, 0.1, 0.1, 0.1],
@@ -3542,9 +3545,9 @@ class ptaLikelihood(object):
             "pulsarnames":[self.ptapsrs[ii].name for ii in range(len(self.ptapsrs))],
             "numNoiseFreqs":list(numNoiseFreqs),
             "numDMFreqs":list(numDMFreqs),
-            "compression":str(compression),
-            "orderFrequencyLines":str(orderFrequencyLines),
-            "evalCompressionComplement":str(evalCompressionComplement),
+            "compression":compression,
+            "orderFrequencyLines":orderFrequencyLines,
+            "evalCompressionComplement":evalCompressionComplement,
             "likfunc":likfunc,
             "signals":signals
             })
@@ -3574,7 +3577,7 @@ class ptaLikelihood(object):
                 "corr":m2signal.corr,
                 "flagname":m2signal.flagname,
                 "flagvalue":m2signal.flagvalue,
-                "bvary":map(int, m2signal.bvary),
+                "bvary":map(bool, m2signal.bvary),
                 "pmin":list(m2signal.pmin),
                 "pmax":list(m2signal.pmax),
                 "pstart":list(m2signal.pstart),
@@ -3591,8 +3594,8 @@ class ptaLikelihood(object):
             "numNoiseFreqs":list(numNoiseFreqs),
             "numDMFreqs":list(numDMFreqs),
             "compression":self.compression,
-            "orderFrequencyLines":str(self.orderFrequencyLines),
-            "evalCompressionComplement":str(self.evallikcomp),
+            "orderFrequencyLines":self.orderFrequencyLines,
+            "evalCompressionComplement":self.evallikcomp,
             "likfunc":self.likfunc,
             "signals":signals
             })
@@ -3608,7 +3611,7 @@ class ptaLikelihood(object):
     def initModelFromFile(self, filename):
         with open(filename) as data_file:
             model = json.load(data_file)
-        self.initFullModel(model)
+        self.initModel(model)
 
     """
     Write the model to a json file
@@ -3626,7 +3629,7 @@ class ptaLikelihood(object):
     Initialise the model.
     @param numNoiseFreqs:       Dictionary with the full model
     """
-    def initFullModel(self, fullmodel):
+    def initModel(self, fullmodel):
         numNoiseFreqs = fullmodel['numNoiseFreqs']
         numDMFreqs = fullmodel['numDMFreqs']
         compression = fullmodel['compression']
@@ -6362,7 +6365,7 @@ class ptaLikelihood(object):
                 totDFmat[nindex:nindex+npobs, fdmindex:fdmindex+nppfdm] = self.ptapsrs[ii].DF
                 totDmat[nindex:nindex+npobs, nindex:nindex+npobs] = self.ptapsrs[ii].Dmat
 
-            totG[nindex:nindex+npobs, gindex:gindex+npgs] = self.ptapsrs[ii].Gmat
+            totG[nindex:nindex+npobs, gindex:gindex+npgs] = self.ptapsrs[ii].Hmat
             tottoas[nindex:nindex+npobs] = self.ptapsrs[ii].toas
             tottoaerrs[nindex:nindex+npobs] = self.ptapsrs[ii].toaerrs
 
@@ -6867,12 +6870,42 @@ existing par/tim files.
 @param timlist: the tim-files of the pulsars. Using as input for the simulation
 @param simlist: the tim-files with generated TOAs, based on the original tim-files
 @param parameters: parameters of the model from which to generate the mock data
-@param h5file: the hdf5-file we will create which holds the newly simulated data
-@param ....: all the same parameters given to 'initModelOld', from which the model
-             is built. The model should be compatible with 'parameters'
+@param h5file:  the hdf5-file we will create which holds the newly simulated data
+@param kwargs   all the same parameters given to 'makeModelDict', from which the model
+                is built. The model should be compatible with 'parameters'
     
 """
-def simulateFullSet(parlist, timlist, simlist, parameters, h5file, \
+def simulateFullSet(parlist, timlist, simlist, parameters, h5file, **kwargs):
+    if len(parlist) != len(timlist) or len(parlist) != len(simlist):
+        raise IOError("ERROR: list of par/tim/sim files should be of equal size")
+
+    # Create the hdf5-file from the par/tim files
+    t2df = DataFile(h5file)
+    for ii in range(len(parlist)):
+        t2df.addpulsar(parlist[ii], timlist[ii])
+
+    # Apply the model, and generate a realisation of data
+    likob = ptaLikelihood(h5file)
+    modeldict = likob.makeModelDict(**kwargs)
+    likob.initModel(modeldict)
+    likob.gensig(parameters=parameters, filename=h5file)
+
+    # Write the sim-files to disk
+    for ii in range(len(parlist)):
+        psr = t2.tempopulsar(parlist[ii], timlist[ii])
+        psr.stoas[:] -= psr.residuals() / 86400.0
+
+        psr.stoas[:] += likob.ptapsrs[ii].residuals / 86400.0
+        psr.savetim(simlist[ii])
+
+        print "Writing mock TOAs of ", parlist[ii], "/", likob.ptapsrs[ii].name, \
+                " to ", simlist[ii]
+
+
+"""
+NOTE: Deprecated
+"""
+def simulateFullSetOld(parlist, timlist, simlist, parameters, h5file, \
             nfreqmodes=20, ndmfreqmodes=None, \
             incRedNoise=False, noiseModel='powerlaw', fc=None, \
             incDM=False, dmModel='powerlaw', \
