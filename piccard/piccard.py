@@ -977,6 +977,7 @@ class ptasignal(object):
     ntotpars = 0            # Total number of parameters (also non-varying)
     nindex = 0              # Index in parameters array
     npsrfreqindex = 0       # Index of frequency line for this psr (which line)
+    k
                             #   Do not double-count frequencies (so not modes, but
                             #   freqs)
     npsrdmfreqindex = 0     # Index of DM frequency line for this psr (which line)
@@ -2203,8 +2204,10 @@ class ptaLikelihood(object):
             #newpsr.readFromImagination(filename, psrname)
             self.ptapsrs.append(newpsr)
 
+
     # TODO: make prior flat in log?
-    def addSignalEfac(self, psrind, index, separateEfacs=False, \
+    # NOTE: Deprecated...
+    def addSignalEfacOld(self, psrind, index, separateEfacs=False, \
             varyEfac=True, pmin=0.001, pmax=5.0, pwidth=0.1, pstart=1.0):
         if separateEfacs:
             uflagvals = list(set(self.ptapsrs[psrind].flags))   # uniques
@@ -2256,7 +2259,7 @@ class ptaLikelihood(object):
 
             self.ptasignals.append(newsignal)
 
-    def addSignalEquad(self, psrind, index, \
+    def addSignalEquadOld(self, psrind, index, \
             pmin=-10.0, pmax=-5.0, pwidth=0.1, pstart=-8.0, \
             coarsegrained=False):
         newsignal = ptasignal()
@@ -2282,7 +2285,7 @@ class ptaLikelihood(object):
 
         self.ptasignals.append(newsignal)
 
-    def addSignalNoiseFrequencyLine(self, psrind, index, freqindex):
+    def addSignalNoiseFrequencyLineOld(self, psrind, index, freqindex):
         newsignal = ptasignal()
         newsignal.pulsarind = psrind
 
@@ -2303,7 +2306,7 @@ class ptaLikelihood(object):
         self.ptasignals.append(newsignal)
 
 
-    def addSignalDMFrequencyLine(self, psrind, index, freqindex):
+    def addSignalDMFrequencyLineOld(self, psrind, index, freqindex):
         newsignal = ptasignal()
         newsignal.pulsarind = psrind
 
@@ -2323,8 +2326,7 @@ class ptaLikelihood(object):
         newsignal.nindex = index
         self.ptasignals.append(newsignal)
 
-
-    def addSignalRedNoise(self, psrind, index, Tmax, \
+    def addSignalRedNoiseOld(self, psrind, index, Tmax, \
             noiseModel, fc=None):
         newsignal = ptasignal()
         newsignal.pulsarind = psrind
@@ -2371,7 +2373,7 @@ class ptaLikelihood(object):
         newsignal.nindex = index
         self.ptasignals.append(newsignal)
 
-    def addSignalDMV(self, psrind, index, Tmax, \
+    def addSignalDMVOld(self, psrind, index, Tmax, \
             dmModel):
         newsignal = ptasignal()
         newsignal.pulsarind = psrind
@@ -2402,154 +2404,10 @@ class ptaLikelihood(object):
         newsignal.nindex = index
         self.ptasignals.append(newsignal)
 
-    # TODO: use the independent GWB frequencies, instead of those of the first pulsar
-    def addSignalGWB(self, index, Tmax, \
-            gwbModel):
-        newsignal = ptasignal()
-        newsignal.pulsarind = -1
-
-        if gwbModel=='spectrum':
-            newsignal.stype = 'spectrum'
-            newsignal.npars = int(len(self.ptapsrs[0].Ffreqs)/2)
-            newsignal.ntotpars = int(len(self.ptapsrs[0].Ffreqs)/2)
-            newsignal.bvary = np.array([1]*newsignal.ntotpars, dtype=np.bool)
-
-            newsignal.pmin = np.ones(newsignal.ntotpars) * -18.0
-            newsignal.pmax = np.ones(newsignal.ntotpars) * 10.0
-            newsignal.pstart = np.ones(newsignal.ntotpars) * -10.0
-            newsignal.pwidth = np.ones(newsignal.ntotpars) * 0.1
-        elif gwbModel=='powerlaw':
-            newsignal.stype = 'powerlaw'
-            newsignal.bvary = np.array([1, 1, 0], dtype=np.bool)
-            newsignal.npars = np.sum(newsignal.bvary)
-            newsignal.ntotpars = len(newsignal.bvary)
-
-            newsignal.pmin = np.array([-17.0, 1.02, 1.0e-11])
-            newsignal.pmax = np.array([-5.0, 6.98, 3.0e-9])
-            newsignal.pstart = np.array([-14.0, 2.01, 1.0e-10])
-            newsignal.pwidth = np.array([0.1, 0.1, 5.0e-11])
-
-        newsignal.corr = 'gr'
-        newsignal.Tmax = Tmax
-        newsignal.nindex = index
-        newsignal.corrmat = hdcorrmat(self.ptapsrs)           # The H&D matrix
-        self.ptasignals.append(newsignal)
-
-    def addSignalClock(self, index, Tmax, \
-            clockModel):
-        newsignal = ptasignal()
-        newsignal.pulsarind = -1
-
-        if clockModel=='spectrum':
-            newsignal.stype = 'spectrum'
-            newsignal.npars = int(len(self.ptapsrs[0].Ffreqs)/2)
-            newsignal.ntotpars = int(len(self.ptapsrs[0].Ffreqs)/2)
-            newsignal.bvary = np.array([1]*newsignal.ntotpars, dtype=np.bool)
-
-            newsignal.pmin = np.ones(newsignal.ntotpars) * -18.0
-            newsignal.pmax = np.ones(newsignal.ntotpars) * 10.0
-            newsignal.pstart = np.ones(newsignal.ntotpars) * -10.0
-            newsignal.pwidth = np.ones(newsignal.ntotpars) * 0.1
-        elif clockModel=='powerlaw':
-            newsignal.stype = 'powerlaw'
-            newsignal.npars = 2
-            newsignal.ntotpars = 3
-            newsignal.bvary = np.array([1, 1, 0], dtype=np.bool)
-
-            newsignal.pmin = np.array([-17.0, 1.02, 1.0e-11])
-            newsignal.pmax = np.array([-5.0, 6.98, 3.0e-9])
-            newsignal.pstart = np.array([-14.0, 2.01, 1.0e-10])
-            newsignal.pwidth = np.array([0.1, 0.1, 5.0e-11])
-
-        newsignal.corr = 'uniform'
-        newsignal.Tmax = Tmax
-        newsignal.nindex = index
-        newsignal.corrmat = np.ones((len(self.ptapsrs), len(self.ptapsrs)))
-        self.ptasignals.append(newsignal)
-
-    def addSignalDipole(self, index, Tmax, \
-            dipoleModel):
-        newsignal = ptasignal()
-        newsignal.pulsarind = -1
-
-        if dipoleModel=='spectrum':
-            newsignal.stype = 'spectrum'
-            newsignal.npars = int(len(self.ptapsrs[0].Ffreqs)/2)
-            newsignal.ntotpars = int(len(self.ptapsrs[0].Ffreqs)/2)
-            newsignal.bvary = np.array([1]*newsignal.ntotpars, dtype=np.bool)
-
-            newsignal.pmin = np.ones(newsignal.ntotpars) * -18.0
-            newsignal.pmax = np.ones(newsignal.ntotpars) * 10.0
-            newsignal.pstart = np.ones(newsignal.ntotpars) * -10.0
-            newsignal.pwidth = np.ones(newsignal.ntotpars) * 0.1
-        elif dipoleModel=='powerlaw':
-            newsignal.stype = 'powerlaw'
-            newsignal.bvary = np.array([1, 1, 0], dtype=np.bool)
-            newsignal.npars = np.sum(newsignal.bvary)
-            newsignal.ntotpars = len(newsignal.bvary)
-
-            newsignal.pmin = np.array([-17.0, 1.02, 1.0e-11])
-            newsignal.pmax = np.array([-5.0, 6.98, 3.0e-9])
-            newsignal.pstart = np.array([-14.0, 2.01, 1.0e-10])
-            newsignal.pwidth = np.array([0.1, 0.1, 5.0e-11])
-
-        newsignal.corr = 'dipole'
-        newsignal.Tmax = Tmax
-        newsignal.nindex = index
-        newsignal.corrmat = dipolecorrmat(self.ptapsrs)
-        self.ptasignals.append(newsignal)
-
-    def addSignalAniGWB(self, index, Tmax, \
-            anigwbModel, lAniGWB=2):
-        newsignal = ptasignal()
-        newsignal.pulsarind = -1
-        newsignal.aniCorr = aniCorrelations(self.ptapsrs, lAniGWB)
-        nclm = newsignal.aniCorr.clmlength()
-
-        if anigwbModel=='spectrum':
-            newsignal.stype = 'spectrum'
-            newsignal.npars = nclm+int(len(self.ptapsrs[0].Ffreqs)/2)
-            newsignal.ntotpars = nclm+int(len(self.ptapsrs[0].Ffreqs)/2)
-            newsignal.bvary = np.array([1]*newsignal.ntotpars, dtype=np.bool)
-
-            newsignal.pmin = np.ones(newsignal.ntotpars) * -18.0
-            newsignal.pmax = np.ones(newsignal.ntotpars) * 10.0
-            newsignal.pstart = np.ones(newsignal.ntotpars) * -10.0
-            newsignal.pwidth = np.ones(newsignal.ntotpars) * 0.1
-
-            newsignal.pmin[-nclm:] = -5.0
-            newsignal.pmax[-nclm:] = 5.0
-            newsignal.pstart[-nclm:] = 0.0
-            newsignal.pwidth[-nclm:] = 0.2
-        elif anigwbModel=='powerlaw':
-            newsignal.stype = 'powerlaw'
-            newsignal.bvary = np.array([1]*(nclm+3), dtype=np.bool)
-            #newsignal.bvary[1] = False
-            newsignal.bvary[2] = False
-            #newsignal.bvary[3] = False
-            #newsignal.bvary[5] = False
-            newsignal.npars = np.sum(newsignal.bvary)
-            newsignal.ntotpars = len(newsignal.bvary)
-
-            newsignal.pmin = np.ones(newsignal.ntotpars) * -5.0
-            newsignal.pmax = np.ones(newsignal.ntotpars) * 5.0
-            newsignal.pstart = np.ones(newsignal.ntotpars) * 0.0
-            newsignal.pwidth = np.ones(newsignal.ntotpars) * 0.2
-
-            newsignal.pmin[:3] = np.array([-17.0, 1.02, 1.0e-11])
-            newsignal.pmax[:3] = np.array([-5.0, 6.98, 3.0e-9])
-            newsignal.pstart[:3] = np.array([-14.0, 2.01, 1.0e-10])
-            newsignal.pwidth[:3] = np.array([0.1, 0.1, 5.0e-11])
-
-        newsignal.corr = 'anisotropicgwb'
-        newsignal.Tmax = Tmax
-        newsignal.nindex = index
-        self.ptasignals.append(newsignal)
-
     """
     Note: This function is not (yet) ready for use
     """
-    def addSignalFourierCoeff(self, psrind, index, Tmax, isDM=False):
+    def addSignalFourierCoeffOld(self, psrind, index, Tmax, isDM=False):
         newsignal = ptasignal()
         newsignal.pulsarind = psrind
         if isDM:
@@ -2600,7 +2458,152 @@ class ptaLikelihood(object):
         self.ptasignals.append(newsignal)
         """
 
-    def addSignalBWM(self, psrind, index):
+
+    # TODO: use the independent GWB frequencies, instead of those of the first pulsar
+    def addSignalGWBOld(self, index, Tmax, \
+            gwbModel):
+        newsignal = ptasignal()
+        newsignal.pulsarind = -1
+
+        if gwbModel=='spectrum':
+            newsignal.stype = 'spectrum'
+            newsignal.npars = int(len(self.ptapsrs[0].Ffreqs)/2)
+            newsignal.ntotpars = int(len(self.ptapsrs[0].Ffreqs)/2)
+            newsignal.bvary = np.array([1]*newsignal.ntotpars, dtype=np.bool)
+
+            newsignal.pmin = np.ones(newsignal.ntotpars) * -18.0
+            newsignal.pmax = np.ones(newsignal.ntotpars) * 10.0
+            newsignal.pstart = np.ones(newsignal.ntotpars) * -10.0
+            newsignal.pwidth = np.ones(newsignal.ntotpars) * 0.1
+        elif gwbModel=='powerlaw':
+            newsignal.stype = 'powerlaw'
+            newsignal.bvary = np.array([1, 1, 0], dtype=np.bool)
+            newsignal.npars = np.sum(newsignal.bvary)
+            newsignal.ntotpars = len(newsignal.bvary)
+
+            newsignal.pmin = np.array([-17.0, 1.02, 1.0e-11])
+            newsignal.pmax = np.array([-5.0, 6.98, 3.0e-9])
+            newsignal.pstart = np.array([-14.0, 2.01, 1.0e-10])
+            newsignal.pwidth = np.array([0.1, 0.1, 5.0e-11])
+
+        newsignal.corr = 'gr'
+        newsignal.Tmax = Tmax
+        newsignal.nindex = index
+        newsignal.corrmat = hdcorrmat(self.ptapsrs)           # The H&D matrix
+        self.ptasignals.append(newsignal)
+
+    def addSignalClockOld(self, index, Tmax, \
+            clockModel):
+        newsignal = ptasignal()
+        newsignal.pulsarind = -1
+
+        if clockModel=='spectrum':
+            newsignal.stype = 'spectrum'
+            newsignal.npars = int(len(self.ptapsrs[0].Ffreqs)/2)
+            newsignal.ntotpars = int(len(self.ptapsrs[0].Ffreqs)/2)
+            newsignal.bvary = np.array([1]*newsignal.ntotpars, dtype=np.bool)
+
+            newsignal.pmin = np.ones(newsignal.ntotpars) * -18.0
+            newsignal.pmax = np.ones(newsignal.ntotpars) * 10.0
+            newsignal.pstart = np.ones(newsignal.ntotpars) * -10.0
+            newsignal.pwidth = np.ones(newsignal.ntotpars) * 0.1
+        elif clockModel=='powerlaw':
+            newsignal.stype = 'powerlaw'
+            newsignal.npars = 2
+            newsignal.ntotpars = 3
+            newsignal.bvary = np.array([1, 1, 0], dtype=np.bool)
+
+            newsignal.pmin = np.array([-17.0, 1.02, 1.0e-11])
+            newsignal.pmax = np.array([-5.0, 6.98, 3.0e-9])
+            newsignal.pstart = np.array([-14.0, 2.01, 1.0e-10])
+            newsignal.pwidth = np.array([0.1, 0.1, 5.0e-11])
+
+        newsignal.corr = 'uniform'
+        newsignal.Tmax = Tmax
+        newsignal.nindex = index
+        newsignal.corrmat = np.ones((len(self.ptapsrs), len(self.ptapsrs)))
+        self.ptasignals.append(newsignal)
+
+    def addSignalDipoleOld(self, index, Tmax, \
+            dipoleModel):
+        newsignal = ptasignal()
+        newsignal.pulsarind = -1
+
+        if dipoleModel=='spectrum':
+            newsignal.stype = 'spectrum'
+            newsignal.npars = int(len(self.ptapsrs[0].Ffreqs)/2)
+            newsignal.ntotpars = int(len(self.ptapsrs[0].Ffreqs)/2)
+            newsignal.bvary = np.array([1]*newsignal.ntotpars, dtype=np.bool)
+
+            newsignal.pmin = np.ones(newsignal.ntotpars) * -18.0
+            newsignal.pmax = np.ones(newsignal.ntotpars) * 10.0
+            newsignal.pstart = np.ones(newsignal.ntotpars) * -10.0
+            newsignal.pwidth = np.ones(newsignal.ntotpars) * 0.1
+        elif dipoleModel=='powerlaw':
+            newsignal.stype = 'powerlaw'
+            newsignal.bvary = np.array([1, 1, 0], dtype=np.bool)
+            newsignal.npars = np.sum(newsignal.bvary)
+            newsignal.ntotpars = len(newsignal.bvary)
+
+            newsignal.pmin = np.array([-17.0, 1.02, 1.0e-11])
+            newsignal.pmax = np.array([-5.0, 6.98, 3.0e-9])
+            newsignal.pstart = np.array([-14.0, 2.01, 1.0e-10])
+            newsignal.pwidth = np.array([0.1, 0.1, 5.0e-11])
+
+        newsignal.corr = 'dipole'
+        newsignal.Tmax = Tmax
+        newsignal.nindex = index
+        newsignal.corrmat = dipolecorrmat(self.ptapsrs)
+        self.ptasignals.append(newsignal)
+
+    def addSignalAniGWBOld(self, index, Tmax, \
+            anigwbModel, lAniGWB=2):
+        newsignal = ptasignal()
+        newsignal.pulsarind = -1
+        newsignal.aniCorr = aniCorrelations(self.ptapsrs, lAniGWB)
+        nclm = newsignal.aniCorr.clmlength()
+
+        if anigwbModel=='spectrum':
+            newsignal.stype = 'spectrum'
+            newsignal.npars = nclm+int(len(self.ptapsrs[0].Ffreqs)/2)
+            newsignal.ntotpars = nclm+int(len(self.ptapsrs[0].Ffreqs)/2)
+            newsignal.bvary = np.array([1]*newsignal.ntotpars, dtype=np.bool)
+
+            newsignal.pmin = np.ones(newsignal.ntotpars) * -18.0
+            newsignal.pmax = np.ones(newsignal.ntotpars) * 10.0
+            newsignal.pstart = np.ones(newsignal.ntotpars) * -10.0
+            newsignal.pwidth = np.ones(newsignal.ntotpars) * 0.1
+
+            newsignal.pmin[-nclm:] = -5.0
+            newsignal.pmax[-nclm:] = 5.0
+            newsignal.pstart[-nclm:] = 0.0
+            newsignal.pwidth[-nclm:] = 0.2
+        elif anigwbModel=='powerlaw':
+            newsignal.stype = 'powerlaw'
+            newsignal.bvary = np.array([1]*(nclm+3), dtype=np.bool)
+            #newsignal.bvary[1] = False
+            newsignal.bvary[2] = False
+            #newsignal.bvary[3] = False
+            #newsignal.bvary[5] = False
+            newsignal.npars = np.sum(newsignal.bvary)
+            newsignal.ntotpars = len(newsignal.bvary)
+
+            newsignal.pmin = np.ones(newsignal.ntotpars) * -5.0
+            newsignal.pmax = np.ones(newsignal.ntotpars) * 5.0
+            newsignal.pstart = np.ones(newsignal.ntotpars) * 0.0
+            newsignal.pwidth = np.ones(newsignal.ntotpars) * 0.2
+
+            newsignal.pmin[:3] = np.array([-17.0, 1.02, 1.0e-11])
+            newsignal.pmax[:3] = np.array([-5.0, 6.98, 3.0e-9])
+            newsignal.pstart[:3] = np.array([-14.0, 2.01, 1.0e-10])
+            newsignal.pwidth[:3] = np.array([0.1, 0.1, 5.0e-11])
+
+        newsignal.corr = 'anisotropicgwb'
+        newsignal.Tmax = Tmax
+        newsignal.nindex = index
+        self.ptasignals.append(newsignal)
+
+    def addSignalBWMOld(self, psrind, index):
         newsignal = ptasignal()
         newsignal.pulsarind = psrind
 
@@ -2628,11 +2631,262 @@ class ptaLikelihood(object):
         newsignal.nindex = index
         self.ptasignals.append(newsignal)
 
+
+
+    """
+    Add an EFAC signal
+
+    @param psrind:      Index of the pulsar this efac applies to
+    @param index:       Index of first parameter in total parameters array
+    @param flagname:    Name of the flag this efac applies to (field-name)
+    @param flagvalue:   Value of the flag this efac applies to (e.g. CPSR2)
+    @param bvary:       List of indicators, specifying whether parameters can vary
+    @param pmin:        Minimum bound of prior domain
+    @param pmax:        Maximum bound of prior domain
+    @param pwidth:      Typical width of the parameters (e.g. initial stepsize)
+    @param pstart:      Typical start position for the parameters
+
+    # TODO: make prior flat in log?
+    """
+    def addSignalEfac(self, psrind, index, flagname, flagvalue, \
+            bvary, pmin, pmax, pwidth, pstart):
+        newsignal = ptasignal()
+        newsignal.pulsarind = psrind
+        newsignal.stype = 'efac'
+        newsignal.corr = 'single'
+        newsignal.flagname = flagname
+        newsignal.flagvalue = flagvalue
+        newsignal.bvary = np.array(bvary, dtype=np.bool)
+        newsignal.npars = np.sum(newsignal.bvary)
+        newsignal.ntotpars = len(newsignal.bvary)
+        newsignal.pmin = np.array(pmin)
+        newsignal.pmax = np.array(pmax)
+        newsignal.pwidth = np.array(pwidth)
+        newsignal.pstart = np.array(pstart)
+
+        newsignal.Nvec = self.ptapsrs[psrind].toaerrs**2
+        if newsignal.flagname != 'pulsarname':
+            # This efac only applies to some TOAs, not all of 'm
+            ind = np.array(self.ptapsrs[psrind].flags) != flagval
+            newsignal.Nvec[ind] = 0.0
+
+        newsignal.nindex = index
+        self.ptasignals.append(newsignal)
+
+    """
+    Add an EQUAD or jitter signal
+
+    @param stype:       Either 'jitter' or 'equad'
+    @param psrind:      Index of the pulsar this signal applies to
+    @param index:       Index of first parameter in total parameters array
+    @param flagname:    Name of the flag this efac applies to (field-name)
+    @param flagvalue:   Value of the flag this efac applies to (e.g. CPSR2)
+    @param bvary:       List of indicators, specifying whether parameters can vary
+    @param pmin:        Minimum bound of prior domain
+    @param pmax:        Maximum bound of prior domain
+    @param pwidth:      Typical width of the parameters (e.g. initial stepsize)
+    @param pstart:      Typical start position for the parameters
+    """
+    def addSignalEquad(self, stype, psrind, index, flagname, flagvalue, \
+            bvary, pmin, pmax, pwidth, pstart):
+        newsignal = ptasignal()
+        newsignal.pulsarind = psrind
+        newsignal.stype = stype
+        newsignal.corr = 'single'
+        newsignal.flagname = flagname
+        newsignal.flagvalue = flagvalue
+        newsignal.bvary = np.array(bvary, dtype=np.bool)
+        newsignal.npars = np.sum(newsignal.bvary)
+        newsignal.ntotpars = len(newsignal.bvary)
+        newsignal.pmin = np.array(pmin)
+        newsignal.pmax = np.array(pmax)
+        newsignal.pwidth = np.array(pwidth)
+        newsignal.pstart = np.array(pstart)
+
+        newsignal.Nvec = np.ones(len(self.ptapsrs[psrind].toaerrs))
+        if newsignal.flagname != 'pulsarname':
+            # This efac only applies to some TOAs, not all of 'm
+            ind = np.array(self.ptapsrs[psrind].flags) != flagval
+            newsignal.Nvec[ind] = 0.0
+
+        newsignal.nindex = index
+        self.ptasignals.append(newsignal)
+
+
+    """
+    Add a single frequency line signal
+
+    @param stype:       Either 'frequencyline' or 'dmfrequencyline'
+    @param psrind:      Index of the pulsar this signal applies to
+    @param index:       Index of first parameter in total parameters array
+    @param freqindex:   If there are several of these sources, which is this?
+    @param bvary:       List of indicators, specifying whether parameters can vary
+    @param pmin:        Minimum bound of prior domain
+    @param pmax:        Maximum bound of prior domain
+    @param pwidth:      Typical width of the parameters (e.g. initial stepsize)
+    @param pstart:      Typical start position for the parameters
+    """
+    def addSignalFrequencyLine(self, stype, psrind, index, freqindex, \
+            bvary, pmin, pmax, pwidth, pstart):
+        newsignal = ptasignal()
+        newsignal.pulsarind = psrind
+
+        newsignal.stype = stype
+        newsignal.bvary = np.array(bvary, dtype=np.bool)
+        newsignal.npars = np.sum(newsignal.bvary)
+        newsignal.ntotpars = len(newsignal.bvary)
+        newsignal.npsrfreqindex = freqindex
+
+        # 0 = frequency, 1 = amplitude
+        newsignal.pmin = np.array(pmin)
+        newsignal.pmax = np.array(pmax)
+        newsignal.pwidth = np.array(pwidth)
+        newsignal.pstart = np.array(pstart)
+
+        newsignal.corr = 'single'
+        newsignal.nindex = index
+        self.ptasignals.append(newsignal)
+
+
+    """
+    Add some time-correlated signal
+
+    @param stype:       Either 'spectrum', 'powerlaw', or 'spectralModel'
+    @param corr:        Either 'single', 'uniform', 'dipole', 'gr', ...
+    @param psrind:      Index of the pulsar this signal applies to
+    @param index:       Index of first parameter in total parameters array
+    @param Tmax         Time baseline of the entire experiment
+    @param bvary:       List of indicators, specifying whether parameters can vary
+    @param pmin:        Minimum bound of prior domain
+    @param pmax:        Maximum bound of prior domain
+    @param pwidth:      Typical width of the parameters (e.g. initial stepsize)
+    @param pstart:      Typical start position for the parameters
+    @param lAniGWB:     In case of an anisotropic GWB, this sets the order of
+                        anisotropy (default=2, also for all other signals)
+    """
+    def addSignalTimeCorrelated(self, stype, corr, psrind, index, Tmax, \
+            bvary, pmin, pmax, pwidth, pstart, lAniGWB=2):
+        newsignal = ptasignal()
+        newsignal.pulsarind = psrind
+        newsignal.stype = stype
+        newsignal.corr = corr
+        newsignal.Tmax = Tmax
+        newsignal.nindex = index
+        newsignal.bvary = np.array(bvary, dtype=np.bool)
+        newsignal.npars = np.sum(newsignal.bvary)
+        newsignal.ntotpars = len(newsignal.bvary)
+        newsignal.pmin = np.array(pmin)
+        newsignal.pmax = np.array(pmax)
+        newsignal.pwidth = np.array(pwidth)
+        newsignal.pstart = np.array(pstart)
+
+        if newsignal.corr == 'gr':
+            # Correlated with the Hellings \& Downs matrix
+            newsignal.corrmat = hdcorrmat(self.ptapsrs)
+        elif newsignal.corr == 'uniform':
+            # Uniformly correlated (Clock signal)
+            newsignal.corrmat = np.ones((len(self.ptapsrs), len(self.ptapsrs)))
+        elif newsignal.corr == 'dipole':
+            # Dipole correlations (SS Ephemeris)
+            newsignal.corrmat = dipolecorrmat(self.ptapsrs)
+        elif newsignal.corr == 'anisotropicgwb':
+            # Anisotropic GWB correlations
+            newsignal.aniCorr = aniCorrelations(self.ptapsrs, lAniGWB)
+
+        self.ptasignals.append(newsignal)
+
+    """
+    Add some DM variation signal
+
+    @param stype:       Either 'spectrum', 'powerlaw', or 'spectralModel'
+    @param psrind:      Index of the pulsar this signal applies to
+    @param index:       Index of first parameter in total parameters array
+    @param Tmax         Time baseline of the entire experiment
+    @param bvary:       List of indicators, specifying whether parameters can vary
+    @param pmin:        Minimum bound of prior domain
+    @param pmax:        Maximum bound of prior domain
+    @param pwidth:      Typical width of the parameters (e.g. initial stepsize)
+    @param pstart:      Typical start position for the parameters
+    """
+    def addSignalDMV(self, stype, psrind, index, Tmax, \
+            bvary, pmin, pmax, pwidth, pstart):
+        newsignal = ptasignal()
+        newsignal.pulsarind = psrind
+        newsignal.stype = stype
+        newsignal.corr = 'single'
+        newsignal.Tmax = Tmax
+        newsignal.nindex = index
+        newsignal.bvary = np.array(bvary, dtype=np.bool)
+        newsignal.npars = np.sum(newsignal.bvary)
+        newsignal.ntotpars = len(newsignal.bvary)
+        newsignal.pmin = np.array(pmin)
+        newsignal.pmax = np.array(pmax)
+        newsignal.pwidth = np.array(pwidth)
+        newsignal.pstart = np.array(pstart)
+        self.ptasignals.append(newsignal)
+
+
+    """
+    Add a burst with memory signal
+
+    @param stype:       Basically always 'bwm'
+    @param psrind:      Index of the pulsar this signal applies to (Earth-burst: -1)
+    @param index:       Index of first parameter in total parameters array
+    @param bvary:       List of indicators, specifying whether parameters can vary
+    @param pmin:        Minimum bound of prior domain
+    @param pmax:        Maximum bound of prior domain
+    @param pwidth:      Typical width of the parameters (e.g. initial stepsize)
+    @param pstart:      Typical start position for the parameters
+    """
+    def addSignalBWM(self, stype, psrind, index, \
+            bvary, pmin, pmax, pwidth, pstart):
+        newsignal = ptasignal()
+        newsignal.pulsarind = psrind
+        newsignal.stype = stype
+        newsignal.corr = 'gr'
+        newsignal.nindex = index
+        newsignal.bvary = np.array(bvary, dtype=np.bool)
+        newsignal.npars = np.sum(newsignal.bvary)
+        newsignal.ntotpars = len(newsignal.bvary)
+        newsignal.pmin = np.array(pmin)
+        newsignal.pmax = np.array(pmax)
+        newsignal.pwidth = np.array(pwidth)
+        newsignal.pstart = np.array(pstart)
+        self.ptasignals.append(newsignal)
+
+        newsignal = ptasignal()
+        newsignal.pulsarind = psrind
+
+
     
     """
-    Find the number of frequency lines, given a list of signal dictionaries
-    """
+    Find the number of signals per pulsar matching some criteria, given a list
+    of signal dictionaries. Main use is, for instance, to find the number of
+    free frequency lines per pulsar given the signal model dictionary.
 
+    @param signals: Dictionary of all signals
+    @param stype:   The signal type that must be matched
+    @param corr:    Signal correlation that must be matched
+    """
+    def getNumberOfSignals(self, signals, stype='powerlaw', corr='single'):
+        psrSignals = np.zeros(len(self.ptapsrs), dtype=np.int)
+
+        for ii, signal in enumerate(signals):
+            if signal['stype'] == stype and signal['corr'] == corr:
+                if signal['pulsarind'] == -1:
+                    psrSignals[:] += 1
+                else:
+                    psrSignals[signal['pulsarind']] += 1
+
+        return psrSignals
+
+    """
+    Check the read-in signal dictionary. Reject improperly defined models
+
+    TODO: Actually implement the checks
+    """
+    def checkSignalDictionary(self, signals):
+        return True
 
 
     # TODO: see if we can implement the RJMCMC for the Fourier modes
@@ -2866,61 +3120,61 @@ class ptaLikelihood(object):
         for ii in range(len(self.ptapsrs)):
             # When adding efac signals, there may be many
             noldsignals = len(self.ptasignals)
-            self.addSignalEfac(ii, index, separateEfacs, varyEfac)
+            self.addSignalEfacOld(ii, index, separateEfacs, varyEfac)
             nnewsignals = len(self.ptasignals)
             for jj in range(noldsignals, nnewsignals):
                 index += self.ptasignals[jj].npars
 
             if incEquad:
-                self.addSignalEquad(ii, index)
+                self.addSignalEquadOld(ii, index)
                 index += self.ptasignals[-1].npars
                 
             if incCEquad:
-                self.addSignalEquad(ii, index, coarsegrained=True)
+                self.addSignalEquadOld(ii, index, coarsegrained=True)
                 index += self.ptasignals[-1].npars
 
             if incRedNoise:
-                self.addSignalRedNoise(ii, index, Tmax, noiseModel, fc)
+                self.addSignalRedNoiseOld(ii, index, Tmax, noiseModel, fc)
                 index += self.ptasignals[-1].npars
                 self.haveStochSources = True
 
             if incDM:
-                self.addSignalDMV(ii, index, Tmax, dmModel)
+                self.addSignalDMVOld(ii, index, Tmax, dmModel)
                 index += self.ptasignals[-1].npars
                 self.haveStochSources = True
 
             for jj in range(psrSingleFreqNoiseModes[ii]):
-                self.addSignalNoiseFrequencyLine(ii, index, jj)
+                self.addSignalNoiseFrequencyLineOld(ii, index, jj)
                 index += self.ptasignals[-1].npars
                 self.haveStochSources = True
 
             for jj in range(psrSingleDMFreqNoiseModes[ii]):
-                self.addSignalDMFrequencyLine(ii, index, jj)
+                self.addSignalDMFrequencyLineOld(ii, index, jj)
                 index += self.ptasignals[-1].npars
                 self.haveStochSources = True
 
         if incGWB:
-            self.addSignalGWB(index, Tmax, gwbModel)
+            self.addSignalGWBOld(index, Tmax, gwbModel)
             index += self.ptasignals[-1].npars
             self.haveStochSources = True
 
         if incClock:
-            self.addSignalClock(index, Tmax, clockModel)
+            self.addSignalClockOld(index, Tmax, clockModel)
             index += self.ptasignals[-1].npars
             self.haveStochSources = True
 
         if incDipole:
-            self.addSignalDipole(index, Tmax, dipoleModel)
+            self.addSignalDipoleOld(index, Tmax, dipoleModel)
             index += self.ptasignals[-1].npars
             self.haveStochSources = True
 
         if incAniGWB:
-            self.addSignalAniGWB(index, Tmax, anigwbModel, lAniGWB)
+            self.addSignalAniGWBOld(index, Tmax, anigwbModel, lAniGWB)
             index += self.ptasignals[-1].npars
             self.haveStochSources = True
 
         if incBWM:
-            self.addSignalBWM(-1, index)
+            self.addSignalBWMOld(-1, index)
             self.haveDetSources = True
             index += self.ptasignals[-1].npars
 
@@ -2936,17 +3190,24 @@ class ptaLikelihood(object):
     @param numDMFreqs:          Same, but for DM variations, per pulsar
     @param numSingleFreqs:      Number of floating noise frequencies per pulsar
     @param numSingleDMFreqs:    Number of floating DM frequencies per pulsar
-    @param dmModel:             Which DM model to use
+
+    TODO: Or just use the entire JSON dictionary?
     """
     def initFullModel(self, \
-            separateEfacs, \
+            signals, \
             numNoiseFreqs, numDMFreqs, \
             #numSingleFreqs, numSingleDMFreqs, \
-            dmModel,
+            #dmModel, \
             orderFrequencyLines=False, \
-            likfunc='mark3'):
+            likfunc='mark3', \
+            comression='None', \
+            evalCompressionComplement=None, \
+            signals=None):
         if len(self.ptapsrs) < 1:
             raise IOError, "No pulsars loaded"
+
+        if signals is None or not self.checkSignalDictionary(signals):
+            raise IOError, "Signal dictionary not properly defined"
 
         # Details about the likelihood function
         self.likfunc = likfunc
@@ -2968,6 +3229,16 @@ class ptaLikelihood(object):
         else:
             self.evallikcomp = True
 
+        # Find out how many single-frequency modes there are
+        numSingleFreqs = self.getNumberOfSignals(signals, \
+                stype='frequencyline', corr='single')
+        numSingleDMFreqs = self.getNumberOfSignals(signals, \
+                stype='dmfrequencyline', corr='single')
+
+        # Keep track of how many we have added
+        doneSingleFreqs = np.zeros(len(numSingleFreqs))
+        doneSingleDMFreqs = np.zeros(len(numSingleDMFreqs))
+
         # Modify design matrices, and create pulsar Auxiliary quantities
         for pindex, m2psr in enumerate(self.ptapsrs):
             # If we model DM variations, we will need to include QSD
@@ -2978,8 +3249,9 @@ class ptaLikelihood(object):
             # For every pulsar, construct the auxiliary quantities like the Fourier
             # design matrix etc
             m2psr.createAuxiliaries(Tmax, nfreqmodes, ndmfreqmodes, not separateEfacs, \
-                            nSingleFreqs=nSingleFreqs, nSingleDMFreqs=nSingleDMFreqs, \
-                                    likfunc=likfunc, compression=compression)
+                            nSingleFreqs=numSingleFreqs[pindex], \
+                            nSingleDMFreqs=numSingleDMFreqs[pindex], \
+                            likfunc=likfunc, compression=compression)
 
             # When selecting Fourier modes, like in mark7/mark8, the binclude vector
             # indicates whether or not a frequency is included in the likelihood. By
@@ -2991,66 +3263,68 @@ class ptaLikelihood(object):
         # Initialise the ptasignal objects
         self.ptasignals = []
         index = 0
-        for ii, m2psr in enumerate(self.ptapsrs):
-            # When adding efac signals, there may be many
-            noldsignals = len(self.ptasignals)
-            self.addSignalEfac(ii, index, separateEfacs, varyEfac)
-            nnewsignals = len(self.ptasignals)
-            for jj in range(noldsignals, nnewsignals):
-                index += self.ptasignals[jj].npars
-
-            if incEquad:
-                self.addSignalEquad(ii, index)
+        for ii, signal in enumerate(signals):
+            if signal['stype']=='efac':
+                # Efac
+                self.addSignalEfac(signal['pulsarind'], index, \
+                        signal['flagname'], signal['flagvalue'], \
+                        signal['bvary'], signal['pmin'], signal['pmax'], \
+                        signal['pwidth'], signal['pstart'])
                 index += self.ptasignals[-1].npars
-                
-            if incCEquad:
-                self.addSignalEquad(ii, index, coarsegrained=True)
+            elif signal['stype'] in ['equad', 'jitter']:
+                # Equad or Jitter
+                self.addSignalEquad(signal['pulsarind'], index, signal['stype'], \
+                        signal['flagname'], signal['flagvalue'], \
+                        signal['bvary'], signal['pmin'], signal['pmax'], \
+                        signal['pwidth'], signal['pstart'])
+                index += self.ptasignals[-1].npars
+            elif signal['stype'] in ['powerlaw', 'spectrum', 'spectralModel']:
+                # Any time-correlated signal
+                if signal['corr'] == 'anisotropicgwb':
+                    self.addSignalEquad(signal['stype'], signal['corr'], \
+                            signal['pulsarind'], index, Tmax, \
+                            signal['bvary'], signal['pmin'], signal['pmax'], \
+                            signal['pwidth'], signal['pstart'], \
+                            signal['lAniGWB'])
+                    index += self.ptasignals[-1].npars
+                else:
+                    self.addSignalEquad(signal['stype'], signal['corr'], \
+                            signal['pulsarind'], index, Tmax, \
+                            signal['bvary'], signal['pmin'], signal['pmax'], \
+                            signal['pwidth'], signal['pstart'])
+                    index += self.ptasignals[-1].npars
+            elif signal['stype'] in ['dmpowerlaw', 'dmspectrum']:
+                # A DM variation signal
+                self.addSignalEquad(signal['stype'], signal['corr'], \
+                        signal['pulsarind'], index, Tmax, \
+                        signal['bvary'], signal['pmin'], signal['pmax'], \
+                        signal['pwidth'], signal['pstart'])
+                index += self.ptasignals[-1].npars
+            elif signal['stype'] == 'frequencyline':
+                # Single free-floating frequency line
+                self.addSignalFrequencyLine(signal['stype'], \
+                        signal['pulsarind'], index, ]
+                        doneSingleFreqs[signal['pulsarind']], \
+                        signal['bvary'], signal['pmin'], signal['pmax'], \
+                        signal['pwidth'], signal['pstart'])
+                doneSingleFreqs[signal['pulsarind']] += 1
+                index += self.ptasignals[-1].npars
+            elif signal['stype'] == 'dmfrequencyline':
+                # Single free-floating frequency line
+                self.addSignalFrequencyLine(signal['stype'], \
+                        signal['pulsarind'], index, ]
+                        doneSingleDMFreqs[signal['pulsarind']], \
+                        signal['bvary'], signal['pmin'], signal['pmax'], \
+                        signal['pwidth'], signal['pstart'])
+                doneSingleDMFreqs[signal['pulsarind']] += 1
+                index += self.ptasignals[-1].npars
+            elif signal['stype'] == 'bwm':
+                # A burst with memory
+                self.addSignalBWM(signal['stype'], signal['pulsarind'], index, \
+                        signal['bvary'], signal['pmin'], signal['pmax'], \
+                        signal['pwidth'], signal['pstart'])
                 index += self.ptasignals[-1].npars
 
-            if incRedNoise:
-                self.addSignalRedNoise(ii, index, Tmax, noiseModel, fc)
-                index += self.ptasignals[-1].npars
-                self.haveStochSources = True
-
-            if incDM:
-                self.addSignalDMV(ii, index, Tmax, dmModel)
-                index += self.ptasignals[-1].npars
-                self.haveStochSources = True
-
-            for jj in range(numSingleFreqs[ii]):
-                self.addSignalNoiseFrequencyLine(ii, index, jj)
-                index += self.ptasignals[-1].npars
-                self.haveStochSources = True
-
-            for jj in range(numSingleDMFreqs[ii]):
-                self.addSignalDMFrequencyLine(ii, index, jj)
-                index += self.ptasignals[-1].npars
-                self.haveStochSources = True
-
-        if incGWB:
-            self.addSignalGWB(index, Tmax, gwbModel)
-            index += self.ptasignals[-1].npars
-            self.haveStochSources = True
-
-        if incClock:
-            self.addSignalClock(index, Tmax, clockModel)
-            index += self.ptasignals[-1].npars
-            self.haveStochSources = True
-
-        if incDipole:
-            self.addSignalDipole(index, Tmax, dipoleModel)
-            index += self.ptasignals[-1].npars
-            self.haveStochSources = True
-
-        if incAniGWB:
-            self.addSignalAniGWB(index, Tmax, anigwbModel, lAniGWB)
-            index += self.ptasignals[-1].npars
-            self.haveStochSources = True
-
-        if incBWM:
-            self.addSignalBWM(-1, index)
-            self.haveDetSources = True
-            index += self.ptasignals[-1].npars
 
 
         self.allocateAuxiliaries()
