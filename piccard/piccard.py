@@ -142,7 +142,7 @@ class DataFile(object):
     Add data to a specific pulsar. Here the hdf5 file is opened, and the right
     group is selected
 
-    @param psrname:     The name of the pusar
+    @param psrname:     The name of the pulsar
     @param field:       The name of the field we will be writing to
     @param data:        The data we are writing to the field
     @param overwrite:   Whether the data should be overwritten if it exists
@@ -329,6 +329,62 @@ class DataFile(object):
         # Close the HDF5 file
         self.h5file.close()
         self.h5file = None
+
+    """
+    Add pulsars to the HDF5 file, given the name of another hdf5 file and a list
+    of pulsars. The data structures will be directly copied from the source file
+    to this one.
+
+    @param h5file:  The name of the other HDF5 file from which we will be adding
+    @param pulsars: Which pulsars to read ('all' = all, otherwise provide a
+                    list: ['J0030+0451', 'J0437-4715', ...])
+                    WARNING: duplicates are _not_ checked for.
+    @param mode:    Whether to just add, or overwrite (add/replace)
+    """
+    def addH5Pulsar(self, h5file, pulsars='all', mode='add'):
+        # 'a' means: read/write if exists, create otherwise, 'r' means read
+        sourceh5 = h5.File(h5file, 'r')
+        self.h5file = h5.File(self.filename, 'a')
+
+        # The pulsar names in the HDF5 files
+        sourcepsrnames = list(sourceh5)
+        destpsrnames = list(self.h5file)
+
+        # Determine which pulsars we are reading in
+        readpsrs = []
+        if pulsars=='all':
+            readpsrs = sourcepsrnames
+        else:
+            # Check if all provided pulsars are indeed in the HDF5 file
+            if np.all(np.array([pulsars[ii] in destpsrnames for ii in range(len(pulsars))]) == True):
+                readpsrs = pulsars
+            elif pulsars in destpsrnames:
+                pulsars = [pulsars]
+                readpsrs = pulsars
+            else:
+                self.h5file.close()
+                sourceh5.close()
+                raise ValueError("ERROR: Not all provided pulsars in HDF5 file")
+
+        # Check that these pulsars are not already in the current HDF5 file
+        if not np.all(np.array([readpsrs[ii] not in destpsrnames for ii in range(len(pulsars))]) == True) and \
+                mode != 'replace':
+            self.h5file.close()
+            sourceh5.close()
+            raise ValueError("ERROR: Refusing to overwrite pulsars in {0}".format(self.filename))
+
+        # Ok, now we are good. Let's copy the pulsars
+        for pulsar in readpsrs:
+            if pulsar in self.h5file:
+                # Delete the pulsar if it exists
+                del self.h5file[pulsar]
+
+            # Copy a pulsar
+            self.h5file.copy(sourceh5[pulsar], pulsar)
+
+        # Close both files
+        self.h5file.close()
+        sourceh5.close()
 
     """
     Read the basic quantities of a pulsar from an HDF5 file into a ptaPulsar
@@ -2820,14 +2876,36 @@ class ptaLikelihood(object):
     Initialise this likelihood object from an HDF5 file
 
     @param filename:    Name of the HDF5 file we will be reading
+    @param pulsars:     Which pulsars to read ('all' = all, otherwise provide a
+                        list: ['J0030+0451', 'J0437-4715', ...])
+                        WARNING: duplicates are _not_ checked for.
+    @param append:      If set to True, do not delete earlier read-in pulsars
     """
-    def initFromFile(self, filename):
+    def initFromFile(self, filename, pulsars='all', append=False):
         # Retrieve the pulsar list
         self.t2df = DataFile(filename)
         psrnames = self.t2df.getPulsarList()
 
+        # Determine which pulsars we are reading in
+        readpsrs = []
+        if pulsars=='all':
+            readpsrs = psrnames
+        else:
+            # Check if all provided pulsars are indeed in the HDF5 file
+            if np.all(np.array([pulsars[ii] in psrnames for ii in range(len(pulsars))]) == True):
+                readpsrs = pulsars
+            elif pulsars in destpsrnames:
+                pulsars = [pulsars]
+                readpsrs = pulsars
+            else:
+                raise ValueError("ERROR: Not all provided pulsars in HDF5 file")
+
+        # Free earlier pulsars if we are not appending
+        if not append:
+            self.ptapsrs = []
+
         # Initialise all pulsars
-        for psrname in psrnames:
+        for psrname in readpsrs:
             newpsr = ptaPulsar()
             newpsr.readFromH5(self.t2df, psrname)
             self.ptapsrs.append(newpsr)
@@ -3980,7 +4058,7 @@ class ptaLikelihood(object):
                 if not fromFile:
                     raise StandardError('fromFileFalse')
                 # Read Auxiliaries
-                print "Reading Auxiliaries"
+                #print "Reading Auxiliaries"
                 m2psr.readPulsarAuxiliaries(self.t2df, Tmax, \
                         numNoiseFreqs[pindex], \
                         numDMFreqs[pindex], not separateEfacs[pindex], \
@@ -3988,20 +4066,20 @@ class ptaLikelihood(object):
                         nSingleDMFreqs=numSingleDMFreqs[pindex], \
                         likfunc=likfunc, compression=compression, \
                         memsave=True)
-                print "Reading Auxiliaries done"
+                #print "Reading Auxiliaries done"
             except (StandardError, ValueError, KeyError, IOError, RuntimeError):
                 # Create the Auxiliaries ourselves
 
                 # For every pulsar, construct the auxiliary quantities like the Fourier
                 # design matrix etc
-                print "Creating Auxiliaries"
+                #print "Creating Auxiliaries"
                 m2psr.createPulsarAuxiliaries(self.t2df, Tmax, numNoiseFreqs[pindex], \
                         numDMFreqs[pindex], not separateEfacs[pindex], \
                                 nSingleFreqs=numSingleFreqs[pindex], \
                                 nSingleDMFreqs=numSingleDMFreqs[pindex], \
                                 likfunc=likfunc, compression=compression, \
                                 write='likfunc')
-                print "Creating Auxiliaries done"
+                #print "Creating Auxiliaries done"
 
             # When selecting Fourier modes, like in mark7/mark8, the binclude vector
             # indicates whether or not a frequency is included in the likelihood. By
