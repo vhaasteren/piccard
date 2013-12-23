@@ -2947,7 +2947,7 @@ class ptaLikelihood(object):
                     signal['pwidth'], signal['pstart'])
         elif signal['stype'] in ['equad', 'jitter']:
             # Equad or Jitter
-            self.addSignalEquad(signal['pulsarind'], index, signal['stype'], \
+            self.addSignalEquad(signal['stype'], signal['pulsarind'], index, \
                     signal['flagname'], signal['flagvalue'], \
                     signal['bvary'], signal['pmin'], signal['pmax'], \
                     signal['pwidth'], signal['pstart'])
@@ -2968,7 +2968,7 @@ class ptaLikelihood(object):
                 self.haveStochSources = True
         elif signal['stype'] in ['dmpowerlaw', 'dmspectrum']:
             # A DM variation signal
-            self.addSignalDMV(signal['stype'], signal['corr'], \
+            self.addSignalDMV(signal['stype'], \
                     signal['pulsarind'], index, Tmax, \
                     signal['bvary'], signal['pmin'], signal['pmax'], \
                     signal['pwidth'], signal['pstart'])
@@ -3033,7 +3033,7 @@ class ptaLikelihood(object):
         newsignal.Nvec = self.ptapsrs[psrind].toaerrs**2
         if newsignal.flagname != 'pulsarname':
             # This efac only applies to some TOAs, not all of 'm
-            ind = np.array(self.ptapsrs[psrind].flags) != flagval
+            ind = np.array(self.ptapsrs[psrind].flags) != flagvalue
             newsignal.Nvec[ind] = 0.0
 
         newsignal.nindex = index
@@ -3550,22 +3550,24 @@ class ptaLikelihood(object):
                 signals.append(newsignal)
 
             if incDM:
-                if dmModel=='dmspectrum':
+                if dmModel=='spectrum':
                     nfreqs = numDMFreqs[ii]
                     bvary = [True]*nfreqs
                     pmin = [-14.0]*nfreqs
                     pmax = [-3.0]*nfreqs
                     pstart = [-7.0]*nfreqs
                     pwidth = [0.1]*nfreqs
-                elif noiseModel=='dmpowerlaw':
+                    dmModel = 'dmspectrum'
+                elif dmModel=='powerlaw':
                     bvary = [True, True, False]
                     pmin = [-14.0, 0.02, 1.0e-11]
                     pmax = [-6.5, 6.98, 3.0e-9]
                     pstart = [-13.0, 2.01, 1.0e-10]
                     pwidth = [0.1, 0.1, 5.0e-11]
+                    dmModel = 'dmpowerlaw'
 
                 newsignal = dict({
-                    "stype":noiseModel,
+                    "stype":dmModel,
                     "corr":"single",
                     "pulsarind":ii,
                     "flagname":"pulsarname",
@@ -3978,6 +3980,7 @@ class ptaLikelihood(object):
                 if not fromFile:
                     raise StandardError('fromFileFalse')
                 # Read Auxiliaries
+                print "Reading Auxiliaries"
                 m2psr.readPulsarAuxiliaries(self.t2df, Tmax, \
                         numNoiseFreqs[pindex], \
                         numDMFreqs[pindex], not separateEfacs[pindex], \
@@ -3985,17 +3988,20 @@ class ptaLikelihood(object):
                         nSingleDMFreqs=numSingleDMFreqs[pindex], \
                         likfunc=likfunc, compression=compression, \
                         memsave=True)
+                print "Reading Auxiliaries done"
             except (StandardError, ValueError, KeyError, IOError, RuntimeError):
                 # Create the Auxiliaries ourselves
 
                 # For every pulsar, construct the auxiliary quantities like the Fourier
                 # design matrix etc
+                print "Creating Auxiliaries"
                 m2psr.createPulsarAuxiliaries(self.t2df, Tmax, numNoiseFreqs[pindex], \
                         numDMFreqs[pindex], not separateEfacs[pindex], \
                                 nSingleFreqs=numSingleFreqs[pindex], \
                                 nSingleDMFreqs=numSingleDMFreqs[pindex], \
                                 likfunc=likfunc, compression=compression, \
                                 write='likfunc')
+                print "Creating Auxiliaries done"
 
             # When selecting Fourier modes, like in mark7/mark8, the binclude vector
             # indicates whether or not a frequency is included in the likelihood. By
