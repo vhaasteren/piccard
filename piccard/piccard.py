@@ -154,7 +154,7 @@ class DataFile(object):
         # 'a' means: read/write if exists, create otherwise
         self.h5file = h5.File(self.filename, 'a')
 
-        psrGroup = self.getPulsarGroup(t2pulsar.name, delete=False)
+        psrGroup = self.getPulsarGroup(psrname, delete=False)
         self.writeData(psrGroup, field, data, overwrite=overwrite)
 
         self.h5file.close()
@@ -176,7 +176,7 @@ class DataFile(object):
 
         # 'r' means: read file, must exist
         self.h5file = h5.File(self.filename, 'r')
-        psrGroup = self.getPulsarGroup(t2pulsar.name, delete=False)
+        psrGroup = self.getPulsarGroup(psrname, delete=False)
 
         datGroup = psrGroup
         if subgroup is not None:
@@ -184,11 +184,10 @@ class DataFile(object):
                 datGroup = psrGroup[subgroup]
             else:
                 self.h5file.close()
-                raise IOError, "Field {0} not present for pulsar {1}/{2}".format( \ 
-                    field, psrname, subgroup)
+                raise IOError, "Field {0} not present for pulsar {1}/{2}".format(field, psrname, subgroup)
 
         if field in datGroup:
-            data = datGroup['field']
+            data = np.array(datGroup[field])
             self.h5file.close()
         else:
             self.h5file.close()
@@ -211,7 +210,7 @@ class DataFile(object):
             del dataGroup[field]
 
         if not field in dataGroup:
-            pulsarGroup.create_dataset(field, data=data)
+            dataGroup.create_dataset(field, data=data)
 
     """
     Add a pulsar to the HDF5 file, given a tempo2 par and tim file. No extra
@@ -1293,8 +1292,6 @@ class ptaPulsar(object):
     GGr = None
     GtF = None
     GtD = None
-    #GGtF = None
-    #GGtFF = None
     GGtD = None
     AGr = None      # Replaces GGr in 2-component noise model
     AoGr = None     #   Same but for orthogonal basis (when compressing)
@@ -1320,6 +1317,8 @@ class ptaPulsar(object):
     bfdminc = None      # Number of modes of all internal matrices (DM)
     bcurfinc = None     # Current number of modes in RJMCMC
     bcurfdminc = None   # Current number of modes in RJMCMC
+
+    Qam = 0.0           # The pulse Jitter amplitude (if we use it)
 
     def __init__(self):
         self.raj = 0
@@ -1357,7 +1356,6 @@ class ptaPulsar(object):
         self.GGr = None
         self.GtF = None
         self.GtD = None
-        #self.GGtF = None
         #self.GGtFF = None
         self.GGtD = None
 
@@ -1366,15 +1364,16 @@ class ptaPulsar(object):
         self.bprevfinc = None
         self.bprevfdminc = None
 
+        self.Qam = 0.0
+
     """
     Read the pulsar data (TOAs, residuals, design matrix, etc..) from an HDF5
     file
 
-    @param filename:    The name of the HDF5 file
+    @param t2df:        The DataFile object we are reading from
     @param psrname:     Name of the Pulsar to be read from the HDF5 file
     """
-    def readFromH5(self, filename, psrname):
-        t2df = DataFile(filename)
+    def readFromH5(self, t2df, psrname):
         t2df.readPulsar(self, psrname)
 
     """
@@ -1603,11 +1602,11 @@ class ptaPulsar(object):
         # W s V^{T} = G^{T} F F^{T} G    H = G Wl
 
     @param compression: what kind of compression to use: None/average/frequencies
-    @param nfreqs: when using frequencies, use this number if not -1
-    @param ndmfreqs: when using dm frequencies, use this number if not -1
+    @param nfmodes: when using frequencies, use this number if not -1
+    @param ndmodes: when using dm frequencies, use this number if not -1
     """
     def constructCompressionMatrix(self, compression='None', \
-            nfreqs=-1, ndmfreqs=-1, likfunc='mark3', threshold=1.0):
+            nfmodes=-1, ndmodes=-1, likfunc='mark3', threshold=1.0):
         if compression == 'average':
             if likfunc[:5] != 'mark4':
                 (self.avetoas, self.U) = dailyaveragequantities(self.toas)
@@ -1668,7 +1667,7 @@ class ptaPulsar(object):
             Ftot = np.zeros((len(self.toas), 0))
 
             # Decide on the (dm)frequencies to include
-            if nfreqs == -1:
+            if nfmodes == -1:
                 # Include all, and only all, frequency modes
                 #Ftot = np.append(Ftot, self.Fmat, axis=1)
 
@@ -1676,19 +1675,19 @@ class ptaPulsar(object):
                 l = self.Fmat.shape[1]
                 Vmat, svec, Vhsvd = sl.svd(self.Fmat)
                 Ftot = np.append(Ftot, Vmat[:, :l].copy(), axis=1)
-            elif nfreqs == 0:
+            elif nfmodes == 0:
                 # Why would anyone do this?
                 pass
             else:
-                # Should we check whether nfreqs is not too large?
-                #Ftot = np.append(Ftot, self.Fmat[:, :nfreqs], axis=1)
+                # Should we check whether nfmodes is not too large?
+                #Ftot = np.append(Ftot, self.Fmat[:, :nfmodes], axis=1)
 
                 # Produce an orthogonal basis for the frequencies
-                l = nfreqs
+                l = nfmodes
                 Vmat, svec, Vhsvd = sl.svd(self.Fmat)
                 Ftot = np.append(Ftot, Vmat[:, :l].copy(), axis=1)
 
-            if ndmfreqs == -1:
+            if ndmodes == -1:
                 # Include all, and only all, frequency modes
                 # Ftot = np.append(Ftot, self.DF, axis=1)
 
@@ -1696,12 +1695,12 @@ class ptaPulsar(object):
                 l = self.DF.shape[1]
                 Vmat, svec, Vhsvd = sl.svd(self.DF)
                 Ftot = np.append(Ftot, Vmat[:, :l].copy(), axis=1)
-            elif ndmfreqs == 0:
+            elif ndmodes == 0:
                 # Do not include DM in the compression
                 pass
             else:
-                # Should we check whether nfreqs is not too large?
-                # Ftot = np.append(Ftot, self.DF[:, :ndmfreqs], axis=1)
+                # Should we check whether nfmodes is not too large?
+                # Ftot = np.append(Ftot, self.DF[:, :ndmodes], axis=1)
 
                 # Produce an orthogonal basis for the frequencies
                 l = self.DF.shape[1]
@@ -1752,187 +1751,270 @@ class ptaPulsar(object):
 
 
     """
-    Create auxiliary quantities for the different likelihood functions, like GtF
-    etc.
-    """
-    def createAuxiliaries(self, Tmax, nfreqs, ndmfreqs, twoComponent=False, \
-            nSingleFreqs=0, nSingleDMFreqs=0, compression='None', \
-            likfunc='mark3'):
-        # TODO: Make this flow somewhat better. There is some redundancy here
-        # now
-        ndmf = 0
-        nf = 0
+    For every pulsar, quite a few Auxiliary quantities (like GtF etc.) are
+    necessary for the evaluation of various likelihood functions. This function
+    calculates these quantities, and optionally writes them to the HDF5 file for
+    quick use later.
 
+    @param t2df:            The DataFile we will write things to
+    @param Tmax:            The full duration of the experiment
+    @param nfreqs:          The number of noise frequencies we require for this
+                            pulsar
+    @param ndmfreqs:        The number of DM frequencies we require for this pulsar
+    @param twoComponent:    Whether or not we do the two-component noise
+                            acceleration
+    @param nSingleFreqs:    The number of single floating noise frequencies
+    @param nSingleDMFreqs:  The number of single floating DM frequencies
+    @param compression:     Whether we use compression (None/frequencies/average)
+    @param likfunc:         Which likelihood function to do it for (all/markx/..)
+    @param write:           Which data to write to the HDF5 file ('no' for no
+                            writing, 'likfunc' for the current likfunc, 'all'
+                            for all quantities
+
+    """
+    def createPulsarAuxiliaries(self, t2df, Tmax, nfreqs, ndmfreqs, \
+            twoComponent=False, nSingleFreqs=0, nSingleDMFreqs=0, \
+            compression='None', likfunc='mark3', write='likfunc'):
+        # For creating the auxiliaries it does not really matter: we are now
+        # creating all quantities per default
+        # TODO: set this parameter in another place?
+        if twoComponent:
+            self.twoComponentNoise = True
+
+        # Before writing anything to file, we need to know right away how many
+        # fixed and floating frequencies this model contains.
+        nf = 0 ; ndmf = 0 ; nsf = nSingleFreqs ; nsdmf = nSingleDMFreqs
         if nfreqs is not None and nfreqs != 0:
-            (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
-            nf = -1
+            nf = nfreqs
+        if ndmfreqs is not None and ndmfreqs != 0:
+            ndmf = ndmfreqs
+
+        # Write these numbers to the HDF5 file
+        if write != 'no':
+            t2df.addData(self.name, 'pic_modelFrequencies', [nf, ndmf, nsf, nsdmf])
+            t2df.addData(self.name, 'pic_Tmax', [Tmax])
+
+        # Create the Fourier design matrices for noise
+        if nf > 0:
+            (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nf, Tmax)
         else:
             self.Fmat = np.zeros((len(self.toas), 0))
             self.Ffreqs = np.zeros(0)
 
-        if ndmfreqs is not None and ndmfreqs != 0:
-            (self.Fdmmat, self.Fdmfreqs) = fourierdesignmatrix(self.toas, 2*ndmfreqs, Tmax)
+        # Create the Fourier design matrices for DM variations
+        if ndmf > 0:
+            (self.Fdmmat, self.Fdmfreqs) = fourierdesignmatrix(self.toas, 2*ndmf, Tmax)
             self.Dmat = np.diag(pic_DMk / (self.freqs**2))
             self.DF = np.dot(self.Dmat, self.Fdmmat)
-            ndmf = -1
         else:
+            self.Fdmmat = np.zeros((len(self.freqs), 0))
+            self.Fdmfreqs = np.zeros(0)
             self.Dmat = np.diag(pic_DMk / (self.freqs**2))
             self.DF = np.zeros((len(self.freqs), 0))
-            self.Fdmfreqs = np.zeros(0)
+
+        # Create the dailay averaged residuals
+        (self.avetoas, self.U) = dailyaveragequantities(self.toas)
+
+        # Write these quantities to disk
+        if write != 'no':
+            t2df.addData(self.name, 'pic_Fmat', self.Fmat)
+            t2df.addData(self.name, 'pic_Ffreqs', self.Ffreqs)
+            t2df.addData(self.name, 'pic_Fdmmat', self.Fdmmat)
+            t2df.addData(self.name, 'pic_Fdmfreqs', self.Fdmfreqs)
+            t2df.addData(self.name, 'pic_Dmat', self.Dmat)
+            t2df.addData(self.name, 'pic_DF', self.DF)
+
+            t2df.addData(self.name, 'pic_avetoas', self.avetoas)
+            t2df.addData(self.name, 'pic_U', self.U)
+
+        # Next we'll need the G-matrices, and the compression matrices.
+        U, s, Vh = sl.svd(self.Mmat)
+        self.Gmat = U[:, self.Mmat.shape[1]:].copy()
+        self.Gcmat = U[:, :self.Mmat.shape[1]].copy()
+        self.constructCompressionMatrix(compression, nfmodes=2*nf,
+                ndmodes=2*ndmf, threshold=1.0)
+        if write != 'no':
+            t2df.addData(self.name, 'pic_Gmat', self.Gmat)
+            t2df.addData(self.name, 'pic_Gcmat', self.Gcmat)
+            t2df.addData(self.name, 'pic_Hmat', self.Hmat)
+            t2df.addData(self.name, 'pic_Hcmat', self.Hcmat)
+            t2df.addData(self.name, 'pic_Homat', self.Homat)
+            t2df.addData(self.name, 'pic_Hocmat', self.Hocmat)
 
 
-        if likfunc == 'mark1':
-            self.constructCompressionMatrix(compression, nfreqs=nf, ndmfreqs=ndmf)
 
+        # Now, write such quantities on a per-likelihood basis
+        if likfunc == 'mark1' or write == 'all':
             self.Gr = np.dot(self.Hmat.T, self.residuals)
             self.GGr = np.dot(self.Hmat, self.Gr)
             self.GtF = np.dot(self.Hmat.T, self.Fmat)
-            #self.GGtF = np.dot(self.Hmat, self.GtF)
             self.GtD = np.dot(self.Hmat.T, self.DF)
 
-            if twoComponent:
-                self.twoComponentNoise = True
+            # For two-component noise
+            # Diagonalise GtEfG (HtEfH)
+            GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
+            self.Wvec, self.Amat = sl.eigh(GtNeG)
+            self.AGr = np.dot(self.Amat.T, self.Gr)
+            self.AGF = np.dot(self.Amat.T, self.GtF)
 
-                # Diagonalise GtEfG (HtEfH)
-                GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
-                self.Wvec, self.Amat = sl.eigh(GtNeG)
+            # Diagonalise HotEfHo
+            if self.Homat.shape[1] > 0:
+                HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                self.Wovec, self.Aomat = sl.eigh(HotNeHo)
 
-                self.AGr = np.dot(self.Amat.T, self.Gr)
-                self.AGF = np.dot(self.Amat.T, self.GtF)
-                #self.AG = np.dot(self.Amat.T, self.Hmat.T)
+                Hor = np.dot(self.Homat.T, self.residuals)
+                HotF = np.dot(self.Homat.T, self.Fmat)
+                self.AoGr = np.dot(self.Aomat.T, Hor)
+                self.AoGF = np.dot(self.Aomat.T, HotF)
+            else:
+                self.Wovec = np.zeros(0)
+                self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                self.AoGF = np.zeros((0, self.GtF.shape[1]))
 
-                # Diagonalise HotEfHo
-                if self.Homat.shape[1] > 0:
-                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
-                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+            if write != 'none':
+                # Write all these quantities to the HDF5 file
+                t2df.addData(self.name, 'pic_Gr', self.Gr)
+                t2df.addData(self.name, 'pic_GGr', self.GGr)
+                t2df.addData(self.name, 'pic_GtF', self.GtF)
+                t2df.addData(self.name, 'pic_GtD', self.GtD)
+                t2df.addData(self.name, 'pic_Wvec', self.Wvec)
+                t2df.addData(self.name, 'pic_Amat', self.Amat)
+                t2df.addData(self.name, 'pic_AGr', self.AGr)
+                t2df.addData(self.name, 'pic_AGF', self.AGF)
+                t2df.addData(self.name, 'pic_Wovec', self.Wovec)
+                t2df.addData(self.name, 'pic_Aomat', self.Aomat)
+                t2df.addData(self.name, 'pic_AoGr', self.AoGr)
+                t2df.addData(self.name, 'pic_AoGF', self.AoGF)
 
-                    Hor = np.dot(self.Homat.T, self.residuals)
-                    HotF = np.dot(self.Homat.T, self.Fmat)
-                    self.AoGr = np.dot(self.Aomat.T, Hor)
-                    self.AoGF = np.dot(self.Aomat.T, HotF)
-                else:
-                    self.Wovec = np.zeros(0)
-                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
-                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
-                    self.AoGF = np.zeros((0, self.GtF.shape[1]))
-
-
-        if likfunc == 'mark2':
+        if likfunc == 'mark2' or write == 'all':
             self.Gr = np.dot(self.Gmat.T, self.residuals)
             self.GGr = np.dot(self.Gmat, self.Gr)
-            self.constructCompressionMatrix(compression)
 
-            if twoComponent:
-                self.twoComponentNoise = True
+            # For two-component noise
+            # Diagonalise GtEfG
+            GtNeG = np.dot(self.Gmat.T, ((self.toaerrs**2) * self.Gmat.T).T)
+            self.Wvec, self.Amat = sl.eigh(GtNeG)
+            self.AGr = np.dot(self.Amat.T, self.Gr)
 
-                # Diagonalise GtEfG
-                GtNeG = np.dot(self.Gmat.T, ((self.toaerrs**2) * self.Gmat.T).T)
-                self.Wvec, self.Amat = sl.eigh(GtNeG)
+            # Diagonalise HotEfHo
+            if self.Homat.shape[1] > 0:
+                HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                self.Wovec, self.Aomat = sl.eigh(HotNeHo)
 
-                self.AGr = np.dot(self.Amat.T, self.Gr)
-                #self.AG = np.dot(self.Amat.T, self.Gmat.T)
+                self.AoGr = np.dot(self.Aomat.T, self.Gr)
+            else:
+                self.Wovec = np.zeros(0)
+                self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                self.AoGr = np.zeros((0, self.Gr.shape[0]))
 
-                # Diagonalise HotEfHo
-                if self.Homat.shape[1] > 0:
-                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
-                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+            if write != 'none':
+                # Write all these quantities to the HDF5 file
+                t2df.addData(self.name, 'pic_Gr', self.Gr)
+                t2df.addData(self.name, 'pic_GGr', self.GGr)
+                t2df.addData(self.name, 'pic_Wvec', self.Wvec)
+                t2df.addData(self.name, 'pic_Amat', self.Amat)
+                t2df.addData(self.name, 'pic_AGr', self.AGr)
+                t2df.addData(self.name, 'pic_Wovec', self.Wovec)
+                t2df.addData(self.name, 'pic_Aomat', self.Aomat)
+                t2df.addData(self.name, 'pic_AoGr', self.AoGr)
 
-                    self.AoGr = np.dot(self.Aomat.T, self.Gr)
-                else:
-                    self.Wovec = np.zeros(0)
-                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
-                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
-
-        if likfunc == 'mark3' or likfunc == 'mark3fa':
-            (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
-            self.constructCompressionMatrix(compression, nfreqs=-1, ndmfreqs=0)
-
+        if likfunc == 'mark3' or likfunc == 'mark3fa' or write == 'all':
             self.Gr = np.dot(self.Hmat.T, self.residuals)
             self.GGr = np.dot(self.Hmat, self.Gr)
             self.GtF = np.dot(self.Hmat.T, self.Fmat)
-            #self.GGtF = np.dot(self.Hmat, self.GtF)
 
-            if twoComponent:
-                self.twoComponentNoise = True
+            # For two-component noise
+            # Diagonalise GtEfG
+            GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
+            self.Wvec, self.Amat = sl.eigh(GtNeG)
 
-                # Diagonalise GtEfG
-                GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
-                self.Wvec, self.Amat = sl.eigh(GtNeG)
+            self.AGr = np.dot(self.Amat.T, self.Gr)
+            self.AGF = np.dot(self.Amat.T, self.GtF)
 
-                self.AGr = np.dot(self.Amat.T, self.Gr)
-                self.AGF = np.dot(self.Amat.T, self.GtF)
-                #self.AG = np.dot(self.Amat.T, self.Hmat.T)
+            # Diagonalise HotEfHo
+            if self.Homat.shape[1] > 0:
+                HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                self.Wovec, self.Aomat = sl.eigh(HotNeHo)
 
-                # Diagonalise HotEfHo
-                if self.Homat.shape[1] > 0:
-                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
-                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+                Hor = np.dot(self.Homat.T, self.residuals)
+                HotF = np.dot(self.Homat.T, self.Fmat)
+                self.AoGr = np.dot(self.Aomat.T, Hor)
+                self.AoGF = np.dot(self.Aomat.T, HotF)
+            else:
+                self.Wovec = np.zeros(0)
+                self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                self.AoGF = np.zeros((0, self.GtF.shape[1]))
 
-                    Hor = np.dot(self.Homat.T, self.residuals)
-                    HotF = np.dot(self.Homat.T, self.Fmat)
-                    self.AoGr = np.dot(self.Aomat.T, Hor)
-                    self.AoGF = np.dot(self.Aomat.T, HotF)
-                else:
-                    self.Wovec = np.zeros(0)
-                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
-                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
-                    self.AoGF = np.zeros((0, self.GtF.shape[1]))
+            if write != 'none':
+                # Write all these quantities to the HDF5 file
+                t2df.addData(self.name, 'pic_Gr', self.Gr)
+                t2df.addData(self.name, 'pic_GGr', self.GGr)
+                t2df.addData(self.name, 'pic_GtF', self.GtF)
+                t2df.addData(self.name, 'pic_Wvec', self.Wvec)
+                t2df.addData(self.name, 'pic_Amat', self.Amat)
+                t2df.addData(self.name, 'pic_AGr', self.AGr)
+                t2df.addData(self.name, 'pic_AGF', self.AGF)
+                t2df.addData(self.name, 'pic_Wovec', self.Wovec)
+                t2df.addData(self.name, 'pic_Aomat', self.Aomat)
+                t2df.addData(self.name, 'pic_AoGr', self.AoGr)
+                t2df.addData(self.name, 'pic_AoGF', self.AoGF)
 
-
-        if likfunc == 'mark4':
-            (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
-            (self.avetoas, self.U) = dailyaveragequantities(self.toas)
-
-            self.constructCompressionMatrix(compression, nfreqs=-1, ndmfreqs=0, likfunc=likfunc)
-
+        if likfunc == 'mark4' or write == 'all':
             self.Gr = np.dot(self.Hmat.T, self.residuals)
             self.GGr = np.dot(self.Hmat, self.Gr)
             self.GtF = np.dot(self.Hmat.T, self.Fmat)
-            #self.GGtF = np.dot(self.Hmat, self.GtF)
             GtU = np.dot(self.Hmat.T, self.U)
 
             self.UtF = np.dot(self.U.T, self.Fmat)
-            self.Qamp = 1.0
 
-            if twoComponent:
-                self.twoComponentNoise = True
+            # For two-component noise
+            # Diagonalise GtEfG
+            GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
+            self.Wvec, self.Amat = sl.eigh(GtNeG)
 
-                # Diagonalise GtEfG
-                GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
-                self.Wvec, self.Amat = sl.eigh(GtNeG)
+            self.AGr = np.dot(self.Amat.T, self.Gr)
+            self.AGU = np.dot(self.Amat.T, GtU)
 
-                self.AGr = np.dot(self.Amat.T, self.Gr)
-                self.AGU = np.dot(self.Amat.T, GtU)
+            # Diagonalise HotEfHo
+            if self.Homat.shape[1] > 0:
+                HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                self.Wovec, self.Aomat = sl.eigh(HotNeHo)
 
-                # Diagonalise HotEfHo
-                if self.Homat.shape[1] > 0:
-                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
-                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+                Hor = np.dot(self.Homat.T, self.residuals)
+                HotU = np.dot(self.Homat.T, self.U)
+                self.AoGr = np.dot(self.Aomat.T, Hor)
+                self.AoGU = np.dot(self.Aomat.T, HotU)
+            else:
+                self.Wovec = np.zeros(0)
+                self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                self.AoGU = np.zeros((0, GtU.shape[1]))
 
-                    Hor = np.dot(self.Homat.T, self.residuals)
-                    HotU = np.dot(self.Homat.T, self.U)
-                    self.AoGr = np.dot(self.Aomat.T, Hor)
-                    self.AoGU = np.dot(self.Aomat.T, HotU)
-                else:
-                    self.Wovec = np.zeros(0)
-                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
-                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
-                    self.AoGU = np.zeros((0, GtU.shape[1]))
+            if write != 'none':
+                # Write all these quantities to the HDF5 file
+                t2df.addData(self.name, 'pic_Gr', self.Gr)
+                t2df.addData(self.name, 'pic_GGr', self.GGr)
+                t2df.addData(self.name, 'pic_GtF', self.GtF)
+                t2df.addData(self.name, 'pic_UtF', self.UtF)
+                t2df.addData(self.name, 'pic_Wvec', self.Wvec)
+                t2df.addData(self.name, 'pic_Amat', self.Amat)
+                t2df.addData(self.name, 'pic_AGr', self.AGr)
+                t2df.addData(self.name, 'pic_AGU', self.AGU)
+                t2df.addData(self.name, 'pic_Wovec', self.Wovec)
+                t2df.addData(self.name, 'pic_Aomat', self.Aomat)
+                t2df.addData(self.name, 'pic_AoGr', self.AoGr)
+                t2df.addData(self.name, 'pic_AoGU', self.AoGU)
 
-        if likfunc == 'mark4ln':
-            (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
-            (self.avetoas, self.U) = dailyaveragequantities(self.toas)
 
-            self.constructCompressionMatrix(compression, nfreqs=-1, ndmfreqs=0, likfunc=likfunc)
-
+        if likfunc == 'mark4ln' or write == 'all':
             self.Gr = np.dot(self.Hmat.T, self.residuals)
             self.GGr = np.dot(self.Hmat, self.Gr)
             self.GtF = np.dot(self.Hmat.T, self.Fmat)
-            #self.GGtF = np.dot(self.Hmat, self.GtF)
             GtU = np.dot(self.Hmat.T, self.U)
 
             self.UtF = np.dot(self.U.T, self.Fmat)
-            self.Qamp = 1.0
 
             # Initialise the single frequency with a frequency of 10 / yr
             self.frequencyLinesAdded = nSingleFreqs
@@ -1941,45 +2023,52 @@ class ptaPulsar(object):
             self.SFmat = singleFreqFourierModes(self.toas, np.log10(sfreqs))
             self.FFmat = np.append(self.Fmat, self.SFmat, axis=1)
             self.SFfreqs = np.log10(np.array([sfreqs, sfreqs]).T.flatten())
-            GtFF = np.dot(self.Hmat.T, self.FFmat)
-            #self.GGtFF = np.dot(self.Hmat, GtFF)
 
             self.UtFF = np.dot(self.U.T, self.FFmat)
 
-            if twoComponent:
-                self.twoComponentNoise = True
+            # For two-component noise
+            # Diagonalise GtEfG
+            GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
+            self.Wvec, self.Amat = sl.eigh(GtNeG)
 
-                # Diagonalise GtEfG
-                GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
-                self.Wvec, self.Amat = sl.eigh(GtNeG)
+            self.AGr = np.dot(self.Amat.T, self.Gr)
+            self.AGU = np.dot(self.Amat.T, GtU)
 
-                self.AGr = np.dot(self.Amat.T, self.Gr)
-                self.AGU = np.dot(self.Amat.T, GtU)
+            # Diagonalise HotEfHo
+            if self.Homat.shape[1] > 0:
+                HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                self.Wovec, self.Aomat = sl.eigh(HotNeHo)
 
-                # Diagonalise HotEfHo
-                if self.Homat.shape[1] > 0:
-                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
-                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+                Hor = np.dot(self.Homat.T, self.residuals)
+                HotU = np.dot(self.Homat.T, self.U)
+                self.AoGr = np.dot(self.Aomat.T, Hor)
+                self.AoGU = np.dot(self.Aomat.T, HotU)
+            else:
+                self.Wovec = np.zeros(0)
+                self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                self.AoGU = np.zeros((0, GtU.shape[1]))
 
-                    Hor = np.dot(self.Homat.T, self.residuals)
-                    HotU = np.dot(self.Homat.T, self.U)
-                    self.AoGr = np.dot(self.Aomat.T, Hor)
-                    self.AoGU = np.dot(self.Aomat.T, HotU)
-                else:
-                    self.Wovec = np.zeros(0)
-                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
-                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
-                    self.AoGU = np.zeros((0, GtU.shape[1]))
+            if write != 'none':
+                # Write all these quantities to the HDF5 file
+                t2df.addData(self.name, 'pic_Gr', self.Gr)
+                t2df.addData(self.name, 'pic_GGr', self.GGr)
+                t2df.addData(self.name, 'pic_GtF', self.GtF)
+                t2df.addData(self.name, 'pic_UtF', self.UtF)
+                t2df.addData(self.name, 'pic_SFmat', self.SFmat)
+                t2df.addData(self.name, 'pic_FFmat', self.FFmat)
+                t2df.addData(self.name, 'pic_SFfreqs', self.SFfreqs)
+                t2df.addData(self.name, 'pic_UtFF', self.UtFF)
+                t2df.addData(self.name, 'pic_Wvec', self.Wvec)
+                t2df.addData(self.name, 'pic_Amat', self.Amat)
+                t2df.addData(self.name, 'pic_AGr', self.AGr)
+                t2df.addData(self.name, 'pic_AGU', self.AGU)
+                t2df.addData(self.name, 'pic_Wovec', self.Wovec)
+                t2df.addData(self.name, 'pic_Aomat', self.Aomat)
+                t2df.addData(self.name, 'pic_AoGr', self.AoGr)
+                t2df.addData(self.name, 'pic_AoGU', self.AoGU)
 
-
-        if likfunc == 'mark6' or likfunc == 'mark6fa':
-            (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
-            (self.Fdmmat, self.Fdmfreqs) = fourierdesignmatrix(self.toas, 2*ndmfreqs, Tmax)
-            self.Dmat = np.diag(pic_DMk / (self.freqs**2))
-            self.DF = np.dot(self.Dmat, self.Fdmmat)
-
-            self.constructCompressionMatrix(compression, nfreqs=-1, ndmfreqs=-1)
-
+        if likfunc == 'mark6' or likfunc == 'mark6fa' or write == 'all':
             # Red noise
             self.Gr = np.dot(self.Hmat.T, self.residuals)
             self.GGr = np.dot(self.Hmat, self.Gr)
@@ -1995,87 +2084,104 @@ class ptaPulsar(object):
             GtE = np.dot(self.Hmat.T, self.Emat)
             self.GGtE = np.dot(self.Hmat, GtE)
 
-            if twoComponent:
-                self.twoComponentNoise = True
+            # For two-component noise
+            # Diagonalise GtEfG
+            GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
+            self.Wvec, self.Amat = sl.eigh(GtNeG)
 
-                # Diagonalise GtEfG
-                GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
-                self.Wvec, self.Amat = sl.eigh(GtNeG)
+            self.AGr = np.dot(self.Amat.T, self.Gr)
+            self.AGF = np.dot(self.Amat.T, self.GtF)
+            self.AGD = np.dot(self.Amat.T, GtD)
+            self.AGE = np.dot(self.Amat.T, GtE)
 
-                self.AGr = np.dot(self.Amat.T, self.Gr)
-                self.AGF = np.dot(self.Amat.T, self.GtF)
-                self.AGD = np.dot(self.Amat.T, GtD)
-                self.AGE = np.dot(self.Amat.T, GtE)
+            # Diagonalise HotEfHo
+            if self.Homat.shape[1] > 0:
+                HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                self.Wovec, self.Aomat = sl.eigh(HotNeHo)
 
-                # Diagonalise HotEfHo
-                if self.Homat.shape[1] > 0:
-                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
-                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+                Hor = np.dot(self.Homat.T, self.residuals)
+                HotF = np.dot(self.Homat.T, self.Fmat)
+                HotD = np.dot(self.Homat.T, self.DF)
+                HotE = np.dot(self.Homat.T, self.Emat)
+                self.AoGr = np.dot(self.Aomat.T, Hor)
+                self.AoGF = np.dot(self.Aomat.T, HotF)
+                self.AoGD = np.dot(self.Aomat.T, HotD)
+                self.AoGE = np.dot(self.Aomat.T, HotE)
+            else:
+                self.Wovec = np.zeros(0)
+                self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                self.AoGF = np.zeros((0, self.GtF.shape[1]))
+                self.AoGD = np.zeros((0, GtD.shape[1]))
+                self.AoGE = np.zeros((0, GtE.shape[1]))
 
-                    Hor = np.dot(self.Homat.T, self.residuals)
-                    HotF = np.dot(self.Homat.T, self.Fmat)
-                    HotD = np.dot(self.Homat.T, self.DF)
-                    HotE = np.dot(self.Homat.T, self.Emat)
-                    self.AoGr = np.dot(self.Aomat.T, Hor)
-                    self.AoGF = np.dot(self.Aomat.T, HotF)
-                    self.AoGD = np.dot(self.Aomat.T, HotD)
-                    self.AoGE = np.dot(self.Aomat.T, HotE)
-                else:
-                    self.Wovec = np.zeros(0)
-                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
-                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
-                    self.AoGF = np.zeros((0, self.GtF.shape[1]))
-                    self.AoGD = np.zeros((0, GtD.shape[1]))
-                    self.AoGE = np.zeros((0, GtE.shape[1]))
+            if write != 'none':
+                # Write all these quantities to the HDF5 file
+                t2df.addData(self.name, 'pic_Gr', self.Gr)
+                t2df.addData(self.name, 'pic_GGr', self.GGr)
+                t2df.addData(self.name, 'pic_GtF', self.GtF)
+                t2df.addData(self.name, 'pic_GGtD', self.GGtD)
+                t2df.addData(self.name, 'pic_Emat', self.Emat)
+                t2df.addData(self.name, 'pic_GGtE', self.GGtE)
+                t2df.addData(self.name, 'pic_Wvec', self.Wvec)
+                t2df.addData(self.name, 'pic_Amat', self.Amat)
+                t2df.addData(self.name, 'pic_AGr', self.AGr)
+                t2df.addData(self.name, 'pic_AGF', self.AGF)
+                t2df.addData(self.name, 'pic_AGD', self.AGD)
+                t2df.addData(self.name, 'pic_AGE', self.AGE)
+                t2df.addData(self.name, 'pic_Wovec', self.Wovec)
+                t2df.addData(self.name, 'pic_Aomat', self.Aomat)
+                t2df.addData(self.name, 'pic_AoGr', self.AoGr)
+                t2df.addData(self.name, 'pic_AoGF', self.AoGF)
+                t2df.addData(self.name, 'pic_AoGD', self.AoGD)
+                t2df.addData(self.name, 'pic_AoGE', self.AoGE)
 
-        if likfunc == 'mark7':
-            (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
-
-            self.constructCompressionMatrix(compression, nfreqs=-1, ndmfreqs=0)
-
+        if likfunc == 'mark7' or write == 'all':
             self.Gr = np.dot(self.Hmat.T, self.residuals)
             self.GGr = np.dot(self.Hmat, self.Gr)
             self.GtF = np.dot(self.Hmat.T, self.Fmat)
-            #self.GGtF = np.dot(self.Hmat, self.GtF)
 
-            if twoComponent:
-                self.twoComponentNoise = True
+            # For two-component noise
+            # Diagonalise GtEfG
+            GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
+            self.Wvec, self.Amat = sl.eigh(GtNeG)
 
-                # Diagonalise GtEfG
-                GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
-                self.Wvec, self.Amat = sl.eigh(GtNeG)
+            self.AGr = np.dot(self.Amat.T, self.Gr)
+            self.AGF = np.dot(self.Amat.T, self.GtF)
 
-                self.AGr = np.dot(self.Amat.T, self.Gr)
-                self.AGF = np.dot(self.Amat.T, self.GtF)
+            # Diagonalise HotEfHo
+            if self.Homat.shape[1] > 0:
+                HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                self.Wovec, self.Aomat = sl.eigh(HotNeHo)
 
-                # Diagonalise HotEfHo
-                if self.Homat.shape[1] > 0:
-                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
-                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+                Hor = np.dot(self.Homat.T, self.residuals)
+                HotF = np.dot(self.Homat.T, self.Fmat)
+                self.AoGr = np.dot(self.Aomat.T, Hor)
+                self.AoGF = np.dot(self.Aomat.T, HotF)
+            else:
+                self.Wovec = np.zeros(0)
+                self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                self.AoGF = np.zeros((0, self.GtF.shape[1]))
 
-                    Hor = np.dot(self.Homat.T, self.residuals)
-                    HotF = np.dot(self.Homat.T, self.Fmat)
-                    self.AoGr = np.dot(self.Aomat.T, Hor)
-                    self.AoGF = np.dot(self.Aomat.T, HotF)
-                else:
-                    self.Wovec = np.zeros(0)
-                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
-                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
-                    self.AoGF = np.zeros((0, self.GtF.shape[1]))
+            if write != 'none':
+                # Write all these quantities to the HDF5 file
+                t2df.addData(self.name, 'pic_Gr', self.Gr)
+                t2df.addData(self.name, 'pic_GGr', self.GGr)
+                t2df.addData(self.name, 'pic_GtF', self.GtF)
+                t2df.addData(self.name, 'pic_Wvec', self.Wvec)
+                t2df.addData(self.name, 'pic_Amat', self.Amat)
+                t2df.addData(self.name, 'pic_AGr', self.AGr)
+                t2df.addData(self.name, 'pic_AGF', self.AGF)
+                t2df.addData(self.name, 'pic_Wovec', self.Wovec)
+                t2df.addData(self.name, 'pic_Aomat', self.Aomat)
+                t2df.addData(self.name, 'pic_AoGr', self.AoGr)
+                t2df.addData(self.name, 'pic_AoGF', self.AoGF)
 
-
-        if likfunc == 'mark8':
-            (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
-            (self.Fdmmat, self.Fdmfreqs) = fourierdesignmatrix(self.toas, 2*ndmfreqs, Tmax)
-            self.Dmat = np.diag(pic_DMk / (self.freqs**2))
-            self.DF = np.dot(self.Dmat, self.Fdmmat)
-
-            self.constructCompressionMatrix(compression, nfreqs=-1, ndmfreqs=-1)
-
+        if likfunc == 'mark8' or write == 'all':
             self.Gr = np.dot(self.Hmat.T, self.residuals)
             self.GGr = np.dot(self.Hmat, self.Gr)
             self.GtF = np.dot(self.Hmat.T, self.Fmat)
-            #self.GGtF = np.dot(self.Hmat, self.GtF)
 
             # For the DM stuff
             GtD = np.dot(self.Hmat.T, self.DF)
@@ -2086,49 +2192,62 @@ class ptaPulsar(object):
             GtE = np.dot(self.Hmat.T, self.Emat)
             self.GGtE = np.dot(self.Hmat, GtE)
 
-            # For a two-component noise model, we need some more stuff done
-            if twoComponent:
-                self.twoComponentNoise = True
+            # For two-component noise
+            # Diagonalise GtEfG
+            GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
+            self.Wvec, self.Amat = sl.eigh(GtNeG)
 
-                # Diagonalise GtEfG
-                GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
-                self.Wvec, self.Amat = sl.eigh(GtNeG)
+            self.AGr = np.dot(self.Amat.T, self.Gr)
+            self.AGF = np.dot(self.Amat.T, self.GtF)
+            self.AGD = np.dot(self.Amat.T, GtD)
+            self.AGE = np.dot(self.Amat.T, GtE)
 
-                self.AGr = np.dot(self.Amat.T, self.Gr)
-                self.AGF = np.dot(self.Amat.T, self.GtF)
-                self.AGD = np.dot(self.Amat.T, GtD)
-                self.AGE = np.dot(self.Amat.T, GtE)
+            # Diagonalise HotEfHo
+            if self.Homat.shape[1] > 0:
+                HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                self.Wovec, self.Aomat = sl.eigh(HotNeHo)
 
-                # Diagonalise HotEfHo
-                if self.Homat.shape[1] > 0:
-                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
-                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+                Hor = np.dot(self.Homat.T, self.residuals)
+                HotF = np.dot(self.Homat.T, self.Fmat)
+                HotD = np.dot(self.Homat.T, self.DF)
+                HotE = np.dot(self.Homat.T, self.Emat)
+                self.AoGr = np.dot(self.Aomat.T, Hor)
+                self.AoGF = np.dot(self.Aomat.T, HotF)
+                self.AoGD = np.dot(self.Aomat.T, HotD)
+                self.AoGE = np.dot(self.Aomat.T, HotE)
+            else:
+                self.Wovec = np.zeros(0)
+                self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                self.AoGF = np.zeros((0, self.GtF.shape[1]))
+                self.AoGD = np.zeros((0, GtD.shape[1]))
+                self.AoGE = np.zeros((0, GtE.shape[1]))
 
-                    Hor = np.dot(self.Homat.T, self.residuals)
-                    HotF = np.dot(self.Homat.T, self.Fmat)
-                    HotD = np.dot(self.Homat.T, self.DF)
-                    HotE = np.dot(self.Homat.T, self.Emat)
-                    self.AoGr = np.dot(self.Aomat.T, Hor)
-                    self.AoGF = np.dot(self.Aomat.T, HotF)
-                    self.AoGD = np.dot(self.Aomat.T, HotD)
-                    self.AoGE = np.dot(self.Aomat.T, HotE)
-                else:
-                    self.Wovec = np.zeros(0)
-                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
-                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
-                    self.AoGF = np.zeros((0, self.GtF.shape[1]))
-                    self.AoGD = np.zeros((0, GtD.shape[1]))
-                    self.AoGE = np.zeros((0, GtE.shape[1]))
+            if write != 'none':
+                # Write all these quantities to the HDF5 file
+                t2df.addData(self.name, 'pic_Gr', self.Gr)
+                t2df.addData(self.name, 'pic_GGr', self.GGr)
+                t2df.addData(self.name, 'pic_GtF', self.GtF)
+                t2df.addData(self.name, 'pic_GGtD', self.GGtD)
+                t2df.addData(self.name, 'pic_Emat', self.Emat)
+                t2df.addData(self.name, 'pic_GGtE', self.GGtE)
+                t2df.addData(self.name, 'pic_Wvec', self.Wvec)
+                t2df.addData(self.name, 'pic_Amat', self.Amat)
+                t2df.addData(self.name, 'pic_AGr', self.AGr)
+                t2df.addData(self.name, 'pic_AGF', self.AGF)
+                t2df.addData(self.name, 'pic_AGD', self.AGD)
+                t2df.addData(self.name, 'pic_AGE', self.AGE)
+                t2df.addData(self.name, 'pic_Wovec', self.Wovec)
+                t2df.addData(self.name, 'pic_Aomat', self.Aomat)
+                t2df.addData(self.name, 'pic_AoGr', self.AoGr)
+                t2df.addData(self.name, 'pic_AoGF', self.AoGF)
+                t2df.addData(self.name, 'pic_AoGD', self.AoGD)
+                t2df.addData(self.name, 'pic_AoGE', self.AoGE)
 
-        if likfunc == 'mark9':
-            (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
-
-            self.constructCompressionMatrix(compression, nfreqs=-1, ndmfreqs=0)
-
+        if likfunc == 'mark9' or write == 'all':
             self.Gr = np.dot(self.Hmat.T, self.residuals)
             self.GGr = np.dot(self.Hmat, self.Gr)
             self.GtF = np.dot(self.Hmat.T, self.Fmat)
-            #self.GGtF = np.dot(self.Hmat, self.GtF)
 
             # Initialise the single frequency with a frequency of 10 / yr
             self.frequencyLinesAdded = nSingleFreqs
@@ -2138,50 +2257,57 @@ class ptaPulsar(object):
             self.FFmat = np.append(self.Fmat, self.SFmat, axis=1)
             self.SFfreqs = np.log10(np.array([sfreqs, sfreqs]).T.flatten())
             GtFF = np.dot(self.Hmat.T, self.FFmat)
-            #self.GGtFF = np.dot(self.Hmat, GtFF)
 
-            # For a two-component noise model, we need some more stuff done
-            if twoComponent:
-                self.twoComponentNoise = True
+            # For two-component noise model
+            # Diagonalise GtEfG
+            GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
+            self.Wvec, self.Amat = sl.eigh(GtNeG)
 
-                # Diagonalise GtEfG
-                GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
-                self.Wvec, self.Amat = sl.eigh(GtNeG)
+            self.AGr = np.dot(self.Amat.T, self.Gr)
+            self.AGF = np.dot(self.Amat.T, self.GtF)
+            self.AGFF = np.dot(self.Amat.T, GtFF)
 
-                self.AGr = np.dot(self.Amat.T, self.Gr)
-                self.AGF = np.dot(self.Amat.T, self.GtF)
-                self.AGFF = np.dot(self.Amat.T, GtFF)
+            # Diagonalise HotEfHo
+            if self.Homat.shape[1] > 0:
+                HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                self.Wovec, self.Aomat = sl.eigh(HotNeHo)
 
-                # Diagonalise HotEfHo
-                if self.Homat.shape[1] > 0:
-                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
-                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+                Hor = np.dot(self.Homat.T, self.residuals)
+                HotF = np.dot(self.Homat.T, self.Fmat)
+                HotFF = np.dot(self.Homat.T, self.FFmat)
+                self.AoGr = np.dot(self.Aomat.T, Hor)
+                self.AoGF = np.dot(self.Aomat.T, HotF)
+                self.AoGFF = np.dot(self.Aomat.T, HotFF)
+            else:
+                self.Wovec = np.zeros(0)
+                self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                self.AoGF = np.zeros((0, self.GtF.shape[1]))
+                self.AoGFF = np.zeros((0, GtFF.shape[1]))
 
-                    Hor = np.dot(self.Homat.T, self.residuals)
-                    HotF = np.dot(self.Homat.T, self.Fmat)
-                    HotFF = np.dot(self.Homat.T, self.FFmat)
-                    self.AoGr = np.dot(self.Aomat.T, Hor)
-                    self.AoGF = np.dot(self.Aomat.T, HotF)
-                    self.AoGFF = np.dot(self.Aomat.T, HotFF)
-                else:
-                    self.Wovec = np.zeros(0)
-                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
-                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
-                    self.AoGF = np.zeros((0, self.GtF.shape[1]))
-                    self.AoGFF = np.zeros((0, GtFF.shape[1]))
+            if write != 'none':
+                # Write all these quantities to the HDF5 file
+                t2df.addData(self.name, 'pic_Gr', self.Gr)
+                t2df.addData(self.name, 'pic_GGr', self.GGr)
+                t2df.addData(self.name, 'pic_GtF', self.GtF)
+                t2df.addData(self.name, 'pic_SFmat', self.SFmat)
+                t2df.addData(self.name, 'pic_FFmat', self.FFmat)
+                t2df.addData(self.name, 'pic_SFfreqs', self.SFfreqs)
+                t2df.addData(self.name, 'pic_Wvec', self.Wvec)
+                t2df.addData(self.name, 'pic_Amat', self.Amat)
+                t2df.addData(self.name, 'pic_AGr', self.AGr)
+                t2df.addData(self.name, 'pic_AGF', self.AGF)
+                t2df.addData(self.name, 'pic_AGFF', self.AGFF)
+                t2df.addData(self.name, 'pic_Wovec', self.Wovec)
+                t2df.addData(self.name, 'pic_Aomat', self.Aomat)
+                t2df.addData(self.name, 'pic_AoGr', self.AoGr)
+                t2df.addData(self.name, 'pic_AoGF', self.AoGF)
+                t2df.addData(self.name, 'pic_AoGFF', self.AoGFF)
 
-        if likfunc == 'mark10':
-            (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
-            (self.Fdmmat, self.Fdmfreqs) = fourierdesignmatrix(self.toas, 2*ndmfreqs, Tmax)
-            self.Dmat = np.diag(pic_DMk / (self.freqs**2))
-            self.DF = np.dot(self.Dmat, self.Fdmmat)
-
-            self.constructCompressionMatrix(compression, nfreqs=-1, ndmfreqs=-1)
-
+        if likfunc == 'mark10' or write == 'all':
             self.Gr = np.dot(self.Hmat.T, self.residuals)
             self.GGr = np.dot(self.Hmat, self.Gr)
             self.GtF = np.dot(self.Hmat.T, self.Fmat)
-            #self.GGtF = np.dot(self.Hmat, self.GtF)
 
             # For the DM stuff
             GtD = np.dot(self.Hmat.T, self.DF)
@@ -2201,62 +2327,327 @@ class ptaPulsar(object):
             self.SFmat = singleFreqFourierModes(self.toas, np.log10(sfreqs))
             self.SFdmmat = singleFreqFourierModes(self.toas, np.log10(sdmfreqs))
             self.FFmat = np.append(self.Fmat, self.SFmat, axis=1)
-            #self.FFdmmat = np.append(self.Fdmmat, self.SFdmmat, axis=1)
             self.SFfreqs = np.log10(np.array([sfreqs, sfreqs]).T.flatten())
             self.SFdmfreqs = np.log10(np.array([sdmfreqs, sdmfreqs]).T.flatten())
             self.DSF = np.dot(self.Dmat, self.SFdmmat)
             self.DFF = np.append(self.DF, self.DSF, axis=1)
 
             GtFF = np.dot(self.Hmat.T, self.FFmat)
-            #self.GGtFF = np.dot(self.Hmat, GtFF)
 
             self.EEmat = np.append(self.FFmat, self.DFF, axis=1)
             GtEE = np.dot(self.Hmat.T, self.EEmat)
             self.GGtEE = np.dot(self.Hmat, GtEE)
+            
+            # For two-component noise
+            # Diagonalise GtEfG
+            GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
+            self.Wvec, self.Amat = sl.eigh(GtNeG)
 
-            # For a two-component noise model, we need some more stuff done
-            if twoComponent:
-                self.twoComponentNoise = True
+            self.AGr = np.dot(self.Amat.T, self.Gr)
+            self.AGF = np.dot(self.Amat.T, self.GtF)
 
-                # Diagonalise GtEfG
-                GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
-                self.Wvec, self.Amat = sl.eigh(GtNeG)
+            self.AGFF = np.dot(self.Amat.T, GtFF)
+            self.AGD = np.dot(self.Amat.T, GtD)
 
-                self.AGr = np.dot(self.Amat.T, self.Gr)
-                self.AGF = np.dot(self.Amat.T, self.GtF)
+            self.AGE = np.dot(self.Amat.T, GtE)
+            self.AGEE = np.dot(self.Amat.T, GtEE)
 
-                self.AGFF = np.dot(self.Amat.T, GtFF)
-                self.AGD = np.dot(self.Amat.T, GtD)
+            # Diagonalise HotEfHo
+            if self.Homat.shape[1] > 0:
+                HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                self.Wovec, self.Aomat = sl.eigh(HotNeHo)
 
-                self.AGE = np.dot(self.Amat.T, GtE)
-                self.AGEE = np.dot(self.Amat.T, GtEE)
+                Hor = np.dot(self.Homat.T, self.residuals)
+                HotF = np.dot(self.Homat.T, self.Fmat)
+                HotFF = np.dot(self.Homat.T, self.FFmat)
+                HotD = np.dot(self.Homat.T, self.DF)
+                HotE = np.dot(self.Homat.T, self.Emat)
+                HotEE = np.dot(self.Homat.T, self.EEmat)
+                self.AoGr = np.dot(self.Aomat.T, Hor)
+                self.AoGF = np.dot(self.Aomat.T, HotF)
+                self.AoGFF = np.dot(self.Aomat.T, HotFF)
+                self.AoGD = np.dot(self.Aomat.T, HotD)
+                self.AoGE = np.dot(self.Aomat.T, HotE)
+                self.AoGEE = np.dot(self.Aomat.T, HotEE)
+            else:
+                self.Wovec = np.zeros(0)
+                self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                self.AoGF = np.zeros((0, self.GtF.shape[1]))
+                self.AoGFF = np.zeros((0, GtFF.shape[1]))
+                self.AoGD = np.zeros((0, GtD.shape[1]))
+                self.AoGE = np.zeros((0, GtE.shape[1]))
+                self.AoGEE = np.zeros((0, GtEE.shape[1]))
 
-                # Diagonalise HotEfHo
-                if self.Homat.shape[1] > 0:
-                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
-                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+            if write != 'none':
+                # Write all these quantities to the HDF5 file
+                t2df.addData(self.name, 'pic_Gr', self.Gr)
+                t2df.addData(self.name, 'pic_GGr', self.GGr)
+                t2df.addData(self.name, 'pic_GtF', self.GtF)
+                t2df.addData(self.name, 'pic_GGtD', self.GGtD)
+                t2df.addData(self.name, 'pic_Emat', self.Emat)
+                t2df.addData(self.name, 'pic_GGtE', self.GGtE)
+                t2df.addData(self.name, 'pic_SFmat', self.SFmat)
+                t2df.addData(self.name, 'pic_SFdmmat', self.SFdmmat)
+                t2df.addData(self.name, 'pic_FFmat', self.FFmat)
+                t2df.addData(self.name, 'pic_SFfreqs', self.SFfreqs)
+                t2df.addData(self.name, 'pic_DSF', self.DSF)
+                t2df.addData(self.name, 'pic_DFF', self.DFF)
+                t2df.addData(self.name, 'pic_EEmat', self.EEmat)
+                t2df.addData(self.name, 'pic_GGtEE', self.GGtEE)
+                t2df.addData(self.name, 'pic_Wvec', self.Wvec)
+                t2df.addData(self.name, 'pic_Amat', self.Amat)
+                t2df.addData(self.name, 'pic_AGr', self.AGr)
+                t2df.addData(self.name, 'pic_AGF', self.AGF)
+                t2df.addData(self.name, 'pic_AGFF', self.AGFF)
+                t2df.addData(self.name, 'pic_AGD', self.AGD)
+                t2df.addData(self.name, 'pic_AGE', self.AGE)
+                t2df.addData(self.name, 'pic_AGEE', self.AGEE)
+                t2df.addData(self.name, 'pic_Wovec', self.Wovec)
+                t2df.addData(self.name, 'pic_Aomat', self.Aomat)
+                t2df.addData(self.name, 'pic_AoGr', self.AoGr)
+                t2df.addData(self.name, 'pic_AoGF', self.AoGF)
+                t2df.addData(self.name, 'pic_AoGFF', self.AoGFF)
+                t2df.addData(self.name, 'pic_AoGD', self.AoGD)
+                t2df.addData(self.name, 'pic_AoGE', self.AoGE)
+                t2df.addData(self.name, 'pic_AoGEE', self.AoGEE)
 
-                    Hor = np.dot(self.Homat.T, self.residuals)
-                    HotF = np.dot(self.Homat.T, self.Fmat)
-                    HotFF = np.dot(self.Homat.T, self.FFmat)
-                    HotD = np.dot(self.Homat.T, self.DF)
-                    HotE = np.dot(self.Homat.T, self.Emat)
-                    HotEE = np.dot(self.Homat.T, self.EEmat)
-                    self.AoGr = np.dot(self.Aomat.T, Hor)
-                    self.AoGF = np.dot(self.Aomat.T, HotF)
-                    self.AoGFF = np.dot(self.Aomat.T, HotFF)
-                    self.AoGD = np.dot(self.Aomat.T, HotD)
-                    self.AoGE = np.dot(self.Aomat.T, HotE)
-                    self.AoGEE = np.dot(self.Aomat.T, HotEE)
-                else:
-                    self.Wovec = np.zeros(0)
-                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
-                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
-                    self.AoGF = np.zeros((0, self.GtF.shape[1]))
-                    self.AoGFF = np.zeros((0, GtFF.shape[1]))
-                    self.AoGD = np.zeros((0, GtD.shape[1]))
-                    self.AoGE = np.zeros((0, GtE.shape[1]))
-                    self.AoGEE = np.zeros((0, GtEE.shape[1]))
+
+
+    """
+    For every pulsar, quite a few Auxiliary quantities (like GtF etc.) are
+    necessary for the evaluation of various likelihood functions. This function
+    tries to read these quantities from the HDF5 file, so that we do not have to
+    do many unnecessary calculations during runtime.
+
+    @param t2df:            The DataFile we will write things to
+    @param Tmax:            The full duration of the experiment
+    @param nfreqs:          The number of noise frequencies we require for this
+                            pulsar
+    @param ndmfreqs:        The number of DM frequencies we require for this pulsar
+    @param twoComponent:    Whether or not we do the two-component noise
+                            acceleration
+    @param nSingleFreqs:    The number of single floating noise frequencies
+    @param nSingleDMFreqs:  The number of single floating DM frequencies
+    @param compression:     Whether we use compression (None/frequencies/average)
+    @param likfunc:         Which likelihood function to do it for (all/markx/..)
+    @param memsave:         Whether to save memory
+
+    """
+    def readPulsarAuxiliaries(self, t2df, Tmax, nfreqs, ndmfreqs, \
+            twoComponent=False, nSingleFreqs=0, nSingleDMFreqs=0, \
+            compression='None', likfunc='mark3', memsave=True):
+        # TODO: set this parameter in another place?
+        if twoComponent:
+            self.twoComponentNoise = True
+
+        # Before reading anything to file, we need to know right away how many
+        # fixed and floating frequencies this model contains. This will be
+        # checked with the content of the HDF5 file
+        nf = 0 ; ndmf = 0 ; nsf = nSingleFreqs ; nsdmf = nSingleDMFreqs
+        if nfreqs is not None and nfreqs != 0:
+            nf = nfreqs
+        if ndmfreqs is not None and ndmfreqs != 0:
+            ndmf = ndmfreqs
+
+        # Read in the file frequencies and Tmax
+        file_Tmax = t2df.getData(self.name, 'pic_Tmax')
+        file_freqs = t2df.getData(self.name, 'pic_modelFrequencies')
+
+        if file_Tmax != Tmax or not np.all(np.array(file_freqs) == \
+                np.array([nf, ndmf, nsf, nsdmf])):
+            raise ValueError
+        # Ok, this model seems good to go. Let's start
+
+        # (DM) frequencies and averaged toas
+        self.Fmat = np.array(t2df.getData(self.name, 'pic_Fmat'))
+        self.Ffreqs = np.array(t2df.getData(self.name, 'pic_Ffreqs'))
+        self.Fdmmat = np.array(t2df.getData(self.name, 'pic_Fdmmat'))
+        self.Fdmfreqs = np.array(t2df.getData(self.name, 'pic_Fdmfreqs'))
+        self.Dmat = np.array(t2df.getData(self.name, 'pic_Dmat'))
+        self.DF = np.array(t2df.getData(self.name, 'pic_DF'))
+        self.avetoas = np.array(t2df.getData(self.name, 'pic_avetoas'))
+        self.U = np.array(t2df.getData(self.name, 'pic_U'))
+
+        # G/H compression matrices
+        self.Gmat = np.array(t2df.getData(self.name, 'pic_Gmat'))
+        self.Gcmat = np.array(t2df.getData(self.name, 'pic_Gcmat'))
+        self.Hmat = np.array(t2df.getData(self.name, 'pic_Hmat'))
+        self.Hcmat = np.array(t2df.getData(self.name, 'pic_Hcmat'))
+        self.Homat = np.array(t2df.getData(self.name, 'pic_Homat'))
+        self.Hocmat = np.array(t2df.getData(self.name, 'pic_Hocmat'))
+
+        if likfunc == 'mark1':
+            self.Gr = np.array(t2df.getData(self.name, 'pic_Gr'))
+            self.GGr = np.array(t2df.getData(self.name, 'pic_GGr'))
+            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF'))
+            self.GtD = np.array(t2df.getData(self.name, 'pic_GtD'))
+            self.Wvec = np.array(t2df.getData(self.name, 'pic_Wvec'))
+            self.Amat = np.array(t2df.getData(self.name, 'pic_Amat'))
+            self.AGr = np.array(t2df.getData(self.name, 'pic_AGr'))
+            self.AGF = np.array(t2df.getData(self.name, 'pic_AGF'))
+            self.Wovec = np.array(t2df.getData(self.name, 'pic_Wovec'))
+            self.Aomat = np.array(t2df.getData(self.name, 'pic_Aomat'))
+            self.AoGr = np.array(t2df.getData(self.name, 'pic_AoGr'))
+            self.AoGF = np.array(t2df.getData(self.name, 'pic_AoGF'))
+
+        if likfunc == 'mark2':
+            self.Gr = np.array(t2df.getData(self.name, 'pic_Gr'))
+            self.GGr = np.array(t2df.getData(self.name, 'pic_GGr'))
+            self.Wvec = np.array(t2df.getData(self.name, 'pic_Wvec'))
+            self.Amat = np.array(t2df.getData(self.name, 'pic_Amat'))
+            self.AGr = np.array(t2df.getData(self.name, 'pic_AGr'))
+            self.Wovec = np.array(t2df.getData(self.name, 'pic_Wovec'))
+            self.Aomat = np.array(t2df.getData(self.name, 'pic_Aomat'))
+            self.AoGr = np.array(t2df.getData(self.name, 'pic_AoGr'))
+
+        if likfunc == 'mark3' or likfunc == 'mark3fa':
+            self.Gr = np.array(t2df.getData(self.name, 'pic_Gr'))
+            self.GGr = np.array(t2df.getData(self.name, 'pic_GGr'))
+            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF'))
+            self.Wvec = np.array(t2df.getData(self.name, 'pic_Wvec'))
+            self.Amat = np.array(t2df.getData(self.name, 'pic_Amat'))
+            self.AGr = np.array(t2df.getData(self.name, 'pic_AGr'))
+            self.AGF = np.array(t2df.getData(self.name, 'pic_AGF'))
+            self.Wovec = np.array(t2df.getData(self.name, 'pic_Wovec'))
+            self.Aomat = np.array(t2df.getData(self.name, 'pic_Aomat'))
+            self.AoGr = np.array(t2df.getData(self.name, 'pic_AoGr'))
+            self.AoGF = np.array(t2df.getData(self.name, 'pic_AoGF'))
+
+        if likfunc == 'mark4':
+            self.Gr = np.array(t2df.getData(self.name, 'pic_Gr'))
+            self.GGr = np.array(t2df.getData(self.name, 'pic_GGr'))
+            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF'))
+            self.UtF = np.array(t2df.getData(self.name, 'pic_UtF'))
+            self.Wvec = np.array(t2df.getData(self.name, 'pic_Wvec'))
+            self.Amat = np.array(t2df.getData(self.name, 'pic_Amat'))
+            self.AGr = np.array(t2df.getData(self.name, 'pic_AGr'))
+            self.AGU = np.array(t2df.getData(self.name, 'pic_AGU'))
+            self.Wovec = np.array(t2df.getData(self.name, 'pic_Wovec'))
+            self.Aomat = np.array(t2df.getData(self.name, 'pic_Aomat'))
+            self.AoGr = np.array(t2df.getData(self.name, 'pic_AoGr'))
+            self.AoGU = np.array(t2df.getData(self.name, 'pic_AoGU'))
+
+        if likfunc == 'mark4ln':
+            self.Gr = np.array(t2df.getData(self.name, 'pic_Gr'))
+            self.GGr = np.array(t2df.getData(self.name, 'pic_GGr'))
+            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF'))
+            self.UtF = np.array(t2df.getData(self.name, 'pic_UtF'))
+            self.SFmat = np.array(t2df.getData(self.name, 'pic_SFmat'))
+            self.FFmat = np.array(t2df.getData(self.name, 'pic_FFmat'))
+            self.SFfreqs = np.array(t2df.getData(self.name, 'pic_SFfreqs'))
+            self.UtFF = np.array(t2df.getData(self.name, 'pic_UtFF'))
+            self.Wvec = np.array(t2df.getData(self.name, 'pic_Wvec'))
+            self.Amat = np.array(t2df.getData(self.name, 'pic_Amat'))
+            self.AGr = np.array(t2df.getData(self.name, 'pic_AGr'))
+            self.AGU = np.array(t2df.getData(self.name, 'pic_AGU'))
+            self.Wovec = np.array(t2df.getData(self.name, 'pic_Wovec'))
+            self.Aomat = np.array(t2df.getData(self.name, 'pic_Aomat'))
+            self.AoGr = np.array(t2df.getData(self.name, 'pic_AoGr'))
+            self.AoGU = np.array(t2df.getData(self.name, 'pic_AoGU'))
+
+        if likfunc == 'mark6' or likfunc == 'mark6fa':
+            self.Gr = np.array(t2df.getData(self.name, 'pic_Gr'))
+            self.GGr = np.array(t2df.getData(self.name, 'pic_GGr'))
+            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF'))
+            self.GGtD = np.array(t2df.getData(self.name, 'pic_GGtD'))
+            self.Emat = np.array(t2df.getData(self.name, 'pic_Emat'))
+            self.GGtE = np.array(t2df.getData(self.name, 'pic_GGtE'))
+            self.Wvec = np.array(t2df.getData(self.name, 'pic_Wvec'))
+            self.Amat = np.array(t2df.getData(self.name, 'pic_Amat'))
+            self.AGr = np.array(t2df.getData(self.name, 'pic_AGr'))
+            self.AGF = np.array(t2df.getData(self.name, 'pic_AGF'))
+            self.AGD = np.array(t2df.getData(self.name, 'pic_AGE'))
+            self.AGE = np.array(t2df.getData(self.name, 'pic_AGD'))
+            self.Wovec = np.array(t2df.getData(self.name, 'pic_Wovec'))
+            self.Aomat = np.array(t2df.getData(self.name, 'pic_Aomat'))
+            self.AoGr = np.array(t2df.getData(self.name, 'pic_AoGr'))
+            self.AoGF = np.array(t2df.getData(self.name, 'pic_AoGF'))
+            self.AoGD = np.array(t2df.getData(self.name, 'pic_AoGD'))
+            self.AoGE = np.array(t2df.getData(self.name, 'pic_AoGE'))
+
+        if likfunc == 'mark7':
+            self.Gr = np.array(t2df.getData(self.name, 'pic_Gr'))
+            self.GGr = np.array(t2df.getData(self.name, 'pic_GGr'))
+            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF'))
+            self.Wvec = np.array(t2df.getData(self.name, 'pic_Wvec'))
+            self.Amat = np.array(t2df.getData(self.name, 'pic_Amat'))
+            self.AGr = np.array(t2df.getData(self.name, 'pic_AGr'))
+            self.AGF = np.array(t2df.getData(self.name, 'pic_AGF'))
+            self.Wovec = np.array(t2df.getData(self.name, 'pic_Wovec'))
+            self.Aomat = np.array(t2df.getData(self.name, 'pic_Aomat'))
+            self.AoGr = np.array(t2df.getData(self.name, 'pic_AoGr'))
+            self.AoGF = np.array(t2df.getData(self.name, 'pic_AoGF'))
+
+        if likfunc == 'mark8':
+            self.Gr = np.array(t2df.getData(self.name, 'pic_Gr'))
+            self.GGr = np.array(t2df.getData(self.name, 'pic_GGr'))
+            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF'))
+            self.GGtD = np.array(t2df.getData(self.name, 'pic_GGtD'))
+            self.Emat = np.array(t2df.getData(self.name, 'pic_Emat'))
+            self.GGtE = np.array(t2df.getData(self.name, 'pic_GGtE'))
+            self.Wvec = np.array(t2df.getData(self.name, 'pic_Wvec'))
+            self.Amat = np.array(t2df.getData(self.name, 'pic_Amat'))
+            self.AGr = np.array(t2df.getData(self.name, 'pic_AGr'))
+            self.AGF = np.array(t2df.getData(self.name, 'pic_AGF'))
+            self.AGD = np.array(t2df.getData(self.name, 'pic_AGE'))
+            self.AGE = np.array(t2df.getData(self.name, 'pic_AGD'))
+            self.Wovec = np.array(t2df.getData(self.name, 'pic_Wovec'))
+            self.Aomat = np.array(t2df.getData(self.name, 'pic_Aomat'))
+            self.AoGr = np.array(t2df.getData(self.name, 'pic_AoGr'))
+            self.AoGF = np.array(t2df.getData(self.name, 'pic_AoGF'))
+            self.AoGD = np.array(t2df.getData(self.name, 'pic_AoGD'))
+            self.AoGE = np.array(t2df.getData(self.name, 'pic_AoGE'))
+
+        if likfunc == 'mark9':
+            self.Gr = np.array(t2df.getData(self.name, 'pic_Gr'))
+            self.GGr = np.array(t2df.getData(self.name, 'pic_GGr'))
+            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF'))
+            self.SFmat = np.array(t2df.getData(self.name, 'pic_SFmat'))
+            self.FFmat = np.array(t2df.getData(self.name, 'pic_FFmat'))
+            self.SFfreqs = np.array(t2df.getData(self.name, 'pic_SFfreqs'))
+            self.Wvec = np.array(t2df.getData(self.name, 'pic_Wvec'))
+            self.Amat = np.array(t2df.getData(self.name, 'pic_Amat'))
+            self.AGr = np.array(t2df.getData(self.name, 'pic_AGr'))
+            self.AGF = np.array(t2df.getData(self.name, 'pic_AGF'))
+            self.AGFF = np.array(t2df.getData(self.name, 'pic_AGFF'))
+            self.Wovec = np.array(t2df.getData(self.name, 'pic_Wovec'))
+            self.Aomat = np.array(t2df.getData(self.name, 'pic_Aomat'))
+            self.AoGr = np.array(t2df.getData(self.name, 'pic_AoGr'))
+            self.AoGF = np.array(t2df.getData(self.name, 'pic_AoGF'))
+            self.AoGFF = np.array(t2df.getData(self.name, 'pic_AoGFF'))
+
+        if likfunc == 'mark10':
+            self.Gr = np.array(t2df.getData(self.name, 'pic_Gr'))
+            self.GGr = np.array(t2df.getData(self.name, 'pic_GGr'))
+            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF'))
+            self.GGtD = np.array(t2df.getData(self.name, 'pic_GGtD'))
+            self.Emat = np.array(t2df.getData(self.name, 'pic_Emat'))
+            self.GGtE = np.array(t2df.getData(self.name, 'pic_GGtE'))
+            self.SFmat = np.array(t2df.getData(self.name, 'pic_SFmat'))
+            self.SFdmmat = np.array(t2df.getData(self.name, 'pic_SFdmmat'))
+            self.FFmat = np.array(t2df.getData(self.name, 'pic_FFmat'))
+            self.SFfreqs = np.array(t2df.getData(self.name, 'pic_SFfreqs'))
+            self.DSF = np.array(t2df.getData(self.name, 'pic_DSF'))
+            self.DFF = np.array(t2df.getData(self.name, 'pic_DFF'))
+            self.EEmat = np.array(t2df.getData(self.name, 'pic_EEmat'))
+            self.GGtEE = np.array(t2df.getData(self.name, 'pic_GGtEE'))
+            self.Wvec = np.array(t2df.getData(self.name, 'pic_Wvec'))
+            self.Amat = np.array(t2df.getData(self.name, 'pic_Amat'))
+            self.AGr = np.array(t2df.getData(self.name, 'pic_AGr'))
+            self.AGF = np.array(t2df.getData(self.name, 'pic_AGF'))
+            self.AGFF = np.array(t2df.getData(self.name, 'pic_AGFF'))
+            self.AGD = np.array(t2df.getData(self.name, 'pic_AGD'))
+            self.AGE = np.array(t2df.getData(self.name, 'pic_AGE'))
+            self.AGEE = np.array(t2df.getData(self.name, 'pic_AGEE'))
+            self.Wovec = np.array(t2df.getData(self.name, 'pic_Wovec'))
+            self.Aomat = np.array(t2df.getData(self.name, 'pic_Aomat'))
+            self.AoGr = np.array(t2df.getData(self.name, 'pic_AoGr'))
+            self.AoGF = np.array(t2df.getData(self.name, 'pic_AoGF'))
+            self.AoGFF = np.array(t2df.getData(self.name, 'pic_AoGFF'))
+            self.AoGD = np.array(t2df.getData(self.name, 'pic_AoGD'))
+            self.AoGE = np.array(t2df.getData(self.name, 'pic_AoGE'))
+            self.AoGEE = np.array(t2df.getData(self.name, 'pic_AoGEE'))
 
 
 
@@ -2325,6 +2716,9 @@ class ptaPulsar(object):
 
 
 class ptaLikelihood(object):
+    # The DataFile object
+    t2df = None
+
     # The ptaPulsar objects
     ptapsrs = []
 
@@ -2404,6 +2798,7 @@ class ptaLikelihood(object):
     """
     # TODO: Do we need to delete all with 'del'?
     def clear(self):
+        self.t2df = None
         self.ptapsrs = []
         self.ptasignals = []
 
@@ -2428,13 +2823,13 @@ class ptaLikelihood(object):
     """
     def initFromFile(self, filename):
         # Retrieve the pulsar list
-        t2df = DataFile(filename)
-        psrnames = t2df.getPulsarList()
+        self.t2df = DataFile(filename)
+        psrnames = self.t2df.getPulsarList()
 
         # Initialise all pulsars
         for psrname in psrnames:
             newpsr = ptaPulsar()
-            newpsr.readFromH5(filename, psrname)
+            newpsr.readFromH5(self.t2df, psrname)
             self.ptapsrs.append(newpsr)
 
     """
@@ -2465,7 +2860,7 @@ class ptaLikelihood(object):
 
         for psrname in psrnames:
             newpsr = ptaPulsar()
-            newpsr.readFromH5(filename, psrname)
+            newpsr.readFromH5old(filename, psrname)
             #newpsr.readFromImagination(filename, psrname)
             self.ptapsrs.append(newpsr)
 
@@ -2887,9 +3282,14 @@ class ptaLikelihood(object):
         return True
 
 
+    """
+    Allocate memory for the ptaLikelihood attribute matrices that we'll need in
+    the likelihood function.  This function does not perform any calculations,
+    although it does initialise the 'counter' integer arrays like npf and npgs.
+    """
     # TODO: see if we can implement the RJMCMC for the Fourier modes
     # TODO: these quantities should depend on the model, not the likelihood function
-    def allocateAuxiliaries(self):
+    def allocateLikAuxiliaries(self):
         # First figure out how large we have to make the arrays
         npsrs = len(self.ptapsrs)
         self.npf = np.zeros(npsrs, dtype=np.int)
@@ -3506,8 +3906,10 @@ class ptaLikelihood(object):
     """
     Initialise the model.
     @param numNoiseFreqs:       Dictionary with the full model
+    @param fromFile:            Try to read the necessary Auxiliaries quantities
+                                from the HDF5 file
     """
-    def initModel(self, fullmodel):
+    def initModel(self, fullmodel, fromFile=False):
         numNoiseFreqs = fullmodel['numNoiseFreqs']
         numDMFreqs = fullmodel['numDMFreqs']
         compression = fullmodel['compression']
@@ -3571,13 +3973,29 @@ class ptaLikelihood(object):
             if numDMFreqs[pindex] > 0:
                 m2psr.addDMQuadratic()
 
-            # For every pulsar, construct the auxiliary quantities like the Fourier
-            # design matrix etc
-            m2psr.createAuxiliaries(Tmax, numNoiseFreqs[pindex], \
-                    numDMFreqs[pindex], not separateEfacs[pindex], \
-                            nSingleFreqs=numSingleFreqs[pindex], \
-                            nSingleDMFreqs=numSingleDMFreqs[pindex], \
-                            likfunc=likfunc, compression=compression)
+            # We'll try to read the necessary quantities from the HDF5 file
+            try:
+                if not fromFile:
+                    raise StandardError('fromFileFalse')
+                # Read Auxiliaries
+                m2psr.readPulsarAuxiliaries(self.t2df, Tmax, \
+                        numNoiseFreqs[pindex], \
+                        numDMFreqs[pindex], not separateEfacs[pindex], \
+                        nSingleFreqs=numSingleFreqs[pindex], \
+                        nSingleDMFreqs=numSingleDMFreqs[pindex], \
+                        likfunc=likfunc, compression=compression, \
+                        memsave=True)
+            except (StandardError, ValueError, KeyError, IOError, RuntimeError):
+                # Create the Auxiliaries ourselves
+
+                # For every pulsar, construct the auxiliary quantities like the Fourier
+                # design matrix etc
+                m2psr.createPulsarAuxiliaries(self.t2df, Tmax, numNoiseFreqs[pindex], \
+                        numDMFreqs[pindex], not separateEfacs[pindex], \
+                                nSingleFreqs=numSingleFreqs[pindex], \
+                                nSingleDMFreqs=numSingleDMFreqs[pindex], \
+                                likfunc=likfunc, compression=compression, \
+                                write='likfunc')
 
             # When selecting Fourier modes, like in mark7/mark8, the binclude vector
             # indicates whether or not a frequency is included in the likelihood. By
@@ -3593,7 +4011,7 @@ class ptaLikelihood(object):
             self.addSignal(signal, index, Tmax)
             index += self.ptasignals[-1].npars
 
-        self.allocateAuxiliaries()
+        self.allocateLikAuxiliaries()
         self.initPrior()
         self.pardes = self.getModelParameterList()
 
