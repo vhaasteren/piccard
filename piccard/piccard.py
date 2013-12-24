@@ -169,8 +169,13 @@ class DataFile(object):
     @param psrname:     Name of the pulsar we are reading data from
     @param field:       Field name of the data we are requestion
     @param subgroup:    If the data is in a subgroup, get it from there
+    @param dontread:    If set to true, do not actually read anything
     """
-    def getData(self, psrname, field, subgroup=None):
+    def getData(self, psrname, field, subgroup=None, dontread=False):
+        # Dontread is useful for readability in the 'readPulsarAuxiliaries
+        if dontread:
+            return None
+
         if self.filename is None:
             raise RuntimeError, "HDF5 filename not provided"
 
@@ -367,7 +372,7 @@ class DataFile(object):
                 raise ValueError("ERROR: Not all provided pulsars in HDF5 file")
 
         # Check that these pulsars are not already in the current HDF5 file
-        if not np.all(np.array([readpsrs[ii] not in destpsrnames for ii in range(len(pulsars))]) == True) and \
+        if not np.all(np.array([readpsrs[ii] not in destpsrnames for ii in range(len(readpsrs))]) == True) and \
                 mode != 'replace':
             self.h5file.close()
             sourceh5.close()
@@ -1847,7 +1852,21 @@ class ptaPulsar(object):
 
         # Write these numbers to the HDF5 file
         if write != 'no':
-            t2df.addData(self.name, 'pic_modelFrequencies', [nf, ndmf, nsf, nsdmf])
+            # Check whether the frequencies already exist in the HDF5-file. If
+            # so, compare with what we have here. If they differ, then print out
+            # a warning.
+            # TODO: instead of a warning, and overwriting, something more
+            #       conservative should be done
+            modelFrequencies = np.array([nf, ndmf, nsf, nsdmf])
+            try:
+                file_modelFreqs = np.array(t2df.getData(self.name, 'pic_modelFrequencies'))
+                if not np.all(modelFrequencies == file_modelFreqs):
+                    print "WARNING: model frequencies already present in {0} differ from the current".format(t2df.filename)
+                    print "         model. Beware for inconsistencies in future analyses."
+            except IOError:
+                pass
+
+            t2df.addData(self.name, 'pic_modelFrequencies', modelFrequencies)
             t2df.addData(self.name, 'pic_Tmax', [Tmax])
 
         # Create the Fourier design matrices for noise
@@ -2515,195 +2534,149 @@ class ptaPulsar(object):
             raise ValueError
         # Ok, this model seems good to go. Let's start
 
-        # (DM) frequencies and averaged toas
-        self.Fmat = np.array(t2df.getData(self.name, 'pic_Fmat'))
-        self.Ffreqs = np.array(t2df.getData(self.name, 'pic_Ffreqs'))
-        self.Fdmmat = np.array(t2df.getData(self.name, 'pic_Fdmmat'))
-        self.Fdmfreqs = np.array(t2df.getData(self.name, 'pic_Fdmfreqs'))
-        self.Dmat = np.array(t2df.getData(self.name, 'pic_Dmat'))
-        self.DF = np.array(t2df.getData(self.name, 'pic_DF'))
-        self.avetoas = np.array(t2df.getData(self.name, 'pic_avetoas'))
-        self.U = np.array(t2df.getData(self.name, 'pic_U'))
-
         # G/H compression matrices
-        self.Gmat = np.array(t2df.getData(self.name, 'pic_Gmat'))
-        self.Gcmat = np.array(t2df.getData(self.name, 'pic_Gcmat'))
+        self.Gmat = np.array(t2df.getData(self.name, 'pic_Gmat', dontread=memsave))
+        self.Gcmat = np.array(t2df.getData(self.name, 'pic_Gcmat', dontread=memsave))
         self.Hmat = np.array(t2df.getData(self.name, 'pic_Hmat'))
         self.Hcmat = np.array(t2df.getData(self.name, 'pic_Hcmat'))
         self.Homat = np.array(t2df.getData(self.name, 'pic_Homat'))
         self.Hocmat = np.array(t2df.getData(self.name, 'pic_Hocmat'))
+        self.Gr = np.array(t2df.getData(self.name, 'pic_Gr', dontread=memsave))
+        self.GGr = np.array(t2df.getData(self.name, 'pic_GGr', dontread=memsave))
+        self.Wvec = np.array(t2df.getData(self.name, 'pic_Wvec'))
+        self.Wovec = np.array(t2df.getData(self.name, 'pic_Wovec'))
+        self.Amat = np.array(t2df.getData(self.name, 'pic_Amat', dontread=memsave))
+        self.Aomat = np.array(t2df.getData(self.name, 'pic_Aomat', dontread=memsave))
+        self.AoGr = np.array(t2df.getData(self.name, 'pic_AoGr'))
+        self.Ffreqs = np.array(t2df.getData(self.name, 'pic_Ffreqs'))
+        self.Fdmfreqs = np.array(t2df.getData(self.name, 'pic_Fdmfreqs'))
 
         if likfunc == 'mark1':
-            self.Gr = np.array(t2df.getData(self.name, 'pic_Gr'))
-            self.GGr = np.array(t2df.getData(self.name, 'pic_GGr'))
             self.GtF = np.array(t2df.getData(self.name, 'pic_GtF'))
             self.GtD = np.array(t2df.getData(self.name, 'pic_GtD'))
-            self.Wvec = np.array(t2df.getData(self.name, 'pic_Wvec'))
-            self.Amat = np.array(t2df.getData(self.name, 'pic_Amat'))
-            self.AGr = np.array(t2df.getData(self.name, 'pic_AGr'))
-            self.AGF = np.array(t2df.getData(self.name, 'pic_AGF'))
-            self.Wovec = np.array(t2df.getData(self.name, 'pic_Wovec'))
-            self.Aomat = np.array(t2df.getData(self.name, 'pic_Aomat'))
-            self.AoGr = np.array(t2df.getData(self.name, 'pic_AoGr'))
-            self.AoGF = np.array(t2df.getData(self.name, 'pic_AoGF'))
+            self.AGr = np.array(t2df.getData(self.name, 'pic_AGr', dontread=memsave))
+            self.AGF = np.array(t2df.getData(self.name, 'pic_AGF', dontread=memsave))
+            self.AoGF = np.array(t2df.getData(self.name, 'pic_AoGF', dontread=memsave))
+            self.Fdmmat = np.array(t2df.getData(self.name, 'pic_Fdmmat', dontread=memsave))
+            self.Dmat = np.array(t2df.getData(self.name, 'pic_Dmat', dontread=memsave))
+            self.DF = np.array(t2df.getData(self.name, 'pic_DF', dontread=memsave))
+            self.Fmat = np.array(t2df.getData(self.name, 'pic_Fmat', dontread=memsave))
 
         if likfunc == 'mark2':
-            self.Gr = np.array(t2df.getData(self.name, 'pic_Gr'))
-            self.GGr = np.array(t2df.getData(self.name, 'pic_GGr'))
-            self.Wvec = np.array(t2df.getData(self.name, 'pic_Wvec'))
-            self.Amat = np.array(t2df.getData(self.name, 'pic_Amat'))
             self.AGr = np.array(t2df.getData(self.name, 'pic_AGr'))
-            self.Wovec = np.array(t2df.getData(self.name, 'pic_Wovec'))
-            self.Aomat = np.array(t2df.getData(self.name, 'pic_Aomat'))
-            self.AoGr = np.array(t2df.getData(self.name, 'pic_AoGr'))
 
         if likfunc == 'mark3' or likfunc == 'mark3fa':
-            self.Gr = np.array(t2df.getData(self.name, 'pic_Gr'))
-            self.GGr = np.array(t2df.getData(self.name, 'pic_GGr'))
-            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF'))
-            self.Wvec = np.array(t2df.getData(self.name, 'pic_Wvec'))
-            self.Amat = np.array(t2df.getData(self.name, 'pic_Amat'))
+            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF', dontread=memsave))
             self.AGr = np.array(t2df.getData(self.name, 'pic_AGr'))
             self.AGF = np.array(t2df.getData(self.name, 'pic_AGF'))
-            self.Wovec = np.array(t2df.getData(self.name, 'pic_Wovec'))
-            self.Aomat = np.array(t2df.getData(self.name, 'pic_Aomat'))
-            self.AoGr = np.array(t2df.getData(self.name, 'pic_AoGr'))
-            self.AoGF = np.array(t2df.getData(self.name, 'pic_AoGF'))
+            self.AoGF = np.array(t2df.getData(self.name, 'pic_AoGF', dontread=memsave))
+            self.Fmat = np.array(t2df.getData(self.name, 'pic_Fmat'))
 
         if likfunc == 'mark4':
-            self.Gr = np.array(t2df.getData(self.name, 'pic_Gr'))
-            self.GGr = np.array(t2df.getData(self.name, 'pic_GGr'))
-            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF'))
+            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF', dontread=memsave))
             self.UtF = np.array(t2df.getData(self.name, 'pic_UtF'))
-            self.Wvec = np.array(t2df.getData(self.name, 'pic_Wvec'))
-            self.Amat = np.array(t2df.getData(self.name, 'pic_Amat'))
             self.AGr = np.array(t2df.getData(self.name, 'pic_AGr'))
             self.AGU = np.array(t2df.getData(self.name, 'pic_AGU'))
-            self.Wovec = np.array(t2df.getData(self.name, 'pic_Wovec'))
-            self.Aomat = np.array(t2df.getData(self.name, 'pic_Aomat'))
-            self.AoGr = np.array(t2df.getData(self.name, 'pic_AoGr'))
-            self.AoGU = np.array(t2df.getData(self.name, 'pic_AoGU'))
+            self.AoGU = np.array(t2df.getData(self.name, 'pic_AoGU', dontread=memsave))
+            self.avetoas = np.array(t2df.getData(self.name, 'pic_avetoas'))
+            self.U = np.array(t2df.getData(self.name, 'pic_U'))
+            self.Fmat = np.array(t2df.getData(self.name, 'pic_Fmat', dontread=memsave))
 
         if likfunc == 'mark4ln':
-            self.Gr = np.array(t2df.getData(self.name, 'pic_Gr'))
-            self.GGr = np.array(t2df.getData(self.name, 'pic_GGr'))
-            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF'))
-            self.UtF = np.array(t2df.getData(self.name, 'pic_UtF'))
-            self.SFmat = np.array(t2df.getData(self.name, 'pic_SFmat'))
-            self.FFmat = np.array(t2df.getData(self.name, 'pic_FFmat'))
+            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF', dontread=memsave))
+            self.UtF = np.array(t2df.getData(self.name, 'pic_UtF', dontread=memsave))
+            self.SFmat = np.array(t2df.getData(self.name, 'pic_SFmat', dontread=memsave))
+            self.FFmat = np.array(t2df.getData(self.name, 'pic_FFmat', dontread=memsave))
             self.SFfreqs = np.array(t2df.getData(self.name, 'pic_SFfreqs'))
-            self.UtFF = np.array(t2df.getData(self.name, 'pic_UtFF'))
-            self.Wvec = np.array(t2df.getData(self.name, 'pic_Wvec'))
-            self.Amat = np.array(t2df.getData(self.name, 'pic_Amat'))
+            self.UtFF = np.array(t2df.getData(self.name, 'pic_UtFF', dontread=memsave))
             self.AGr = np.array(t2df.getData(self.name, 'pic_AGr'))
             self.AGU = np.array(t2df.getData(self.name, 'pic_AGU'))
-            self.Wovec = np.array(t2df.getData(self.name, 'pic_Wovec'))
-            self.Aomat = np.array(t2df.getData(self.name, 'pic_Aomat'))
-            self.AoGr = np.array(t2df.getData(self.name, 'pic_AoGr'))
-            self.AoGU = np.array(t2df.getData(self.name, 'pic_AoGU'))
+            self.AoGU = np.array(t2df.getData(self.name, 'pic_AoGU', dontread=memsave))
+            self.avetoas = np.array(t2df.getData(self.name, 'pic_avetoas'))
+            self.U = np.array(t2df.getData(self.name, 'pic_U'))
+            self.Fmat = np.array(t2df.getData(self.name, 'pic_Fmat', dontread=memsave))
 
         if likfunc == 'mark6' or likfunc == 'mark6fa':
-            self.Gr = np.array(t2df.getData(self.name, 'pic_Gr'))
-            self.GGr = np.array(t2df.getData(self.name, 'pic_GGr'))
-            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF'))
-            self.GGtD = np.array(t2df.getData(self.name, 'pic_GGtD'))
+            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF', dontread=memsave))
+            self.GGtD = np.array(t2df.getData(self.name, 'pic_GGtD', dontread=memsave))
             self.Emat = np.array(t2df.getData(self.name, 'pic_Emat'))
-            self.GGtE = np.array(t2df.getData(self.name, 'pic_GGtE'))
-            self.Wvec = np.array(t2df.getData(self.name, 'pic_Wvec'))
-            self.Amat = np.array(t2df.getData(self.name, 'pic_Amat'))
+            self.GGtE = np.array(t2df.getData(self.name, 'pic_GGtE', dontread=memsave))
             self.AGr = np.array(t2df.getData(self.name, 'pic_AGr'))
-            self.AGF = np.array(t2df.getData(self.name, 'pic_AGF'))
-            self.AGD = np.array(t2df.getData(self.name, 'pic_AGE'))
+            self.AGF = np.array(t2df.getData(self.name, 'pic_AGF', dontread=memsave))
+            self.AGD = np.array(t2df.getData(self.name, 'pic_AGE', dontread=memsave))
             self.AGE = np.array(t2df.getData(self.name, 'pic_AGD'))
-            self.Wovec = np.array(t2df.getData(self.name, 'pic_Wovec'))
-            self.Aomat = np.array(t2df.getData(self.name, 'pic_Aomat'))
-            self.AoGr = np.array(t2df.getData(self.name, 'pic_AoGr'))
-            self.AoGF = np.array(t2df.getData(self.name, 'pic_AoGF'))
-            self.AoGD = np.array(t2df.getData(self.name, 'pic_AoGD'))
-            self.AoGE = np.array(t2df.getData(self.name, 'pic_AoGE'))
+            self.AoGF = np.array(t2df.getData(self.name, 'pic_AoGF', dontread=memsave))
+            self.AoGD = np.array(t2df.getData(self.name, 'pic_AoGD', dontread=memsave))
+            self.AoGE = np.array(t2df.getData(self.name, 'pic_AoGE', dontread=memsave))
+            self.Fdmmat = np.array(t2df.getData(self.name, 'pic_Fdmmat', dontread=memsave))
+            self.Dmat = np.array(t2df.getData(self.name, 'pic_Dmat', dontread=memsave))
+            self.DF = np.array(t2df.getData(self.name, 'pic_DF', dontread=memsave))
+            self.Fmat = np.array(t2df.getData(self.name, 'pic_Fmat', dontread=memsave))
 
         if likfunc == 'mark7':
-            self.Gr = np.array(t2df.getData(self.name, 'pic_Gr'))
-            self.GGr = np.array(t2df.getData(self.name, 'pic_GGr'))
-            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF'))
-            self.Wvec = np.array(t2df.getData(self.name, 'pic_Wvec'))
-            self.Amat = np.array(t2df.getData(self.name, 'pic_Amat'))
+            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF', dontread=memsave))
             self.AGr = np.array(t2df.getData(self.name, 'pic_AGr'))
-            self.AGF = np.array(t2df.getData(self.name, 'pic_AGF'))
-            self.Wovec = np.array(t2df.getData(self.name, 'pic_Wovec'))
-            self.Aomat = np.array(t2df.getData(self.name, 'pic_Aomat'))
-            self.AoGr = np.array(t2df.getData(self.name, 'pic_AoGr'))
-            self.AoGF = np.array(t2df.getData(self.name, 'pic_AoGF'))
+            self.AGF = np.array(t2df.getData(self.name, 'pic_AGF', dontread=memsave))
+            self.AoGF = np.array(t2df.getData(self.name, 'pic_AoGF', dontread=memsave))
+            self.Fmat = np.array(t2df.getData(self.name, 'pic_Fmat'))
 
         if likfunc == 'mark8':
-            self.Gr = np.array(t2df.getData(self.name, 'pic_Gr'))
-            self.GGr = np.array(t2df.getData(self.name, 'pic_GGr'))
-            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF'))
-            self.GGtD = np.array(t2df.getData(self.name, 'pic_GGtD'))
-            self.Emat = np.array(t2df.getData(self.name, 'pic_Emat'))
-            self.GGtE = np.array(t2df.getData(self.name, 'pic_GGtE'))
-            self.Wvec = np.array(t2df.getData(self.name, 'pic_Wvec'))
-            self.Amat = np.array(t2df.getData(self.name, 'pic_Amat'))
+            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF', dontread=memsave))
+            self.GGtD = np.array(t2df.getData(self.name, 'pic_GGtD', dontread=memsave))
+            self.Emat = np.array(t2df.getData(self.name, 'pic_Emat', dontread=memsave))
+            self.GGtE = np.array(t2df.getData(self.name, 'pic_GGtE', dontread=memsave))
             self.AGr = np.array(t2df.getData(self.name, 'pic_AGr'))
-            self.AGF = np.array(t2df.getData(self.name, 'pic_AGF'))
-            self.AGD = np.array(t2df.getData(self.name, 'pic_AGE'))
-            self.AGE = np.array(t2df.getData(self.name, 'pic_AGD'))
-            self.Wovec = np.array(t2df.getData(self.name, 'pic_Wovec'))
-            self.Aomat = np.array(t2df.getData(self.name, 'pic_Aomat'))
-            self.AoGr = np.array(t2df.getData(self.name, 'pic_AoGr'))
-            self.AoGF = np.array(t2df.getData(self.name, 'pic_AoGF'))
-            self.AoGD = np.array(t2df.getData(self.name, 'pic_AoGD'))
-            self.AoGE = np.array(t2df.getData(self.name, 'pic_AoGE'))
+            self.AGF = np.array(t2df.getData(self.name, 'pic_AGF', dontread=memsave))
+            self.AGD = np.array(t2df.getData(self.name, 'pic_AGE', dontread=memsave))
+            self.AGE = np.array(t2df.getData(self.name, 'pic_AGD', dontread=memsave))
+            self.AoGF = np.array(t2df.getData(self.name, 'pic_AoGF', dontread=memsave))
+            self.AoGD = np.array(t2df.getData(self.name, 'pic_AoGD', dontread=memsave))
+            self.AoGE = np.array(t2df.getData(self.name, 'pic_AoGE', dontread=memsave))
+            self.Fdmmat = np.array(t2df.getData(self.name, 'pic_Fdmmat', dontread=memsave))
+            self.Dmat = np.array(t2df.getData(self.name, 'pic_Dmat'))
+            self.DF = np.array(t2df.getData(self.name, 'pic_DF'))
+            self.Fmat = np.array(t2df.getData(self.name, 'pic_Fmat'))
 
         if likfunc == 'mark9':
-            self.Gr = np.array(t2df.getData(self.name, 'pic_Gr'))
-            self.GGr = np.array(t2df.getData(self.name, 'pic_GGr'))
-            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF'))
-            self.SFmat = np.array(t2df.getData(self.name, 'pic_SFmat'))
-            self.FFmat = np.array(t2df.getData(self.name, 'pic_FFmat'))
+            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF', dontread=memsave))
+            self.SFmat = np.array(t2df.getData(self.name, 'pic_SFmat', dontread=memsave))
+            self.FFmat = np.array(t2df.getData(self.name, 'pic_FFmat', dontread=memsave))
             self.SFfreqs = np.array(t2df.getData(self.name, 'pic_SFfreqs'))
-            self.Wvec = np.array(t2df.getData(self.name, 'pic_Wvec'))
-            self.Amat = np.array(t2df.getData(self.name, 'pic_Amat'))
             self.AGr = np.array(t2df.getData(self.name, 'pic_AGr'))
-            self.AGF = np.array(t2df.getData(self.name, 'pic_AGF'))
+            self.AGF = np.array(t2df.getData(self.name, 'pic_AGF', dontread=memsave))
             self.AGFF = np.array(t2df.getData(self.name, 'pic_AGFF'))
-            self.Wovec = np.array(t2df.getData(self.name, 'pic_Wovec'))
-            self.Aomat = np.array(t2df.getData(self.name, 'pic_Aomat'))
-            self.AoGr = np.array(t2df.getData(self.name, 'pic_AoGr'))
-            self.AoGF = np.array(t2df.getData(self.name, 'pic_AoGF'))
-            self.AoGFF = np.array(t2df.getData(self.name, 'pic_AoGFF'))
+            self.AoGF = np.array(t2df.getData(self.name, 'pic_AoGF', dontread=memsave))
+            self.AoGFF = np.array(t2df.getData(self.name, 'pic_AoGFF', dontread=memsave))
+            self.Fmat = np.array(t2df.getData(self.name, 'pic_Fmat'))
 
         if likfunc == 'mark10':
-            self.Gr = np.array(t2df.getData(self.name, 'pic_Gr'))
-            self.GGr = np.array(t2df.getData(self.name, 'pic_GGr'))
-            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF'))
-            self.GGtD = np.array(t2df.getData(self.name, 'pic_GGtD'))
+            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF', dontread=memsave))
+            self.GGtD = np.array(t2df.getData(self.name, 'pic_GGtD', dontread=memsave))
             self.Emat = np.array(t2df.getData(self.name, 'pic_Emat'))
-            self.GGtE = np.array(t2df.getData(self.name, 'pic_GGtE'))
-            self.SFmat = np.array(t2df.getData(self.name, 'pic_SFmat'))
-            self.SFdmmat = np.array(t2df.getData(self.name, 'pic_SFdmmat'))
-            self.FFmat = np.array(t2df.getData(self.name, 'pic_FFmat'))
+            self.GGtE = np.array(t2df.getData(self.name, 'pic_GGtE', dontread=memsave))
+            self.SFmat = np.array(t2df.getData(self.name, 'pic_SFmat', dontread=memsave))
+            self.SFdmmat = np.array(t2df.getData(self.name, 'pic_SFdmmat', dontread=memsave))
+            self.FFmat = np.array(t2df.getData(self.name, 'pic_FFmat', dontread=memsave))
             self.SFfreqs = np.array(t2df.getData(self.name, 'pic_SFfreqs'))
-            self.DSF = np.array(t2df.getData(self.name, 'pic_DSF'))
+            self.DSF = np.array(t2df.getData(self.name, 'pic_DSF', dontread=memsave))
             self.DFF = np.array(t2df.getData(self.name, 'pic_DFF'))
             self.EEmat = np.array(t2df.getData(self.name, 'pic_EEmat'))
             self.GGtEE = np.array(t2df.getData(self.name, 'pic_GGtEE'))
-            self.Wvec = np.array(t2df.getData(self.name, 'pic_Wvec'))
-            self.Amat = np.array(t2df.getData(self.name, 'pic_Amat'))
             self.AGr = np.array(t2df.getData(self.name, 'pic_AGr'))
-            self.AGF = np.array(t2df.getData(self.name, 'pic_AGF'))
+            self.AGF = np.array(t2df.getData(self.name, 'pic_AGF', dontread=memsave))
             self.AGFF = np.array(t2df.getData(self.name, 'pic_AGFF'))
-            self.AGD = np.array(t2df.getData(self.name, 'pic_AGD'))
+            self.AGD = np.array(t2df.getData(self.name, 'pic_AGD', dontread=memsave))
             self.AGE = np.array(t2df.getData(self.name, 'pic_AGE'))
             self.AGEE = np.array(t2df.getData(self.name, 'pic_AGEE'))
-            self.Wovec = np.array(t2df.getData(self.name, 'pic_Wovec'))
-            self.Aomat = np.array(t2df.getData(self.name, 'pic_Aomat'))
-            self.AoGr = np.array(t2df.getData(self.name, 'pic_AoGr'))
-            self.AoGF = np.array(t2df.getData(self.name, 'pic_AoGF'))
-            self.AoGFF = np.array(t2df.getData(self.name, 'pic_AoGFF'))
-            self.AoGD = np.array(t2df.getData(self.name, 'pic_AoGD'))
-            self.AoGE = np.array(t2df.getData(self.name, 'pic_AoGE'))
-            self.AoGEE = np.array(t2df.getData(self.name, 'pic_AoGEE'))
+            self.AoGF = np.array(t2df.getData(self.name, 'pic_AoGF', dontread=memsave))
+            self.AoGFF = np.array(t2df.getData(self.name, 'pic_AoGFF', dontread=memsave))
+            self.AoGD = np.array(t2df.getData(self.name, 'pic_AoGD', dontread=memsave))
+            self.AoGE = np.array(t2df.getData(self.name, 'pic_AoGE', dontread=memsave))
+            self.AoGEE = np.array(t2df.getData(self.name, 'pic_AoGEE', dontread=memsave))
+            self.Fdmmat = np.array(t2df.getData(self.name, 'pic_Fdmmat', dontread=memsave))
+            self.Dmat = np.array(t2df.getData(self.name, 'pic_Dmat'))
+            self.DF = np.array(t2df.getData(self.name, 'pic_DF'))
+            self.Fmat = np.array(t2df.getData(self.name, 'pic_Fmat'))
 
 
 
@@ -2839,12 +2812,15 @@ class ptaLikelihood(object):
 
     @param h5filename:      HDF5 filename with pulsar data
     @param jsonfilename:    JSON file with model
+    @param pulsars:         Which pulsars to read ('all' = all, otherwise provide a
+                            list: ['J0030+0451', 'J0437-4715', ...])
+                            WARNING: duplicates are _not_ checked for.
     """
-    def __init__(self, h5filename=None, jsonfilename=None):
+    def __init__(self, h5filename=None, jsonfilename=None, pulsars='all'):
         self.clear()
 
         if h5filename is not None:
-            self.initFromFile(h5filename)
+            self.initFromFile(h5filename, pulsars=pulsars)
 
             if jsonfilename is not None:
                 self.initModelFromFile(jsonfilename)
@@ -3989,7 +3965,7 @@ class ptaLikelihood(object):
     @param fromFile:            Try to read the necessary Auxiliaries quantities
                                 from the HDF5 file
     """
-    def initModel(self, fullmodel, fromFile=False):
+    def initModel(self, fullmodel, fromFile=True):
         numNoiseFreqs = fullmodel['numNoiseFreqs']
         numDMFreqs = fullmodel['numDMFreqs']
         compression = fullmodel['compression']
@@ -4058,7 +4034,7 @@ class ptaLikelihood(object):
                 if not fromFile:
                     raise StandardError('fromFileFalse')
                 # Read Auxiliaries
-                #print "Reading Auxiliaries"
+                print "Reading Auxiliaries for {0}".format(m2psr.name)
                 m2psr.readPulsarAuxiliaries(self.t2df, Tmax, \
                         numNoiseFreqs[pindex], \
                         numDMFreqs[pindex], not separateEfacs[pindex], \
@@ -4066,20 +4042,20 @@ class ptaLikelihood(object):
                         nSingleDMFreqs=numSingleDMFreqs[pindex], \
                         likfunc=likfunc, compression=compression, \
                         memsave=True)
-                #print "Reading Auxiliaries done"
+                print "Done"
             except (StandardError, ValueError, KeyError, IOError, RuntimeError):
                 # Create the Auxiliaries ourselves
 
                 # For every pulsar, construct the auxiliary quantities like the Fourier
                 # design matrix etc
-                #print "Creating Auxiliaries"
+                print "Creating Auxiliaries for {0}".format(m2psr.name)
                 m2psr.createPulsarAuxiliaries(self.t2df, Tmax, numNoiseFreqs[pindex], \
                         numDMFreqs[pindex], not separateEfacs[pindex], \
                                 nSingleFreqs=numSingleFreqs[pindex], \
                                 nSingleDMFreqs=numSingleDMFreqs[pindex], \
                                 likfunc=likfunc, compression=compression, \
                                 write='likfunc')
-                #print "Creating Auxiliaries done"
+                print "Done"
 
             # When selecting Fourier modes, like in mark7/mark8, the binclude vector
             # indicates whether or not a frequency is included in the likelihood. By
@@ -5348,6 +5324,7 @@ class ptaLikelihood(object):
 
     implements coarse-graining, without added frequency lines
 
+    TODO: does not do deterministic sources yet
     """
     def mark4loglikelihood(self, parameters):
         npsrs = len(self.ptapsrs)
@@ -5892,6 +5869,8 @@ class ptaLikelihood(object):
                           include.
     psrnfinc, psrnfdminc: integer array, indicating how many frequencies per
                           pulsar to include. Overrides psrbfinc and psrbfdminc
+
+    NOTE: Since JSON update this needs some tweaks
     """
     def mark7loglikelihood(self, parameters, psrbfinc=None, psrbfdminc=None, \
             psrnfinc=None, psrnfdminc=None):
@@ -6044,6 +6023,8 @@ class ptaLikelihood(object):
     Mark F:   0.41 sec     0.82 sec
     Mark G:   0.83 sec     0.91 sec
     Mark H:   0.76 sec     0.84 sec
+
+    NOTE: Since JSON update this needs some tweaks
     """
     def mark8loglikelihood(self, parameters, psrbfinc=None, psrbfdminc=None, \
             psrnfinc=None, psrnfdminc=None):
@@ -6186,6 +6167,8 @@ class ptaLikelihood(object):
     mark9 loglikelihood of the pta model/likelihood implementation
 
     like mark3loglikelihood, but with single frequency lines
+
+    NOTE: Since JSON update this needs some tweaks
     """
     def mark9loglikelihood(self, parameters):
         npsrs = len(self.ptapsrs)
@@ -6295,6 +6278,8 @@ class ptaLikelihood(object):
 
     Just like mark6loglikelihood, but now with single DM frequencies included in
     the model
+
+    NOTE: Since JSON update this needs some tweaks
     """
     def mark10loglikelihood(self, parameters):
         npsrs = len(self.ptapsrs)
