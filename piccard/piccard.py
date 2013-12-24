@@ -1650,7 +1650,7 @@ class ptaPulsar(object):
                         reconstructed
     """
     def numfreqsFromSpectrum(self, noiseAmp, noiseSi, \
-            Tmax=None, threshold=0.99):
+            Tmax=None, threshold=0.99, dm=False):
         ntoas = len(self.toas)
         nfreqs = int(ntoas/2)
 
@@ -1663,9 +1663,21 @@ class ptaPulsar(object):
         freqpy = Ffreqs * pic_spy
         pcdoubled = (pic_spy**3 / (12*np.pi*np.pi * Tmax)) * freqpy ** (-noiseSi)
 
+        if dm:
+            # Make Fmat into a DM variation Fmat
+            Dvec = pic_DMk / (self.freqs**2)
+            Fmat = (Dvec * Fmat.T).T
+
+        # Check whether the Gmatrix exists
+        if self.Gmat is None:
+            U, s, Vh = sl.svd(self.Mmat)
+            Gmat = U[:, self.Mmat.shape[1]:]
+        else:
+            Gmat = self.Gmat
+
         # Find the Cholesky decomposition of the projected radiometer-noise
         # covariance matrix
-        GNG = np.dot(self.Gmat.T, (self.toaerrs**2 * self.Gmat.T).T)
+        GNG = np.dot(Gmat.T, (self.toaerrs**2 * Gmat.T).T)
         try:
             L = sl.cholesky(GNG).T
             cf = sl.cho_factor(L)
@@ -1675,7 +1687,7 @@ class ptaPulsar(object):
 
         # Construct the transformed Phi-matrix, and perform SVD. That matrix
         # should have a few singular values (nfreqs not precisely determined)
-        LGF = np.dot(Li, np.dot(self.Gmat.T, Fmat))
+        LGF = np.dot(Li, np.dot(Gmat.T, Fmat))
         Phiw = np.dot(LGF, (pcdoubled * LGF).T)
         U, s, Vh = sl.svd(Phiw)
 
@@ -1915,7 +1927,8 @@ class ptaPulsar(object):
         if ndmf > 0:
             (self.Fdmmat, self.Fdmfreqs) = fourierdesignmatrix(self.toas, 2*ndmf, Tmax)
             self.Dmat = np.diag(pic_DMk / (self.freqs**2))
-            self.DF = np.dot(self.Dmat, self.Fdmmat)
+            #self.DF = np.dot(self.Dmat, self.Fdmmat)
+            self.DF = (np.diag(self.Dmat) * self.Fdmmat.T).T
         else:
             self.Fdmmat = np.zeros((len(self.freqs), 0))
             self.Fdmfreqs = np.zeros(0)
@@ -2862,14 +2875,14 @@ class ptaLikelihood(object):
                             list: ['J0030+0451', 'J0437-4715', ...])
                             WARNING: duplicates are _not_ checked for.
     """
-    def __init__(self, h5filename=None, jsonfilename=None, pulsars='all'):
+    def __init__(self, h5filename=None, jsonfilename=None, pulsars='all', auxFromFile=True):
         self.clear()
 
         if h5filename is not None:
             self.initFromFile(h5filename, pulsars=pulsars)
 
             if jsonfilename is not None:
-                self.initModelFromFile(jsonfilename)
+                self.initModelFromFile(jsonfilename, auxFromFile=auxFromFile)
 
     """
     Clear all the structures present in the object
@@ -3099,7 +3112,7 @@ class ptaLikelihood(object):
         if signal['flagname'] != 'pulsarname':
             # This efac only applies to some TOAs, not all of 'm
             ind = np.array(self.ptapsrs[signal['pulsarind']].flags) != signal['flagvalue']
-            signal.Nvec[ind] = 0.0
+            signal['Nvec'][ind] = 0.0
 
         self.ptasignals.append(signal.copy())
 
@@ -3130,7 +3143,7 @@ class ptaLikelihood(object):
         if signal['flagname'] != 'pulsarname':
             # This equad only applies to some TOAs, not all of 'm
             ind = np.array(self.ptapsrs[signal['pulsarind']].flags) != signal['flagvalue']
-            signal.Nvec[ind] = 0.0
+            signal['Nvec'][ind] = 0.0
 
         self.ptasignals.append(signal.copy())
 
@@ -3840,10 +3853,10 @@ class ptaLikelihood(object):
 
     @param filename:    Filename of the json file with the model
     """
-    def initModelFromFile(self, filename):
+    def initModelFromFile(self, filename, auxFromFile=True):
         with open(filename) as data_file:
             model = json.load(data_file)
-        self.initModel(model)
+        self.initModel(model, fromFile=auxFromFile)
 
     """
     Write the model to a json file
