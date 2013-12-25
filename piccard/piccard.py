@@ -3501,7 +3501,7 @@ class ptaLikelihood(object):
                         "flagvalue":flagval,
                         "bvary":[varyEfac],
                         "pmin":[0.001],
-                        "pmax":[10.0],
+                        "pmax":[50.0],
                         "pwidth":[0.1],
                         "pstart":[1.0]
                         })
@@ -3515,7 +3515,7 @@ class ptaLikelihood(object):
                     "flagvalue":m2psr.name,
                     "bvary":[varyEfac],
                     "pmin":[0.001],
-                    "pmax":[10.0],
+                    "pmax":[50.0],
                     "pwidth":[0.1],
                     "pstart":[1.0]
                     })
@@ -7668,6 +7668,8 @@ def upperlimitplot2d(chain, par1=72, par2=73, ymin=None, ymax=None):
 """
 Given a mcmc chain file, this function returns the maximum posterior value, and
 the parameters
+
+NOTE: Deprecated
 """
 def getmlfromchain(chainfilename):
   emceechain = np.loadtxt(chainfilename)
@@ -7766,6 +7768,18 @@ MCMC
 def makeresultsplot(likob, chainfilename, outputdir):
     (logpost, loglik, emceechain, labels) = ReadMCMCFile(chainfilename)
 
+    # Make a ll-plot figure
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    ax.plot(np.arange(len(logpost)), logpost, 'b-')
+    ax.grid(True)
+    ax.set_xlabel('Sample number')
+    ax.set_ylabel('Log-posterior')
+    fileout = outputdir+'/logpost'
+    plt.savefig(fileout+'.png')
+    plt.savefig(fileout+'.eps')
+    plt.close(fig)
+
     # List all varying parameters
     dopar = np.array([1]*likob.dimensions, dtype=np.bool)
 
@@ -7812,18 +7826,23 @@ def makeresultsplot(likob, chainfilename, outputdir):
 
             ax.set_title(r'Efac values, page ' + str(pp))
             ax.set_ylabel(r'EFAC')
-            #ax.legend(('Rutger', 'Rutger ML', 'Lindley', 'Steve',), shadow=True, fancybox=True, numpoints=1)
-            ax.set_yscale('log')
+            #ax.legend(('One', 'Rutger ML', 'Two', 'Three',), shadow=True, fancybox=True, numpoints=1)
+            #ax.set_yscale('log')
 
             xtickNames = plt.setp(ax, xticklabels=efacnames[minpar:maxpar])
             #plt.getp(xtickNames)
             plt.setp(xtickNames, rotation=45, fontsize=8, ha='right')
 
-            for ii in range(len(efacnames)):
-                print str(efacnames[ii]) + ":  " + str(yval[ii]) + " +/- " + str(yerr[ii])
+            efacfileout = open(outputdir+'/efac-page-'+str(pp)+'.txt', 'w')
+            for ii in range(minpar, maxpar):
+                print str(efacnames[ii]) + ":  " + str(yval[ii-minpar]) + " +/- " + str(yerr[ii-minpar])
+                efacfileout.write(str(efacnames[ii]) + "  " + str(yval[ii-minpar]) + "  " + str(yerr[ii-minpar]))
+
+            efacfileout.close()
 
             plt.savefig(fileout+'.png')
             plt.savefig(fileout+'.eps')
+            plt.close(fig)
 
     # Make a plot of the spectra of all pulsars
     spectrumname, spectrumnameshort, spmin, spmax, spfreqs = likob.getSpectraNumbers()
@@ -7859,6 +7878,7 @@ def makeresultsplot(likob, chainfilename, outputdir):
 
         plt.savefig(fileout+'.png')
         plt.savefig(fileout+'.eps')
+        plt.close(fig)
 
     # Make a triplot of all the other parameters
     if np.sum(dopar) > 1:
@@ -7867,6 +7887,7 @@ def makeresultsplot(likob, chainfilename, outputdir):
         triplot(emceechain, parlabels=labels, plotparameters=indices)
         plt.savefig(fileout+'.png')
         plt.savefig(fileout+'.eps')
+        plt.close(fig)
     if np.sum(dopar) == 1:
         # Make a single plot
         indices = np.flatnonzero(np.array(dopar == True))
@@ -7875,6 +7896,7 @@ def makeresultsplot(likob, chainfilename, outputdir):
         fileout = outputdir+'/triplot'
         plt.savefig(fileout+'.png')
         plt.savefig(fileout+'.eps')
+        plt.close(fig)
 
 
 
