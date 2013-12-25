@@ -39,6 +39,7 @@ import h5py as h5
 import matplotlib.pyplot as plt
 import os as os
 import sys
+import json
 
 from . import pytwalk                  # Internal module
 from . import pydnest                  # Internal module
@@ -46,15 +47,6 @@ from . import anisotropygammas as ang  # Internal module
 from . import rjmcmchammer as rjemcee  # Internal module
 from .triplot import *
 from . import PTMCMC_generic as ptmcmc
-
-"""
-# Set the environment variables for MultiNest and other stuff
-ldlibpath = os.getenv('LD_LIBRARY_PATH')
-if ldlibpath == None:
-    ldlibpath = ''
-ldlibpath += ':/home/haasteren/local/lib'
-os.environ['LD_LIBRARY_PATH'] = ldlibpath
-"""
 
 try:
     import statsmodels.api as smapi
@@ -82,30 +74,393 @@ try:    # If MultiNest is not installed, do not use it
 except ImportError:
     pymultinest = None
 
+
+# Some constants used in Piccard
 # For DM calculations, use this constant
 # See You et al. (2007) - http://arxiv.org/abs/astro-ph/0702366
 # Lee et al. (in prep.) - ...
 # Units here are such that delay = DMk * DM * freq^-2 with freq in MHz
-DMk = 4.15e3    #  Units MHz^2 cm^3 pc sec
+pic_DMk = 4.15e3        # Units MHz^2 cm^3 pc sec
+
+pic_spd = 86400.0       # Seconds per day
+pic_spy = 31556926.0    # Seconds per year (yr = 365.25 days, so Julian years)
+pic_T0 = 53000.0        # MJD to which all HDF5 toas are referenced
 
 
 
 """
-The DataFile class is the class that supports the HDF5 file format. It
-most likely needs to be re-designed, since it does not provide a universal
-interface
+The DataFile class is the class that supports the HDF5 file format. All HDF5
+file interactions happen in this class.
 """
 class DataFile(object):
     filename = None
     h5file = None
 
+    """
+    Initialise the structure.
+
+    @param filename:    name of the HDF5 file
+    """
     def __init__(self, filename=None):
         # Open the hdf5 file?
-        self.setfile(filename)
+        self.filename = filename
 
     def __del__(self):
         # Delete the instance, and close the hdf5 file?
         pass
+
+    """
+    Return a list of pulsars present in the HDF5 file
+    """
+    def getPulsarList(self):
+        # 'r' means: read file, must exist
+        self.h5file = h5.File(self.filename, 'r')
+        psrlist = list(self.h5file)
+        self.h5file.close()
+
+        return psrlist
+
+    """
+    Obtain the hdf5 group of pulsar psrname, create it if it does not exist. If
+    delete is toggled, delete the content first. This function assumes the hdf5
+    file is opened (not checked)
+
+    @param psrname: The name of the pulsar
+    @param delete:  If True, the pulsar group will be emptied before use
+    """
+    def getPulsarGroup(self, psrname, delete=False):
+        # datagroup = h5file.require_group('Data')
+
+        if psrname in self.h5file and delete:
+            del self.h5file[psrname]
+
+        pulsarGroup = self.h5file.require_group(psrname)
+
+        return pulsarGroup
+
+    """
+    Add data to a specific pulsar. Here the hdf5 file is opened, and the right
+    group is selected
+
+    @param psrname:     The name of the pulsar
+    @param field:       The name of the field we will be writing to
+    @param data:        The data we are writing to the field
+    @param overwrite:   Whether the data should be overwritten if it exists
+    """
+    def addData(self, psrname, field, data, overwrite=True):
+        if self.filename is None:
+            raise RuntimeError, "HDF5 filename not provided"
+
+        # 'a' means: read/write if exists, create otherwise
+        self.h5file = h5.File(self.filename, 'a')
+
+        psrGroup = self.getPulsarGroup(psrname, delete=False)
+        self.writeData(psrGroup, field, data, overwrite=overwrite)
+
+        self.h5file.close()
+        self.h5file = None
+
+        
+
+    """
+    Read data from a specific pulsar. If the data is not available, the hdf5
+    file is properly closed, and an exception is thrown
+
+    @param psrname:     Name of the pulsar we are reading data from
+    @param field:       Field name of the data we are requestion
+    @param subgroup:    If the data is in a subgroup, get it from there
+    @param dontread:    If set to true, do not actually read anything
+    """
+    def getData(self, psrname, field, subgroup=None, dontread=False):
+        # Dontread is useful for readability in the 'readPulsarAuxiliaries
+        if dontread:
+            return None
+
+        if self.filename is None:
+            raise RuntimeError, "HDF5 filename not provided"
+
+        # 'r' means: read file, must exist
+        self.h5file = h5.File(self.filename, 'r')
+        psrGroup = self.getPulsarGroup(psrname, delete=False)
+
+        datGroup = psrGroup
+        if subgroup is not None:
+            if subgroup in psrGroup:
+                datGroup = psrGroup[subgroup]
+            else:
+                self.h5file.close()
+                raise IOError, "Field {0} not present for pulsar {1}/{2}".format(field, psrname, subgroup)
+
+        if field in datGroup:
+            data = np.array(datGroup[field])
+            self.h5file.close()
+        else:
+            self.h5file.close()
+            raise IOError, "Field {0} not present for pulsar {1}".format(field, psrname)
+
+        return data
+
+    """
+    Retrieve the shape of a specific dataset
+
+    @param psrname:     Name of the pulsar we are reading data from
+    @param field:       Field name of the data we are requestion
+    @param subgroup:    If the data is in a subgroup, get it from there
+    """
+    def getShape(self, psrname, field, subgroup=None):
+        if self.filename is None:
+            raise RuntimeError, "HDF5 filename not provided"
+
+        # 'r' means: read file, must exist
+        self.h5file = h5.File(self.filename, 'r')
+        psrGroup = self.getPulsarGroup(psrname, delete=False)
+
+        datGroup = psrGroup
+        if subgroup is not None:
+            if subgroup in psrGroup:
+                datGroup = psrGroup[subgroup]
+            else:
+                self.h5file.close()
+                raise IOError, "Field {0} not present for pulsar {1}/{2}".format(field, psrname, subgroup)
+
+        if field in datGroup:
+            shape = datGroup[field].shape
+            self.h5file.close()
+        else:
+            self.h5file.close()
+            raise IOError, "Field {0} not present for pulsar {1}".format(field, psrname)
+
+        return shape
+
+
+    """
+    (Over)write a field of data for a specific pulsar/group. Data group is
+    required, instead of a name.
+
+    @param dataGroup:   Group object
+    @param field:       Name of field that we are writing to
+    @param data:        The data that needs to be written
+    @param overwrite:   If True, data will be overwritten (default True)
+    """
+    def writeData(self, dataGroup, field, data, overwrite=True):
+        if field in dataGroup and overwrite:
+            del dataGroup[field]
+
+        if not field in dataGroup:
+            dataGroup.create_dataset(field, data=data)
+
+    """
+    Add a pulsar to the HDF5 file, given a tempo2 par and tim file. No extra
+    model matrices and auxiliary variables are added to the HDF5 file. This
+    function interacts with the libstempo Python interface to Tempo2
+
+    @param parfile:     Name of tempo2 parfile
+    @param timfile:     Name of tempo2 timfile
+    @param iterations:  Number of fitting iterations to do before writing
+    @param mode:        Can be replace/overwrite/new. Replace first deletes the
+                        entire pulsar group. Overwrite overwrites all data, but
+                        does not delete the auxiliary fields. New requires the
+                        pulsar not to exist, and throws an exception otherwise.
+    """
+    def addTempoPulsar(self, parfile, timfile, iterations=1, mode='replace'):
+        # Check whether the two files exist
+        if not os.path.isfile(parfile) or not os.path.isfile(timfile):
+            raise IOError, "Cannot find parfile (%s) or timfile (%s)!" % (parfile, timfile)
+
+        if self.filename is None:
+            raise RuntimeError, "HDF5 filename not provided"
+
+        # Parse the default write behaviour
+        deletepsr = False
+        if mode == 'replace':
+            deletepsr = True
+        overwrite = False
+        if mode == 'overwrite':
+            overwrite = True
+
+        # 'a' means: read/write if exists, create otherwise
+        self.h5file = h5.File(self.filename, 'a')
+        
+        # Obtain the directory name of the timfile, and change to it
+        timfiletup = os.path.split(timfile)
+        dirname = timfiletup[0]
+        reltimfile = timfiletup[-1]
+        relparfile = os.path.relpath(parfile, dirname)
+        savedir = os.getcwd()
+
+        # Load pulsar data from the libstempo library
+        os.chdir(dirname)
+        t2pulsar = t2.tempopulsar(relparfile, reltimfile)
+        os.chdir(savedir)
+
+        psrGroup = self.getPulsarGroup(t2pulsar.name, delete=deletepsr)
+
+        # Iterate the fitting a few times if necessary
+        if iterations > 1:
+            t2pulsar.fit(iters=iterations)
+
+        self.writeData(psrGroup, 'TOAs', np.double(np.array(t2pulsar.toas())-pic_T0)*pic_spd, overwrite=overwrite)    # Seconds
+        self.writeData(psrGroup, 'prefitRes', np.double(t2pulsar.prefit.residuals), overwrite=overwrite)  # Seconds
+        self.writeData(psrGroup, 'postfitRes', np.double(t2pulsar.residuals()), overwrite=overwrite)  # Seconds
+        self.writeData(psrGroup, 'toaErr', np.double(1e-6*t2pulsar.toaerrs), overwrite=overwrite)    # Seconds
+        self.writeData(psrGroup, 'freq', np.double(t2pulsar.freqs), overwrite=overwrite)    # MHz
+
+        # TODO: writing the design matrix should be done irrespective of the fitting flag
+        desmat = t2pulsar.designmatrix()
+        self.writeData(psrGroup, 'designmatrix', desmat, overwrite=overwrite)
+
+        # Do not write the (co)G-matrix anymore
+        # U, s, Vh = sl.svd(desmat)
+        # self.writeData(psrGroup, 'Gmatrix', U[:, desmat.shape[1]:], overwrite=overwrite)
+        # self.writeData(psrGroup, 'coGmatrix', U[:, :desmat.shape[1]], overwrite=overwrite)
+
+        # Now obtain and write the timing model parameters
+        tmpname = ['Offset'] + list(t2pulsar.pars)
+        tmpvalpre = np.zeros(len(tmpname))
+        tmpvalpost = np.zeros(len(tmpname))
+        tmperrpre = np.zeros(len(tmpname))
+        tmperrpost = np.zeros(len(tmpname))
+        for i in range(len(t2pulsar.pars)):
+            tmpvalpre[i+1] = t2pulsar.prefit[tmpname[i+1]].val
+            tmpvalpost[i+1] = t2pulsar.prefit[tmpname[i+1]].val
+            tmperrpre[i+1] = t2pulsar.prefit[tmpname[i+1]].err
+            tmperrpost[i+1] = t2pulsar.prefit[tmpname[i+1]].err
+
+        self.writeData(psrGroup, 'tmp_name', tmpname, overwrite=overwrite)          # TMP name
+        self.writeData(psrGroup, 'tmp_valpre', tmpvalpre, overwrite=overwrite)      # TMP pre-fit value
+        self.writeData(psrGroup, 'tmp_valpost', tmpvalpost, overwrite=overwrite)    # TMP post-fit value
+        self.writeData(psrGroup, 'tmp_errpre', tmperrpre, overwrite=overwrite)      # TMP pre-fit error
+        self.writeData(psrGroup, 'tmp_errpost', tmperrpost, overwrite=overwrite)    # TMP post-fit error
+
+        # Get the flag group for this pulsar. Create if not there
+        flagGroup = psrGroup.require_group('Flags')
+
+        # Obtain the unique flags in this dataset, and write to file
+        uflags = list(set(t2pulsar.flags))
+        for flagid in uflags:
+            self.writeData(flagGroup, flagid, t2pulsar.flags[flagid], overwrite=overwrite)
+
+        if not "efacequad" in flagGroup:
+            # Check if the sys-flag is present in this set. If it is, add an
+            # efacequad flag with pulsarname+content of the sys-flag. If it
+            # isn't, check for a be-flag and try the same. Otherwise, add an
+            # efacequad flag with the pulsar name as it's elements.
+            efacequad = []
+            nobs = len(t2pulsar.toas())
+            pulsarname = map(str, [t2pulsar.name] * nobs)
+
+            if "sys" in flagGroup:
+                efacequad = map('-'.join, zip(pulsarname, flagGroup['sys']))
+            elif "be" in flagGroup:
+                efacequad = map('-'.join, zip(pulsarname, flagGroup['be']))
+            else:
+                efacequad = pulsarname
+
+            self.writeData(flagGroup, "efacequad", efacequad, overwrite=overwrite)
+
+        if not "pulsarname" in flagGroup:
+            nobs = len(t2pulsar.toas())
+            pulsarname = map(str, [t2pulsar.name] * nobs)
+            self.writeData(flagGroup, "pulsarname", pulsarname, overwrite=overwrite)
+
+        # Close the HDF5 file
+        self.h5file.close()
+        self.h5file = None
+
+    """
+    Add pulsars to the HDF5 file, given the name of another hdf5 file and a list
+    of pulsars. The data structures will be directly copied from the source file
+    to this one.
+
+    @param h5file:  The name of the other HDF5 file from which we will be adding
+    @param pulsars: Which pulsars to read ('all' = all, otherwise provide a
+                    list: ['J0030+0451', 'J0437-4715', ...])
+                    WARNING: duplicates are _not_ checked for.
+    @param mode:    Whether to just add, or overwrite (add/replace)
+    """
+    def addH5Pulsar(self, h5file, pulsars='all', mode='add'):
+        # 'a' means: read/write if exists, create otherwise, 'r' means read
+        sourceh5 = h5.File(h5file, 'r')
+        self.h5file = h5.File(self.filename, 'a')
+
+        # The pulsar names in the HDF5 files
+        sourcepsrnames = list(sourceh5)
+        destpsrnames = list(self.h5file)
+
+        # Determine which pulsars we are reading in
+        readpsrs = []
+        if pulsars=='all':
+            readpsrs = sourcepsrnames
+        else:
+            # Check if all provided pulsars are indeed in the HDF5 file
+            if np.all(np.array([pulsars[ii] in destpsrnames for ii in range(len(pulsars))]) == True):
+                readpsrs = pulsars
+            elif pulsars in destpsrnames:
+                pulsars = [pulsars]
+                readpsrs = pulsars
+            else:
+                self.h5file.close()
+                sourceh5.close()
+                raise ValueError("ERROR: Not all provided pulsars in HDF5 file")
+
+        # Check that these pulsars are not already in the current HDF5 file
+        if not np.all(np.array([readpsrs[ii] not in destpsrnames for ii in range(len(readpsrs))]) == True) and \
+                mode != 'replace':
+            self.h5file.close()
+            sourceh5.close()
+            raise ValueError("ERROR: Refusing to overwrite pulsars in {0}".format(self.filename))
+
+        # Ok, now we are good. Let's copy the pulsars
+        for pulsar in readpsrs:
+            if pulsar in self.h5file:
+                # Delete the pulsar if it exists
+                del self.h5file[pulsar]
+
+            # Copy a pulsar
+            self.h5file.copy(sourceh5[pulsar], pulsar)
+
+        # Close both files
+        self.h5file.close()
+        sourceh5.close()
+
+    """
+    Read the basic quantities of a pulsar from an HDF5 file into a ptaPulsar
+    object. No extra model matrices and auxiliary variables are added to the
+    HDF5 file. If any field is not present in the HDF5 file, an IOError
+    exception is raised
+
+    @param psr:     The ptaPulsar object we need to fill with data
+    @param psrname: The name of the pulsar to be read from the HDF5 file
+
+    TODO: The HDF5 file is opened and closed every call of 'getData'. That seems
+          kind of inefficient
+    """
+    def readPulsar(self, psr, psrname):
+        psr.name = psrname
+
+        # Read the timing model parameter descriptions
+        psr.ptmdescription = map(str, self.getData(psrname, 'tmp_name'))
+        psr.ptmpars = np.array(self.getData(psrname, 'tmp_valpre'))
+        psr.flags = map(str, self.getData(psrname, 'efacequad', 'Flags'))
+
+        # Read the position of the pulsar
+        rajind = np.flatnonzero(np.array(psr.ptmdescription) == 'RAJ')
+        decjind = np.flatnonzero(np.array(psr.ptmdescription) == 'DECJ')
+        psr.raj = np.array(self.getData(psrname, 'tmp_valpre'))[rajind]
+        psr.decj = np.array(self.getData(psrname, 'tmp_valpre'))[decjind]
+
+        # Obtain residuals, TOAs, etc.
+        psr.toas = np.array(self.getData(psrname, 'TOAs'))
+        psr.toaerrs = np.array(self.getData(psrname, 'toaErr'))
+        psr.prefitresiduals = np.array(self.getData(psrname, 'prefitRes'))
+        psr.residuals = np.array(self.getData(psrname, 'postfitRes'))
+        psr.detresiduals = np.array(self.getData(psrname, 'prefitRes'))
+        psr.freqs = np.array(self.getData(psrname, 'freq'))
+        psr.Mmat = np.array(self.getData(psrname, 'designmatrix'))
+
+        # We do not read the (co)G-matrix anymore here. Happens when
+        # initialising the model
+
 
     """
     Add another pulsar to the HDF5 file, given a tempo2 par and tim file. The
@@ -118,7 +473,7 @@ class DataFile(object):
     such should not be modified. Adding flags and other stuff should be done as
     part of the modelling (in the /Models folder).
     """
-    def addpulsar(self, parfile, timfile, iterations=1):
+    def addpulsarold(self, parfile, timfile, iterations=1):
         # Check whether the two files exist
         if not os.path.isfile(parfile) or not os.path.isfile(timfile):
             raise IOError, "Cannot find parfile (%s) or timfile (%s)!" % (parfile, timfile)
@@ -150,7 +505,7 @@ class DataFile(object):
         t2pulsar = t2.tempopulsar(relparfile, reltimfile)
         os.chdir(savedir)
 
-        # Create the pulsar subgroup if it does not exist
+        # Create the pulsar subgroup if it des not exist
         if "Pulsars" in datagroup:
             pulsarsgroup = datagroup["Pulsars"]
         else:
@@ -170,8 +525,7 @@ class DataFile(object):
             t2pulsar.fit(iters=iterations)
 
         # Create the datasets, with reference time pepoch = 53000
-        spd = 24.0*3600     # seconds per day
-        pulsarsgroup.create_dataset('TOAs', data=np.double(np.array(t2pulsar.toas())-53000)*spd)       # days (MJD) * sec per day
+        pulsarsgroup.create_dataset('TOAs', data=np.double(np.array(t2pulsar.toas())-53000)*pic_spd)       # days (MJD) * sec per day
         pulsarsgroup.create_dataset('prefitRes', data=np.double(t2pulsar.prefit.residuals))      # seconds
         pulsarsgroup.create_dataset('postfitRes', data=np.double(t2pulsar.residuals()))  # seconds
         pulsarsgroup.create_dataset('toaErr', data=np.double(1e-6*t2pulsar.toaerrs))          # seconds
@@ -260,51 +614,6 @@ class DataFile(object):
         self.h5file.close()
         self.h5file = None
 
-
-    """
-    Given a flag and a flag value, figure out whether this source only applies
-    to a pulsar, or to several pulsars. The return value is either the index
-    number of the pulsar, or -1
-
-    flagvalue: the value of the flag for this source
-    flagvalues: list of the flag values for all TOAs
-    pulsarflagvalues: list of pulsar names for all TOAs
-    pulsarnames: list of all pulsars
-    """
-    def pulsarnumberfromflagvalue(self, flagvalue, flagvalues, pulsarflags, pulsarnames):
-        indices = np.flatnonzero(np.array(flagvalues == flagvalue))
-        sourcepulsars = pulsarflags[indices]
-        uniquepulsars = list(set(sourcepulsars))
-        if len(uniquepulsars) == 1:
-            retvalue = pulsarnames.index(uniquepulsars[0])
-        else:
-            retvalue = -1
-
-        return retvalue
-
-    """
-    This function uses the function listed above. It figures out what the pulsar
-    number is, given a flag, a flag value, the pulsar names, and the hdf5
-    processed data group
-
-    This is used to see if a particular source (which works on a flag) only
-    works on a single pulsar or on several/all pulsars. If it only works on a
-    single pulsar, a covariance matrix of that source for only one pulsar can be
-    used.  Otherwise, it should be calculated for all pulsars, which takes more
-    time and memory.
-    """
-    def pulsarnumberfromflag(self, flag, flagvalue, pulsarnames, processeddatagroup):
-        retvalue = -1
-        if flag in processeddatagroup['Flags']:
-            flagvalues = np.array(map(str, processeddatagroup['Flags'][flag]))
-            pulsarflags = np.array(map(str, processeddatagroup['Flags']['pulsarname']))
-            retvalue = self.pulsarnumberfromflagvalue(flagvalue, flagvalues, pulsarflags, pulsarnames)
-
-        return retvalue
-
-
-    def setfile(self, filename):
-        self.filename = filename
 
 
 # Block-wise multiplication as in G^{T}CG
@@ -488,11 +797,13 @@ Calculate the matrix of Fourier modes A, given a set of timestamps
 
 These are sine/cosine basis vectors at evenly separated frequency bins
 
-Mode 0: constant (cos(0))
-Mode 1: sin(f_0)
-Mode 2: cos(f_0)
-Mode 3: sin(f_1)
+Mode 0: sin(f_0)
+Mode 1: cos(f_0)
+Mode 2: sin(f_1)
 ... etc
+
+@param nmodes:  The number of modes that will be included (= 2*nfreq)
+@param Ttot:    Total duration experiment (in case not given by t)
 """
 def fourierdesignmatrix(t, nmodes, Ttot=None):
   N = t.size
@@ -505,11 +816,10 @@ def fourierdesignmatrix(t, nmodes, Ttot=None):
 
   # The frequency steps
   #deltaf = (N-1.0) / (N*T)    # This would be orthogonal for regular sampling
-  if Ttot == None:
+  if Ttot is None:
       deltaf = 1.0 / T
   else:
       deltaf = 1.0 / Ttot
-
 
   # The zeroth mode (constant, cos(0))
   # Skip this one now!
@@ -961,8 +1271,10 @@ A general signal element of the pta model/likelihood.
 
 For now, the Fmat fourier design matrices are assumed to be for identical
 frequencies for all pulsars.
+
+Note: deprecated
 """
-class ptasignal(object):
+class ptasignalOld(object):
     pulsarind = None        # pulsar nr. for EFAC/EQUAD
     stype = "none"          # EFAC, EQUAD, spectrum, powerlaw,
                             # dmspectrum, dmpowerlaw, fouriercoeff...
@@ -975,8 +1287,9 @@ class ptasignal(object):
 
     npars = 0               # Number of parameters
     ntotpars = 0            # Total number of parameters (also non-varying)
-    nindex = 0              # Index in parameters array
+    parindex = 0            # Index in parameters array
     npsrfreqindex = 0       # Index of frequency line for this psr (which line)
+
                             #   Do not double-count frequencies (so not modes, but
                             #   freqs)
     npsrdmfreqindex = 0     # Index of DM frequency line for this psr (which line)
@@ -991,14 +1304,12 @@ class ptasignal(object):
     # Quantities for EFAC/EQUAD
     Nvec = None             # For in the mark3+ likelihood
 
-    # If this pulsar has only one efac/equad parameter, use computational
-    # shortcut, using:
-    accelNoise = False      # Works only for efac-only (implement automagically?)
-
     # Quantities for spectral noise
     Tmax = None
     corrmat = None
 
+    # Quantities for correlated signals
+    Ffreqs = None
     aniCorr = None       # Anisotropic correlations are described by this class
 
 
@@ -1076,8 +1387,6 @@ class ptaPulsar(object):
     GGr = None
     GtF = None
     GtD = None
-    #GGtF = None
-    #GGtFF = None
     GGtD = None
     AGr = None      # Replaces GGr in 2-component noise model
     AoGr = None     #   Same but for orthogonal basis (when compressing)
@@ -1103,6 +1412,8 @@ class ptaPulsar(object):
     bfdminc = None      # Number of modes of all internal matrices (DM)
     bcurfinc = None     # Current number of modes in RJMCMC
     bcurfdminc = None   # Current number of modes in RJMCMC
+
+    Qam = 0.0           # The pulse Jitter amplitude (if we use it)
 
     def __init__(self):
         self.raj = 0
@@ -1140,7 +1451,6 @@ class ptaPulsar(object):
         self.GGr = None
         self.GtF = None
         self.GtD = None
-        #self.GGtF = None
         #self.GGtFF = None
         self.GGtD = None
 
@@ -1149,7 +1459,22 @@ class ptaPulsar(object):
         self.bprevfinc = None
         self.bprevfdminc = None
 
-    def readFromH5(self, filename, psrname):
+        self.Qam = 0.0
+
+    """
+    Read the pulsar data (TOAs, residuals, design matrix, etc..) from an HDF5
+    file
+
+    @param t2df:        The DataFile object we are reading from
+    @param psrname:     Name of the Pulsar to be read from the HDF5 file
+    """
+    def readFromH5(self, t2df, psrname):
+        t2df.readPulsar(self, psrname)
+
+    """
+    Note: Deprecated
+    """
+    def readFromH5old(self, filename, psrname):
         h5file = h5.File(filename, 'r+')
 
         # Retrieve the models group
@@ -1272,7 +1597,7 @@ class ptaPulsar(object):
             dmqsdM = np.zeros((self.Mmat.shape[0], np.sum(dmadd)))
             dmqsddes = []
             dmqsdpars = np.zeros(np.sum(dmadd))
-            Dmatdiag = DMk / (self.freqs**2)
+            Dmatdiag = pic_DMk / (self.freqs**2)
             index = 0
             for ii in range(len(dmaddes)):
                 if dmadd[ii]:
@@ -1312,6 +1637,68 @@ class ptaPulsar(object):
 
 
     """
+    Estimate how many frequency modes are required for this pulsar. This
+    function uses a simplified method, based on van Haasteren (2013). Given a
+    red-noise spectrum (power-law here), a high-fidelity compression technique
+    is used.
+
+    @param noiseAmp:    the expected amplitude we want to be fully sensitive to
+    @param noiseSi:     the spectral index of the signal we want to be fully
+                        sensitive to
+    @param Tmax:        time baseline, if not determined from this pulsar
+    @param threshold:   the fidelity with which the signal has to be
+                        reconstructed
+    """
+    def numfreqsFromSpectrum(self, noiseAmp, noiseSi, \
+            Tmax=None, threshold=0.99, dm=False):
+        ntoas = len(self.toas)
+        nfreqs = int(ntoas/2)
+
+        if Tmax is None:
+            Tmax = np.max(self.toas) - np.min(self.toas)
+
+        # Construct the Fourier modes, and the frequency coefficients (for
+        # noiseAmp=1)
+        (Fmat, Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
+        freqpy = Ffreqs * pic_spy
+        pcdoubled = (pic_spy**3 / (12*np.pi*np.pi * Tmax)) * freqpy ** (-noiseSi)
+
+        if dm:
+            # Make Fmat into a DM variation Fmat
+            Dvec = pic_DMk / (self.freqs**2)
+            Fmat = (Dvec * Fmat.T).T
+
+        # Check whether the Gmatrix exists
+        if self.Gmat is None:
+            U, s, Vh = sl.svd(self.Mmat)
+            Gmat = U[:, self.Mmat.shape[1]:]
+        else:
+            Gmat = self.Gmat
+
+        # Find the Cholesky decomposition of the projected radiometer-noise
+        # covariance matrix
+        GNG = np.dot(Gmat.T, (self.toaerrs**2 * Gmat.T).T)
+        try:
+            L = sl.cholesky(GNG).T
+            cf = sl.cho_factor(L)
+            Li = sl.cho_solve(cf, np.eye(GNG.shape[0]))
+        except np.linalg.LinAlgError as err:
+            raise ValueError("ERROR: GNG singular according to Cholesky")
+
+        # Construct the transformed Phi-matrix, and perform SVD. That matrix
+        # should have a few singular values (nfreqs not precisely determined)
+        LGF = np.dot(Li, np.dot(Gmat.T, Fmat))
+        Phiw = np.dot(LGF, (pcdoubled * LGF).T)
+        U, s, Vh = sl.svd(Phiw)
+
+        # From the eigenvalues in s, we can determine the number of frequencies
+        fisherelements = s**2 / (1 + noiseAmp**2 * s)**2
+        cumev = np.cumsum(fisherelements)
+        totrms = np.sum(fisherelements)
+        return int((np.flatnonzero( (cumev/totrms) >= threshold )[0] + 1)/2)
+
+
+    """
     Construct the compression matrix and it's orthogonal complement. This is
     always done, even if in practice there is no compression. That is just the
     fidelity = 1 case.
@@ -1322,11 +1709,11 @@ class ptaPulsar(object):
         # W s V^{T} = G^{T} F F^{T} G    H = G Wl
 
     @param compression: what kind of compression to use: None/average/frequencies
-    @param nfreqs: when using frequencies, use this number if not -1
-    @param ndmfreqs: when using dm frequencies, use this number if not -1
+    @param nfmodes: when using frequencies, use this number if not -1
+    @param ndmodes: when using dm frequencies, use this number if not -1
     """
     def constructCompressionMatrix(self, compression='None', \
-            nfreqs=-1, ndmfreqs=-1, likfunc='mark3', threshold=1.0):
+            nfmodes=-1, ndmodes=-1, likfunc='mark3', threshold=1.0):
         if compression == 'average':
             if likfunc[:5] != 'mark4':
                 (self.avetoas, self.U) = dailyaveragequantities(self.toas)
@@ -1387,7 +1774,7 @@ class ptaPulsar(object):
             Ftot = np.zeros((len(self.toas), 0))
 
             # Decide on the (dm)frequencies to include
-            if nfreqs == -1:
+            if nfmodes == -1:
                 # Include all, and only all, frequency modes
                 #Ftot = np.append(Ftot, self.Fmat, axis=1)
 
@@ -1395,19 +1782,19 @@ class ptaPulsar(object):
                 l = self.Fmat.shape[1]
                 Vmat, svec, Vhsvd = sl.svd(self.Fmat)
                 Ftot = np.append(Ftot, Vmat[:, :l].copy(), axis=1)
-            elif nfreqs == 0:
+            elif nfmodes == 0:
                 # Why would anyone do this?
                 pass
             else:
-                # Should we check whether nfreqs is not too large?
-                #Ftot = np.append(Ftot, self.Fmat[:, :nfreqs], axis=1)
+                # Should we check whether nfmodes is not too large?
+                #Ftot = np.append(Ftot, self.Fmat[:, :nfmodes], axis=1)
 
                 # Produce an orthogonal basis for the frequencies
-                l = nfreqs
+                l = nfmodes
                 Vmat, svec, Vhsvd = sl.svd(self.Fmat)
                 Ftot = np.append(Ftot, Vmat[:, :l].copy(), axis=1)
 
-            if ndmfreqs == -1:
+            if ndmodes == -1:
                 # Include all, and only all, frequency modes
                 # Ftot = np.append(Ftot, self.DF, axis=1)
 
@@ -1415,12 +1802,12 @@ class ptaPulsar(object):
                 l = self.DF.shape[1]
                 Vmat, svec, Vhsvd = sl.svd(self.DF)
                 Ftot = np.append(Ftot, Vmat[:, :l].copy(), axis=1)
-            elif ndmfreqs == 0:
+            elif ndmodes == 0:
                 # Do not include DM in the compression
                 pass
             else:
-                # Should we check whether nfreqs is not too large?
-                # Ftot = np.append(Ftot, self.DF[:, :ndmfreqs], axis=1)
+                # Should we check whether nfmodes is not too large?
+                # Ftot = np.append(Ftot, self.DF[:, :ndmodes], axis=1)
 
                 # Produce an orthogonal basis for the frequencies
                 l = self.DF.shape[1]
@@ -1462,243 +1849,349 @@ class ptaPulsar(object):
             Vmat, s, Vh = sl.svd(Ho)
             self.Homat = Vmat[:, :Ho.shape[1]]
             self.Hocmat = Vmat[:, Ho.shape[1]:]
-        elif compression == 'None':
+        elif compression == 'None' or compression is None:
             self.Hmat = self.Gmat
             self.Hcmat = self.Gcmat
             self.Homat = np.zeros((self.Hmat.shape[0], 0))
+            self.Hocmat = np.zeros((self.Hmat.shape[0], 0))
         else:
             raise IOError, "Invalid compression argument"
 
 
     """
-    Create auxiliary quantities for the different likelihood functions, like GtF
-    etc.
+    For every pulsar, quite a few Auxiliary quantities (like GtF etc.) are
+    necessary for the evaluation of various likelihood functions. This function
+    calculates these quantities, and optionally writes them to the HDF5 file for
+    quick use later.
+
+    @param t2df:            The DataFile we will write things to
+    @param Tmax:            The full duration of the experiment
+    @param nfreqs:          The number of noise frequencies we require for this
+                            pulsar
+    @param ndmfreqs:        The number of DM frequencies we require for this pulsar
+    @param twoComponent:    Whether or not we do the two-component noise
+                            acceleration
+    @param nSingleFreqs:    The number of single floating noise frequencies
+    @param nSingleDMFreqs:  The number of single floating DM frequencies
+    @param compression:     Whether we use compression (None/frequencies/average)
+    @param likfunc:         Which likelihood function to do it for (all/markx/..)
+    @param write:           Which data to write to the HDF5 file ('no' for no
+                            writing, 'likfunc' for the current likfunc, 'all'
+                            for all quantities
+
     """
-    def createAuxiliaries(self, Tmax, nfreqs, ndmfreqs, twoComponent=False, \
-            nSingleFreqs=0, nSingleDMFreqs=0, compression='None', \
-            likfunc='mark3'):
+    def createPulsarAuxiliaries(self, t2df, Tmax, nfreqs, ndmfreqs, \
+            twoComponent=False, nSingleFreqs=0, nSingleDMFreqs=0, \
+            compression='None', likfunc='mark3', write='likfunc'):
+        # For creating the auxiliaries it does not really matter: we are now
+        # creating all quantities per default
+        # TODO: set this parameter in another place?
+        if twoComponent:
+            self.twoComponentNoise = True
 
-        if likfunc == 'mark1':
-            ndmf = 0
-            nf = 0
+        # Before writing anything to file, we need to know right away how many
+        # fixed and floating frequencies this model contains.
+        nf = 0 ; ndmf = 0 ; nsf = nSingleFreqs ; nsdmf = nSingleDMFreqs
+        if nfreqs is not None and nfreqs != 0:
+            nf = nfreqs
+        if ndmfreqs is not None and ndmfreqs != 0:
+            ndmf = ndmfreqs
 
-            if nfreqs is not None:
-                (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
-                nf = -1
-            else:
-                self.Fmat = np.zeros((len(self.toas), 0))
-                self.Ffreqs = np.zeros(0)
+        # Write these numbers to the HDF5 file
+        if write != 'no':
+            # Check whether the frequencies already exist in the HDF5-file. If
+            # so, compare with what we have here. If they differ, then print out
+            # a warning.
+            # TODO: instead of a warning, and overwriting, something more
+            #       conservative should be done
+            modelFrequencies = np.array([nf, ndmf, nsf, nsdmf])
+            try:
+                file_modelFreqs = np.array(t2df.getData(self.name, 'pic_modelFrequencies'))
+                if not np.all(modelFrequencies == file_modelFreqs):
+                    print "WARNING: model frequencies already present in {0} differ from the current".format(t2df.filename)
+                    print "         model. Overwriting..."
+            except IOError:
+                pass
 
-            if ndmfreqs is not None:
-                (self.Fdmmat, self.Fdmfreqs) = fourierdesignmatrix(self.toas, 2*ndmfreqs, Tmax)
-                self.Dmat = np.diag(DMk / (self.freqs**2))
-                self.DF = np.dot(self.Dmat, self.Fdmmat)
-                ndmf = -1
-            else:
-                self.Dmat = np.zeros((len(self.freqs), 0))
-                self.DF = np.zeros((len(self.freqs), 0))
-                self.Fdmfreqs = np.zeros(0)
+            t2df.addData(self.name, 'pic_modelFrequencies', modelFrequencies)
+            t2df.addData(self.name, 'pic_Tmax', [Tmax])
 
-            self.constructCompressionMatrix(compression, nfreqs=nf, ndmfreqs=ndmf)
+        # Create the Fourier design matrices for noise
+        if nf > 0:
+            (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nf, Tmax)
+        else:
+            self.Fmat = np.zeros((len(self.toas), 0))
+            self.Ffreqs = np.zeros(0)
 
+        # Create the Fourier design matrices for DM variations
+        if ndmf > 0:
+            (self.Fdmmat, self.Fdmfreqs) = fourierdesignmatrix(self.toas, 2*ndmf, Tmax)
+            self.Dmat = np.diag(pic_DMk / (self.freqs**2))
+            #self.DF = np.dot(self.Dmat, self.Fdmmat)
+            self.DF = (np.diag(self.Dmat) * self.Fdmmat.T).T
+        else:
+            self.Fdmmat = np.zeros((len(self.freqs), 0))
+            self.Fdmfreqs = np.zeros(0)
+            self.Dmat = np.diag(pic_DMk / (self.freqs**2))
+            self.DF = np.zeros((len(self.freqs), 0))
+
+        # Create the dailay averaged residuals
+        (self.avetoas, self.U) = dailyaveragequantities(self.toas)
+
+        # Write these quantities to disk
+        if write != 'no':
+            t2df.addData(self.name, 'pic_Fmat', self.Fmat)
+            t2df.addData(self.name, 'pic_Ffreqs', self.Ffreqs)
+            t2df.addData(self.name, 'pic_Fdmmat', self.Fdmmat)
+            t2df.addData(self.name, 'pic_Fdmfreqs', self.Fdmfreqs)
+            t2df.addData(self.name, 'pic_Dmat', self.Dmat)
+            t2df.addData(self.name, 'pic_DF', self.DF)
+
+            t2df.addData(self.name, 'pic_avetoas', self.avetoas)
+            t2df.addData(self.name, 'pic_U', self.U)
+
+        # Next we'll need the G-matrices, and the compression matrices.
+        U, s, Vh = sl.svd(self.Mmat)
+        self.Gmat = U[:, self.Mmat.shape[1]:].copy()
+        self.Gcmat = U[:, :self.Mmat.shape[1]].copy()
+        self.constructCompressionMatrix(compression, nfmodes=2*nf,
+                ndmodes=2*ndmf, threshold=1.0)
+        if write != 'no':
+            t2df.addData(self.name, 'pic_Gmat', self.Gmat)
+            t2df.addData(self.name, 'pic_Gcmat', self.Gcmat)
+            t2df.addData(self.name, 'pic_Hmat', self.Hmat)
+            t2df.addData(self.name, 'pic_Hcmat', self.Hcmat)
+            t2df.addData(self.name, 'pic_Homat', self.Homat)
+            t2df.addData(self.name, 'pic_Hocmat', self.Hocmat)
+
+
+
+        # Now, write such quantities on a per-likelihood basis
+        if likfunc == 'mark1' or write == 'all':
             self.Gr = np.dot(self.Hmat.T, self.residuals)
             self.GGr = np.dot(self.Hmat, self.Gr)
             self.GtF = np.dot(self.Hmat.T, self.Fmat)
-            #self.GGtF = np.dot(self.Hmat, self.GtF)
             self.GtD = np.dot(self.Hmat.T, self.DF)
 
-            if twoComponent:
-                self.twoComponentNoise = True
+            # For two-component noise
+            # Diagonalise GtEfG (HtEfH)
+            GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
+            self.Wvec, self.Amat = sl.eigh(GtNeG)
+            self.AGr = np.dot(self.Amat.T, self.Gr)
+            self.AGF = np.dot(self.Amat.T, self.GtF)
 
-                # Diagonalise GtEfG (HtEfH)
-                GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
-                self.Wvec, self.Amat = sl.eigh(GtNeG)
+            # Diagonalise HotEfHo
+            if self.Homat.shape[1] > 0:
+                HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                self.Wovec, self.Aomat = sl.eigh(HotNeHo)
 
-                self.AGr = np.dot(self.Amat.T, self.Gr)
-                self.AGF = np.dot(self.Amat.T, self.GtF)
-                #self.AG = np.dot(self.Amat.T, self.Hmat.T)
+                Hor = np.dot(self.Homat.T, self.residuals)
+                HotF = np.dot(self.Homat.T, self.Fmat)
+                self.AoGr = np.dot(self.Aomat.T, Hor)
+                self.AoGF = np.dot(self.Aomat.T, HotF)
+            else:
+                self.Wovec = np.zeros(0)
+                self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                self.AoGF = np.zeros((0, self.GtF.shape[1]))
 
-                # Diagonalise HotEfHo
-                if self.Homat.shape[1] > 0:
-                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
-                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+            if write != 'none':
+                # Write all these quantities to the HDF5 file
+                t2df.addData(self.name, 'pic_Gr', self.Gr)
+                t2df.addData(self.name, 'pic_GGr', self.GGr)
+                t2df.addData(self.name, 'pic_GtF', self.GtF)
+                t2df.addData(self.name, 'pic_GtD', self.GtD)
+                t2df.addData(self.name, 'pic_Wvec', self.Wvec)
+                t2df.addData(self.name, 'pic_Amat', self.Amat)
+                t2df.addData(self.name, 'pic_AGr', self.AGr)
+                t2df.addData(self.name, 'pic_AGF', self.AGF)
+                t2df.addData(self.name, 'pic_Wovec', self.Wovec)
+                t2df.addData(self.name, 'pic_Aomat', self.Aomat)
+                t2df.addData(self.name, 'pic_AoGr', self.AoGr)
+                t2df.addData(self.name, 'pic_AoGF', self.AoGF)
 
-                    Hor = np.dot(self.Homat.T, self.residuals)
-                    HotF = np.dot(self.Homat.T, self.Fmat)
-                    self.AoGr = np.dot(self.Aomat.T, Hor)
-                    self.AoGF = np.dot(self.Aomat.T, HotF)
-                else:
-                    self.Wovec = np.zeros(0)
-                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
-                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
-                    self.AoGF = np.zeros((0, self.GtF.shape[1]))
-
-
-        if likfunc == 'mark2':
+        if likfunc == 'mark2' or write == 'all':
             self.Gr = np.dot(self.Gmat.T, self.residuals)
             self.GGr = np.dot(self.Gmat, self.Gr)
-            self.constructCompressionMatrix(compression)
 
-            if twoComponent:
-                self.twoComponentNoise = True
+            # For two-component noise
+            # Diagonalise GtEfG
+            GtNeG = np.dot(self.Gmat.T, ((self.toaerrs**2) * self.Gmat.T).T)
+            self.Wvec, self.Amat = sl.eigh(GtNeG)
+            self.AGr = np.dot(self.Amat.T, self.Gr)
 
-                # Diagonalise GtEfG
-                GtNeG = np.dot(self.Gmat.T, ((self.toaerrs**2) * self.Gmat.T).T)
-                self.Wvec, self.Amat = sl.eigh(GtNeG)
+            # Diagonalise HotEfHo
+            if self.Homat.shape[1] > 0:
+                HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                self.Wovec, self.Aomat = sl.eigh(HotNeHo)
 
-                self.AGr = np.dot(self.Amat.T, self.Gr)
-                #self.AG = np.dot(self.Amat.T, self.Gmat.T)
+                self.AoGr = np.dot(self.Aomat.T, self.Gr)
+            else:
+                self.Wovec = np.zeros(0)
+                self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                self.AoGr = np.zeros((0, self.Gr.shape[0]))
 
-                # Diagonalise HotEfHo
-                if self.Homat.shape[1] > 0:
-                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
-                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+            if write != 'none':
+                # Write all these quantities to the HDF5 file
+                t2df.addData(self.name, 'pic_Gr', self.Gr)
+                t2df.addData(self.name, 'pic_GGr', self.GGr)
+                t2df.addData(self.name, 'pic_Wvec', self.Wvec)
+                t2df.addData(self.name, 'pic_Amat', self.Amat)
+                t2df.addData(self.name, 'pic_AGr', self.AGr)
+                t2df.addData(self.name, 'pic_Wovec', self.Wovec)
+                t2df.addData(self.name, 'pic_Aomat', self.Aomat)
+                t2df.addData(self.name, 'pic_AoGr', self.AoGr)
 
-                    self.AoGr = np.dot(self.Aomat.T, self.Gr)
-                else:
-                    self.Wovec = np.zeros(0)
-                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
-                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
-
-        if likfunc == 'mark3' or likfunc == 'mark3fa':
-            (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
-            self.constructCompressionMatrix(compression, nfreqs=-1, ndmfreqs=0)
-
+        if likfunc == 'mark3' or likfunc == 'mark3fa' or write == 'all':
             self.Gr = np.dot(self.Hmat.T, self.residuals)
             self.GGr = np.dot(self.Hmat, self.Gr)
             self.GtF = np.dot(self.Hmat.T, self.Fmat)
-            #self.GGtF = np.dot(self.Hmat, self.GtF)
 
-            if twoComponent:
-                self.twoComponentNoise = True
+            # For two-component noise
+            # Diagonalise GtEfG
+            GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
+            self.Wvec, self.Amat = sl.eigh(GtNeG)
 
-                # Diagonalise GtEfG
-                GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
-                self.Wvec, self.Amat = sl.eigh(GtNeG)
+            self.AGr = np.dot(self.Amat.T, self.Gr)
+            self.AGF = np.dot(self.Amat.T, self.GtF)
 
-                self.AGr = np.dot(self.Amat.T, self.Gr)
-                self.AGF = np.dot(self.Amat.T, self.GtF)
-                #self.AG = np.dot(self.Amat.T, self.Hmat.T)
+            # Diagonalise HotEfHo
+            if self.Homat.shape[1] > 0:
+                HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                self.Wovec, self.Aomat = sl.eigh(HotNeHo)
 
-                # Diagonalise HotEfHo
-                if self.Homat.shape[1] > 0:
-                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
-                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+                Hor = np.dot(self.Homat.T, self.residuals)
+                HotF = np.dot(self.Homat.T, self.Fmat)
+                self.AoGr = np.dot(self.Aomat.T, Hor)
+                self.AoGF = np.dot(self.Aomat.T, HotF)
+            else:
+                self.Wovec = np.zeros(0)
+                self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                self.AoGF = np.zeros((0, self.GtF.shape[1]))
 
-                    Hor = np.dot(self.Homat.T, self.residuals)
-                    HotF = np.dot(self.Homat.T, self.Fmat)
-                    self.AoGr = np.dot(self.Aomat.T, Hor)
-                    self.AoGF = np.dot(self.Aomat.T, HotF)
-                else:
-                    self.Wovec = np.zeros(0)
-                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
-                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
-                    self.AoGF = np.zeros((0, self.GtF.shape[1]))
+            if write != 'none':
+                # Write all these quantities to the HDF5 file
+                t2df.addData(self.name, 'pic_Gr', self.Gr)
+                t2df.addData(self.name, 'pic_GGr', self.GGr)
+                t2df.addData(self.name, 'pic_GtF', self.GtF)
+                t2df.addData(self.name, 'pic_Wvec', self.Wvec)
+                t2df.addData(self.name, 'pic_Amat', self.Amat)
+                t2df.addData(self.name, 'pic_AGr', self.AGr)
+                t2df.addData(self.name, 'pic_AGF', self.AGF)
+                t2df.addData(self.name, 'pic_Wovec', self.Wovec)
+                t2df.addData(self.name, 'pic_Aomat', self.Aomat)
+                t2df.addData(self.name, 'pic_AoGr', self.AoGr)
+                t2df.addData(self.name, 'pic_AoGF', self.AoGF)
 
-
-        if likfunc == 'mark4':
-            (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
-            (self.avetoas, self.U) = dailyaveragequantities(self.toas)
-
-            self.constructCompressionMatrix(compression, nfreqs=-1, ndmfreqs=0, likfunc=likfunc)
-
+        if likfunc == 'mark4' or write == 'all':
             self.Gr = np.dot(self.Hmat.T, self.residuals)
             self.GGr = np.dot(self.Hmat, self.Gr)
             self.GtF = np.dot(self.Hmat.T, self.Fmat)
-            #self.GGtF = np.dot(self.Hmat, self.GtF)
             GtU = np.dot(self.Hmat.T, self.U)
 
             self.UtF = np.dot(self.U.T, self.Fmat)
-            self.Qamp = 1.0
 
-            if twoComponent:
-                self.twoComponentNoise = True
+            # For two-component noise
+            # Diagonalise GtEfG
+            GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
+            self.Wvec, self.Amat = sl.eigh(GtNeG)
 
-                # Diagonalise GtEfG
-                GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
-                self.Wvec, self.Amat = sl.eigh(GtNeG)
+            self.AGr = np.dot(self.Amat.T, self.Gr)
+            self.AGU = np.dot(self.Amat.T, GtU)
 
-                self.AGr = np.dot(self.Amat.T, self.Gr)
-                self.AGU = np.dot(self.Amat.T, GtU)
+            # Diagonalise HotEfHo
+            if self.Homat.shape[1] > 0:
+                HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                self.Wovec, self.Aomat = sl.eigh(HotNeHo)
 
-                # Diagonalise HotEfHo
-                if self.Homat.shape[1] > 0:
-                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
-                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+                Hor = np.dot(self.Homat.T, self.residuals)
+                HotU = np.dot(self.Homat.T, self.U)
+                self.AoGr = np.dot(self.Aomat.T, Hor)
+                self.AoGU = np.dot(self.Aomat.T, HotU)
+            else:
+                self.Wovec = np.zeros(0)
+                self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                self.AoGU = np.zeros((0, GtU.shape[1]))
 
-                    Hor = np.dot(self.Homat.T, self.residuals)
-                    HotU = np.dot(self.Homat.T, self.U)
-                    self.AoGr = np.dot(self.Aomat.T, Hor)
-                    self.AoGU = np.dot(self.Aomat.T, HotU)
-                else:
-                    self.Wovec = np.zeros(0)
-                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
-                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
-                    self.AoGU = np.zeros((0, GtU.shape[1]))
+            if write != 'none':
+                # Write all these quantities to the HDF5 file
+                t2df.addData(self.name, 'pic_Gr', self.Gr)
+                t2df.addData(self.name, 'pic_GGr', self.GGr)
+                t2df.addData(self.name, 'pic_GtF', self.GtF)
+                t2df.addData(self.name, 'pic_UtF', self.UtF)
+                t2df.addData(self.name, 'pic_Wvec', self.Wvec)
+                t2df.addData(self.name, 'pic_Amat', self.Amat)
+                t2df.addData(self.name, 'pic_AGr', self.AGr)
+                t2df.addData(self.name, 'pic_AGU', self.AGU)
+                t2df.addData(self.name, 'pic_Wovec', self.Wovec)
+                t2df.addData(self.name, 'pic_Aomat', self.Aomat)
+                t2df.addData(self.name, 'pic_AoGr', self.AoGr)
+                t2df.addData(self.name, 'pic_AoGU', self.AoGU)
 
-        if likfunc == 'mark4ln':
-            (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
-            (self.avetoas, self.U) = dailyaveragequantities(self.toas)
 
-            self.constructCompressionMatrix(compression, nfreqs=-1, ndmfreqs=0, likfunc=likfunc)
-
+        if likfunc == 'mark4ln' or write == 'all':
             self.Gr = np.dot(self.Hmat.T, self.residuals)
             self.GGr = np.dot(self.Hmat, self.Gr)
             self.GtF = np.dot(self.Hmat.T, self.Fmat)
-            #self.GGtF = np.dot(self.Hmat, self.GtF)
             GtU = np.dot(self.Hmat.T, self.U)
 
             self.UtF = np.dot(self.U.T, self.Fmat)
-            self.Qamp = 1.0
 
             # Initialise the single frequency with a frequency of 10 / yr
             self.frequencyLinesAdded = nSingleFreqs
-            spd = 24 * 3600.0
-            spy = 365.25 * spd
-            deltaf = 2.3 / spy      # Just some random number
+            deltaf = 2.3 / pic_spy      # Just some random number
             sfreqs = np.linspace(deltaf, 5.0*deltaf, nSingleFreqs)
             self.SFmat = singleFreqFourierModes(self.toas, np.log10(sfreqs))
             self.FFmat = np.append(self.Fmat, self.SFmat, axis=1)
             self.SFfreqs = np.log10(np.array([sfreqs, sfreqs]).T.flatten())
-            GtFF = np.dot(self.Hmat.T, self.FFmat)
-            #self.GGtFF = np.dot(self.Hmat, GtFF)
 
             self.UtFF = np.dot(self.U.T, self.FFmat)
 
-            if twoComponent:
-                self.twoComponentNoise = True
+            # For two-component noise
+            # Diagonalise GtEfG
+            GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
+            self.Wvec, self.Amat = sl.eigh(GtNeG)
 
-                # Diagonalise GtEfG
-                GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
-                self.Wvec, self.Amat = sl.eigh(GtNeG)
+            self.AGr = np.dot(self.Amat.T, self.Gr)
+            self.AGU = np.dot(self.Amat.T, GtU)
 
-                self.AGr = np.dot(self.Amat.T, self.Gr)
-                self.AGU = np.dot(self.Amat.T, GtU)
+            # Diagonalise HotEfHo
+            if self.Homat.shape[1] > 0:
+                HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                self.Wovec, self.Aomat = sl.eigh(HotNeHo)
 
-                # Diagonalise HotEfHo
-                if self.Homat.shape[1] > 0:
-                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
-                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+                Hor = np.dot(self.Homat.T, self.residuals)
+                HotU = np.dot(self.Homat.T, self.U)
+                self.AoGr = np.dot(self.Aomat.T, Hor)
+                self.AoGU = np.dot(self.Aomat.T, HotU)
+            else:
+                self.Wovec = np.zeros(0)
+                self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                self.AoGU = np.zeros((0, GtU.shape[1]))
 
-                    Hor = np.dot(self.Homat.T, self.residuals)
-                    HotU = np.dot(self.Homat.T, self.U)
-                    self.AoGr = np.dot(self.Aomat.T, Hor)
-                    self.AoGU = np.dot(self.Aomat.T, HotU)
-                else:
-                    self.Wovec = np.zeros(0)
-                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
-                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
-                    self.AoGU = np.zeros((0, GtU.shape[1]))
+            if write != 'none':
+                # Write all these quantities to the HDF5 file
+                t2df.addData(self.name, 'pic_Gr', self.Gr)
+                t2df.addData(self.name, 'pic_GGr', self.GGr)
+                t2df.addData(self.name, 'pic_GtF', self.GtF)
+                t2df.addData(self.name, 'pic_UtF', self.UtF)
+                t2df.addData(self.name, 'pic_SFmat', self.SFmat)
+                t2df.addData(self.name, 'pic_FFmat', self.FFmat)
+                t2df.addData(self.name, 'pic_SFfreqs', self.SFfreqs)
+                t2df.addData(self.name, 'pic_UtFF', self.UtFF)
+                t2df.addData(self.name, 'pic_Wvec', self.Wvec)
+                t2df.addData(self.name, 'pic_Amat', self.Amat)
+                t2df.addData(self.name, 'pic_AGr', self.AGr)
+                t2df.addData(self.name, 'pic_AGU', self.AGU)
+                t2df.addData(self.name, 'pic_Wovec', self.Wovec)
+                t2df.addData(self.name, 'pic_Aomat', self.Aomat)
+                t2df.addData(self.name, 'pic_AoGr', self.AoGr)
+                t2df.addData(self.name, 'pic_AoGU', self.AoGU)
 
-
-        if likfunc == 'mark6' or likfunc == 'mark6fa':
-            (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
-            (self.Fdmmat, self.Fdmfreqs) = fourierdesignmatrix(self.toas, 2*ndmfreqs, Tmax)
-            self.Dmat = np.diag(DMk / (self.freqs**2))
-            self.DF = np.dot(self.Dmat, self.Fdmmat)
-
-            self.constructCompressionMatrix(compression, nfreqs=-1, ndmfreqs=-1)
-
+        if likfunc == 'mark6' or likfunc == 'mark6fa' or write == 'all':
             # Red noise
             self.Gr = np.dot(self.Hmat.T, self.residuals)
             self.GGr = np.dot(self.Hmat, self.Gr)
@@ -1714,87 +2207,104 @@ class ptaPulsar(object):
             GtE = np.dot(self.Hmat.T, self.Emat)
             self.GGtE = np.dot(self.Hmat, GtE)
 
-            if twoComponent:
-                self.twoComponentNoise = True
+            # For two-component noise
+            # Diagonalise GtEfG
+            GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
+            self.Wvec, self.Amat = sl.eigh(GtNeG)
 
-                # Diagonalise GtEfG
-                GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
-                self.Wvec, self.Amat = sl.eigh(GtNeG)
+            self.AGr = np.dot(self.Amat.T, self.Gr)
+            self.AGF = np.dot(self.Amat.T, self.GtF)
+            self.AGD = np.dot(self.Amat.T, GtD)
+            self.AGE = np.dot(self.Amat.T, GtE)
 
-                self.AGr = np.dot(self.Amat.T, self.Gr)
-                self.AGF = np.dot(self.Amat.T, self.GtF)
-                self.AGD = np.dot(self.Amat.T, GtD)
-                self.AGE = np.dot(self.Amat.T, GtE)
+            # Diagonalise HotEfHo
+            if self.Homat.shape[1] > 0:
+                HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                self.Wovec, self.Aomat = sl.eigh(HotNeHo)
 
-                # Diagonalise HotEfHo
-                if self.Homat.shape[1] > 0:
-                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
-                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+                Hor = np.dot(self.Homat.T, self.residuals)
+                HotF = np.dot(self.Homat.T, self.Fmat)
+                HotD = np.dot(self.Homat.T, self.DF)
+                HotE = np.dot(self.Homat.T, self.Emat)
+                self.AoGr = np.dot(self.Aomat.T, Hor)
+                self.AoGF = np.dot(self.Aomat.T, HotF)
+                self.AoGD = np.dot(self.Aomat.T, HotD)
+                self.AoGE = np.dot(self.Aomat.T, HotE)
+            else:
+                self.Wovec = np.zeros(0)
+                self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                self.AoGF = np.zeros((0, self.GtF.shape[1]))
+                self.AoGD = np.zeros((0, GtD.shape[1]))
+                self.AoGE = np.zeros((0, GtE.shape[1]))
 
-                    Hor = np.dot(self.Homat.T, self.residuals)
-                    HotF = np.dot(self.Homat.T, self.Fmat)
-                    HotD = np.dot(self.Homat.T, self.DF)
-                    HotE = np.dot(self.Homat.T, self.Emat)
-                    self.AoGr = np.dot(self.Aomat.T, Hor)
-                    self.AoGF = np.dot(self.Aomat.T, HotF)
-                    self.AoGD = np.dot(self.Aomat.T, HotD)
-                    self.AoGE = np.dot(self.Aomat.T, HotE)
-                else:
-                    self.Wovec = np.zeros(0)
-                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
-                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
-                    self.AoGF = np.zeros((0, self.GtF.shape[1]))
-                    self.AoGD = np.zeros((0, GtD.shape[1]))
-                    self.AoGE = np.zeros((0, GtE.shape[1]))
+            if write != 'none':
+                # Write all these quantities to the HDF5 file
+                t2df.addData(self.name, 'pic_Gr', self.Gr)
+                t2df.addData(self.name, 'pic_GGr', self.GGr)
+                t2df.addData(self.name, 'pic_GtF', self.GtF)
+                t2df.addData(self.name, 'pic_GGtD', self.GGtD)
+                t2df.addData(self.name, 'pic_Emat', self.Emat)
+                t2df.addData(self.name, 'pic_GGtE', self.GGtE)
+                t2df.addData(self.name, 'pic_Wvec', self.Wvec)
+                t2df.addData(self.name, 'pic_Amat', self.Amat)
+                t2df.addData(self.name, 'pic_AGr', self.AGr)
+                t2df.addData(self.name, 'pic_AGF', self.AGF)
+                t2df.addData(self.name, 'pic_AGD', self.AGD)
+                t2df.addData(self.name, 'pic_AGE', self.AGE)
+                t2df.addData(self.name, 'pic_Wovec', self.Wovec)
+                t2df.addData(self.name, 'pic_Aomat', self.Aomat)
+                t2df.addData(self.name, 'pic_AoGr', self.AoGr)
+                t2df.addData(self.name, 'pic_AoGF', self.AoGF)
+                t2df.addData(self.name, 'pic_AoGD', self.AoGD)
+                t2df.addData(self.name, 'pic_AoGE', self.AoGE)
 
-        if likfunc == 'mark7':
-            (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
-
-            self.constructCompressionMatrix(compression, nfreqs=-1, ndmfreqs=0)
-
+        if likfunc == 'mark7' or write == 'all':
             self.Gr = np.dot(self.Hmat.T, self.residuals)
             self.GGr = np.dot(self.Hmat, self.Gr)
             self.GtF = np.dot(self.Hmat.T, self.Fmat)
-            #self.GGtF = np.dot(self.Hmat, self.GtF)
 
-            if twoComponent:
-                self.twoComponentNoise = True
+            # For two-component noise
+            # Diagonalise GtEfG
+            GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
+            self.Wvec, self.Amat = sl.eigh(GtNeG)
 
-                # Diagonalise GtEfG
-                GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
-                self.Wvec, self.Amat = sl.eigh(GtNeG)
+            self.AGr = np.dot(self.Amat.T, self.Gr)
+            self.AGF = np.dot(self.Amat.T, self.GtF)
 
-                self.AGr = np.dot(self.Amat.T, self.Gr)
-                self.AGF = np.dot(self.Amat.T, self.GtF)
+            # Diagonalise HotEfHo
+            if self.Homat.shape[1] > 0:
+                HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                self.Wovec, self.Aomat = sl.eigh(HotNeHo)
 
-                # Diagonalise HotEfHo
-                if self.Homat.shape[1] > 0:
-                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
-                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+                Hor = np.dot(self.Homat.T, self.residuals)
+                HotF = np.dot(self.Homat.T, self.Fmat)
+                self.AoGr = np.dot(self.Aomat.T, Hor)
+                self.AoGF = np.dot(self.Aomat.T, HotF)
+            else:
+                self.Wovec = np.zeros(0)
+                self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                self.AoGF = np.zeros((0, self.GtF.shape[1]))
 
-                    Hor = np.dot(self.Homat.T, self.residuals)
-                    HotF = np.dot(self.Homat.T, self.Fmat)
-                    self.AoGr = np.dot(self.Aomat.T, Hor)
-                    self.AoGF = np.dot(self.Aomat.T, HotF)
-                else:
-                    self.Wovec = np.zeros(0)
-                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
-                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
-                    self.AoGF = np.zeros((0, self.GtF.shape[1]))
+            if write != 'none':
+                # Write all these quantities to the HDF5 file
+                t2df.addData(self.name, 'pic_Gr', self.Gr)
+                t2df.addData(self.name, 'pic_GGr', self.GGr)
+                t2df.addData(self.name, 'pic_GtF', self.GtF)
+                t2df.addData(self.name, 'pic_Wvec', self.Wvec)
+                t2df.addData(self.name, 'pic_Amat', self.Amat)
+                t2df.addData(self.name, 'pic_AGr', self.AGr)
+                t2df.addData(self.name, 'pic_AGF', self.AGF)
+                t2df.addData(self.name, 'pic_Wovec', self.Wovec)
+                t2df.addData(self.name, 'pic_Aomat', self.Aomat)
+                t2df.addData(self.name, 'pic_AoGr', self.AoGr)
+                t2df.addData(self.name, 'pic_AoGF', self.AoGF)
 
-
-        if likfunc == 'mark8':
-            (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
-            (self.Fdmmat, self.Fdmfreqs) = fourierdesignmatrix(self.toas, 2*ndmfreqs, Tmax)
-            self.Dmat = np.diag(DMk / (self.freqs**2))
-            self.DF = np.dot(self.Dmat, self.Fdmmat)
-
-            self.constructCompressionMatrix(compression, nfreqs=-1, ndmfreqs=-1)
-
+        if likfunc == 'mark8' or write == 'all':
             self.Gr = np.dot(self.Hmat.T, self.residuals)
             self.GGr = np.dot(self.Hmat, self.Gr)
             self.GtF = np.dot(self.Hmat.T, self.Fmat)
-            #self.GGtF = np.dot(self.Hmat, self.GtF)
 
             # For the DM stuff
             GtD = np.dot(self.Hmat.T, self.DF)
@@ -1805,104 +2315,122 @@ class ptaPulsar(object):
             GtE = np.dot(self.Hmat.T, self.Emat)
             self.GGtE = np.dot(self.Hmat, GtE)
 
-            # For a two-component noise model, we need some more stuff done
-            if twoComponent:
-                self.twoComponentNoise = True
+            # For two-component noise
+            # Diagonalise GtEfG
+            GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
+            self.Wvec, self.Amat = sl.eigh(GtNeG)
 
-                # Diagonalise GtEfG
-                GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
-                self.Wvec, self.Amat = sl.eigh(GtNeG)
+            self.AGr = np.dot(self.Amat.T, self.Gr)
+            self.AGF = np.dot(self.Amat.T, self.GtF)
+            self.AGD = np.dot(self.Amat.T, GtD)
+            self.AGE = np.dot(self.Amat.T, GtE)
 
-                self.AGr = np.dot(self.Amat.T, self.Gr)
-                self.AGF = np.dot(self.Amat.T, self.GtF)
-                self.AGD = np.dot(self.Amat.T, GtD)
-                self.AGE = np.dot(self.Amat.T, GtE)
+            # Diagonalise HotEfHo
+            if self.Homat.shape[1] > 0:
+                HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                self.Wovec, self.Aomat = sl.eigh(HotNeHo)
 
-                # Diagonalise HotEfHo
-                if self.Homat.shape[1] > 0:
-                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
-                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+                Hor = np.dot(self.Homat.T, self.residuals)
+                HotF = np.dot(self.Homat.T, self.Fmat)
+                HotD = np.dot(self.Homat.T, self.DF)
+                HotE = np.dot(self.Homat.T, self.Emat)
+                self.AoGr = np.dot(self.Aomat.T, Hor)
+                self.AoGF = np.dot(self.Aomat.T, HotF)
+                self.AoGD = np.dot(self.Aomat.T, HotD)
+                self.AoGE = np.dot(self.Aomat.T, HotE)
+            else:
+                self.Wovec = np.zeros(0)
+                self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                self.AoGF = np.zeros((0, self.GtF.shape[1]))
+                self.AoGD = np.zeros((0, GtD.shape[1]))
+                self.AoGE = np.zeros((0, GtE.shape[1]))
 
-                    Hor = np.dot(self.Homat.T, self.residuals)
-                    HotF = np.dot(self.Homat.T, self.Fmat)
-                    HotD = np.dot(self.Homat.T, self.DF)
-                    HotE = np.dot(self.Homat.T, self.Emat)
-                    self.AoGr = np.dot(self.Aomat.T, Hor)
-                    self.AoGF = np.dot(self.Aomat.T, HotF)
-                    self.AoGD = np.dot(self.Aomat.T, HotD)
-                    self.AoGE = np.dot(self.Aomat.T, HotE)
-                else:
-                    self.Wovec = np.zeros(0)
-                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
-                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
-                    self.AoGF = np.zeros((0, self.GtF.shape[1]))
-                    self.AoGD = np.zeros((0, GtD.shape[1]))
-                    self.AoGE = np.zeros((0, GtE.shape[1]))
+            if write != 'none':
+                # Write all these quantities to the HDF5 file
+                t2df.addData(self.name, 'pic_Gr', self.Gr)
+                t2df.addData(self.name, 'pic_GGr', self.GGr)
+                t2df.addData(self.name, 'pic_GtF', self.GtF)
+                t2df.addData(self.name, 'pic_GGtD', self.GGtD)
+                t2df.addData(self.name, 'pic_Emat', self.Emat)
+                t2df.addData(self.name, 'pic_GGtE', self.GGtE)
+                t2df.addData(self.name, 'pic_Wvec', self.Wvec)
+                t2df.addData(self.name, 'pic_Amat', self.Amat)
+                t2df.addData(self.name, 'pic_AGr', self.AGr)
+                t2df.addData(self.name, 'pic_AGF', self.AGF)
+                t2df.addData(self.name, 'pic_AGD', self.AGD)
+                t2df.addData(self.name, 'pic_AGE', self.AGE)
+                t2df.addData(self.name, 'pic_Wovec', self.Wovec)
+                t2df.addData(self.name, 'pic_Aomat', self.Aomat)
+                t2df.addData(self.name, 'pic_AoGr', self.AoGr)
+                t2df.addData(self.name, 'pic_AoGF', self.AoGF)
+                t2df.addData(self.name, 'pic_AoGD', self.AoGD)
+                t2df.addData(self.name, 'pic_AoGE', self.AoGE)
 
-        if likfunc == 'mark9':
-            (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
-
-            self.constructCompressionMatrix(compression, nfreqs=-1, ndmfreqs=0)
-
+        if likfunc == 'mark9' or write == 'all':
             self.Gr = np.dot(self.Hmat.T, self.residuals)
             self.GGr = np.dot(self.Hmat, self.Gr)
             self.GtF = np.dot(self.Hmat.T, self.Fmat)
-            #self.GGtF = np.dot(self.Hmat, self.GtF)
 
             # Initialise the single frequency with a frequency of 10 / yr
             self.frequencyLinesAdded = nSingleFreqs
-            spd = 24 * 3600.0
-            spy = 365.25 * spd
-            deltaf = 2.3 / spy      # Just some random number
+            deltaf = 2.3 / pic_spy      # Just some random number
             sfreqs = np.linspace(deltaf, 5.0*deltaf, nSingleFreqs)
             self.SFmat = singleFreqFourierModes(self.toas, np.log10(sfreqs))
             self.FFmat = np.append(self.Fmat, self.SFmat, axis=1)
             self.SFfreqs = np.log10(np.array([sfreqs, sfreqs]).T.flatten())
             GtFF = np.dot(self.Hmat.T, self.FFmat)
-            #self.GGtFF = np.dot(self.Hmat, GtFF)
 
-            # For a two-component noise model, we need some more stuff done
-            if twoComponent:
-                self.twoComponentNoise = True
+            # For two-component noise model
+            # Diagonalise GtEfG
+            GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
+            self.Wvec, self.Amat = sl.eigh(GtNeG)
 
-                # Diagonalise GtEfG
-                GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
-                self.Wvec, self.Amat = sl.eigh(GtNeG)
+            self.AGr = np.dot(self.Amat.T, self.Gr)
+            self.AGF = np.dot(self.Amat.T, self.GtF)
+            self.AGFF = np.dot(self.Amat.T, GtFF)
 
-                self.AGr = np.dot(self.Amat.T, self.Gr)
-                self.AGF = np.dot(self.Amat.T, self.GtF)
-                self.AGFF = np.dot(self.Amat.T, GtFF)
+            # Diagonalise HotEfHo
+            if self.Homat.shape[1] > 0:
+                HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                self.Wovec, self.Aomat = sl.eigh(HotNeHo)
 
-                # Diagonalise HotEfHo
-                if self.Homat.shape[1] > 0:
-                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
-                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+                Hor = np.dot(self.Homat.T, self.residuals)
+                HotF = np.dot(self.Homat.T, self.Fmat)
+                HotFF = np.dot(self.Homat.T, self.FFmat)
+                self.AoGr = np.dot(self.Aomat.T, Hor)
+                self.AoGF = np.dot(self.Aomat.T, HotF)
+                self.AoGFF = np.dot(self.Aomat.T, HotFF)
+            else:
+                self.Wovec = np.zeros(0)
+                self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                self.AoGF = np.zeros((0, self.GtF.shape[1]))
+                self.AoGFF = np.zeros((0, GtFF.shape[1]))
 
-                    Hor = np.dot(self.Homat.T, self.residuals)
-                    HotF = np.dot(self.Homat.T, self.Fmat)
-                    HotFF = np.dot(self.Homat.T, self.FFmat)
-                    self.AoGr = np.dot(self.Aomat.T, Hor)
-                    self.AoGF = np.dot(self.Aomat.T, HotF)
-                    self.AoGFF = np.dot(self.Aomat.T, HotFF)
-                else:
-                    self.Wovec = np.zeros(0)
-                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
-                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
-                    self.AoGF = np.zeros((0, self.GtF.shape[1]))
-                    self.AoGFF = np.zeros((0, GtFF.shape[1]))
+            if write != 'none':
+                # Write all these quantities to the HDF5 file
+                t2df.addData(self.name, 'pic_Gr', self.Gr)
+                t2df.addData(self.name, 'pic_GGr', self.GGr)
+                t2df.addData(self.name, 'pic_GtF', self.GtF)
+                t2df.addData(self.name, 'pic_SFmat', self.SFmat)
+                t2df.addData(self.name, 'pic_FFmat', self.FFmat)
+                t2df.addData(self.name, 'pic_SFfreqs', self.SFfreqs)
+                t2df.addData(self.name, 'pic_Wvec', self.Wvec)
+                t2df.addData(self.name, 'pic_Amat', self.Amat)
+                t2df.addData(self.name, 'pic_AGr', self.AGr)
+                t2df.addData(self.name, 'pic_AGF', self.AGF)
+                t2df.addData(self.name, 'pic_AGFF', self.AGFF)
+                t2df.addData(self.name, 'pic_Wovec', self.Wovec)
+                t2df.addData(self.name, 'pic_Aomat', self.Aomat)
+                t2df.addData(self.name, 'pic_AoGr', self.AoGr)
+                t2df.addData(self.name, 'pic_AoGF', self.AoGF)
+                t2df.addData(self.name, 'pic_AoGFF', self.AoGFF)
 
-        if likfunc == 'mark10':
-            (self.Fmat, self.Ffreqs) = fourierdesignmatrix(self.toas, 2*nfreqs, Tmax)
-            (self.Fdmmat, self.Fdmfreqs) = fourierdesignmatrix(self.toas, 2*ndmfreqs, Tmax)
-            self.Dmat = np.diag(DMk / (self.freqs**2))
-            self.DF = np.dot(self.Dmat, self.Fdmmat)
-
-            self.constructCompressionMatrix(compression, nfreqs=-1, ndmfreqs=-1)
-
+        if likfunc == 'mark10' or write == 'all':
             self.Gr = np.dot(self.Hmat.T, self.residuals)
             self.GGr = np.dot(self.Hmat, self.Gr)
             self.GtF = np.dot(self.Hmat.T, self.Fmat)
-            #self.GGtF = np.dot(self.Hmat, self.GtF)
 
             # For the DM stuff
             GtD = np.dot(self.Hmat.T, self.DF)
@@ -1916,70 +2444,298 @@ class ptaPulsar(object):
             # Initialise the single frequency with a frequency of 10 / yr
             self.frequencyLinesAdded = nSingleFreqs
             self.dmfrequencyLinesAdded = nSingleDMFreqs
-            spd = 24 * 3600.0
-            spy = 365.25 * spd
-            deltaf = 2.3 / spy      # Just some random number
+            deltaf = 2.3 / pic_spy      # Just some random number
             sfreqs = np.linspace(deltaf, 5.0*deltaf, nSingleFreqs)
             sdmfreqs = np.linspace(deltaf, 5.0*deltaf, nSingleDMFreqs)
             self.SFmat = singleFreqFourierModes(self.toas, np.log10(sfreqs))
             self.SFdmmat = singleFreqFourierModes(self.toas, np.log10(sdmfreqs))
             self.FFmat = np.append(self.Fmat, self.SFmat, axis=1)
-            #self.FFdmmat = np.append(self.Fdmmat, self.SFdmmat, axis=1)
             self.SFfreqs = np.log10(np.array([sfreqs, sfreqs]).T.flatten())
             self.SFdmfreqs = np.log10(np.array([sdmfreqs, sdmfreqs]).T.flatten())
             self.DSF = np.dot(self.Dmat, self.SFdmmat)
             self.DFF = np.append(self.DF, self.DSF, axis=1)
 
             GtFF = np.dot(self.Hmat.T, self.FFmat)
-            #self.GGtFF = np.dot(self.Hmat, GtFF)
 
             self.EEmat = np.append(self.FFmat, self.DFF, axis=1)
             GtEE = np.dot(self.Hmat.T, self.EEmat)
             self.GGtEE = np.dot(self.Hmat, GtEE)
+            
+            # For two-component noise
+            # Diagonalise GtEfG
+            GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
+            self.Wvec, self.Amat = sl.eigh(GtNeG)
 
-            # For a two-component noise model, we need some more stuff done
-            if twoComponent:
-                self.twoComponentNoise = True
+            self.AGr = np.dot(self.Amat.T, self.Gr)
+            self.AGF = np.dot(self.Amat.T, self.GtF)
 
-                # Diagonalise GtEfG
-                GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
-                self.Wvec, self.Amat = sl.eigh(GtNeG)
+            self.AGFF = np.dot(self.Amat.T, GtFF)
+            self.AGD = np.dot(self.Amat.T, GtD)
 
-                self.AGr = np.dot(self.Amat.T, self.Gr)
-                self.AGF = np.dot(self.Amat.T, self.GtF)
+            self.AGE = np.dot(self.Amat.T, GtE)
+            self.AGEE = np.dot(self.Amat.T, GtEE)
 
-                self.AGFF = np.dot(self.Amat.T, GtFF)
-                self.AGD = np.dot(self.Amat.T, GtD)
+            # Diagonalise HotEfHo
+            if self.Homat.shape[1] > 0:
+                HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                self.Wovec, self.Aomat = sl.eigh(HotNeHo)
 
-                self.AGE = np.dot(self.Amat.T, GtE)
-                self.AGEE = np.dot(self.Amat.T, GtEE)
+                Hor = np.dot(self.Homat.T, self.residuals)
+                HotF = np.dot(self.Homat.T, self.Fmat)
+                HotFF = np.dot(self.Homat.T, self.FFmat)
+                HotD = np.dot(self.Homat.T, self.DF)
+                HotE = np.dot(self.Homat.T, self.Emat)
+                HotEE = np.dot(self.Homat.T, self.EEmat)
+                self.AoGr = np.dot(self.Aomat.T, Hor)
+                self.AoGF = np.dot(self.Aomat.T, HotF)
+                self.AoGFF = np.dot(self.Aomat.T, HotFF)
+                self.AoGD = np.dot(self.Aomat.T, HotD)
+                self.AoGE = np.dot(self.Aomat.T, HotE)
+                self.AoGEE = np.dot(self.Aomat.T, HotEE)
+            else:
+                self.Wovec = np.zeros(0)
+                self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                self.AoGF = np.zeros((0, self.GtF.shape[1]))
+                self.AoGFF = np.zeros((0, GtFF.shape[1]))
+                self.AoGD = np.zeros((0, GtD.shape[1]))
+                self.AoGE = np.zeros((0, GtE.shape[1]))
+                self.AoGEE = np.zeros((0, GtEE.shape[1]))
 
-                # Diagonalise HotEfHo
-                if self.Homat.shape[1] > 0:
-                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
-                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+            if write != 'none':
+                # Write all these quantities to the HDF5 file
+                t2df.addData(self.name, 'pic_Gr', self.Gr)
+                t2df.addData(self.name, 'pic_GGr', self.GGr)
+                t2df.addData(self.name, 'pic_GtF', self.GtF)
+                t2df.addData(self.name, 'pic_GGtD', self.GGtD)
+                t2df.addData(self.name, 'pic_Emat', self.Emat)
+                t2df.addData(self.name, 'pic_GGtE', self.GGtE)
+                t2df.addData(self.name, 'pic_SFmat', self.SFmat)
+                t2df.addData(self.name, 'pic_SFdmmat', self.SFdmmat)
+                t2df.addData(self.name, 'pic_FFmat', self.FFmat)
+                t2df.addData(self.name, 'pic_SFfreqs', self.SFfreqs)
+                t2df.addData(self.name, 'pic_DSF', self.DSF)
+                t2df.addData(self.name, 'pic_DFF', self.DFF)
+                t2df.addData(self.name, 'pic_EEmat', self.EEmat)
+                t2df.addData(self.name, 'pic_GGtEE', self.GGtEE)
+                t2df.addData(self.name, 'pic_Wvec', self.Wvec)
+                t2df.addData(self.name, 'pic_Amat', self.Amat)
+                t2df.addData(self.name, 'pic_AGr', self.AGr)
+                t2df.addData(self.name, 'pic_AGF', self.AGF)
+                t2df.addData(self.name, 'pic_AGFF', self.AGFF)
+                t2df.addData(self.name, 'pic_AGD', self.AGD)
+                t2df.addData(self.name, 'pic_AGE', self.AGE)
+                t2df.addData(self.name, 'pic_AGEE', self.AGEE)
+                t2df.addData(self.name, 'pic_Wovec', self.Wovec)
+                t2df.addData(self.name, 'pic_Aomat', self.Aomat)
+                t2df.addData(self.name, 'pic_AoGr', self.AoGr)
+                t2df.addData(self.name, 'pic_AoGF', self.AoGF)
+                t2df.addData(self.name, 'pic_AoGFF', self.AoGFF)
+                t2df.addData(self.name, 'pic_AoGD', self.AoGD)
+                t2df.addData(self.name, 'pic_AoGE', self.AoGE)
+                t2df.addData(self.name, 'pic_AoGEE', self.AoGEE)
 
-                    Hor = np.dot(self.Homat.T, self.residuals)
-                    HotF = np.dot(self.Homat.T, self.Fmat)
-                    HotFF = np.dot(self.Homat.T, self.FFmat)
-                    HotD = np.dot(self.Homat.T, self.DF)
-                    HotE = np.dot(self.Homat.T, self.Emat)
-                    HotEE = np.dot(self.Homat.T, self.EEmat)
-                    self.AoGr = np.dot(self.Aomat.T, Hor)
-                    self.AoGF = np.dot(self.Aomat.T, HotF)
-                    self.AoGFF = np.dot(self.Aomat.T, HotFF)
-                    self.AoGD = np.dot(self.Aomat.T, HotD)
-                    self.AoGE = np.dot(self.Aomat.T, HotE)
-                    self.AoGEE = np.dot(self.Aomat.T, HotEE)
-                else:
-                    self.Wovec = np.zeros(0)
-                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
-                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
-                    self.AoGF = np.zeros((0, self.GtF.shape[1]))
-                    self.AoGFF = np.zeros((0, GtFF.shape[1]))
-                    self.AoGD = np.zeros((0, GtD.shape[1]))
-                    self.AoGE = np.zeros((0, GtE.shape[1]))
-                    self.AoGEE = np.zeros((0, GtEE.shape[1]))
+
+
+    """
+    For every pulsar, quite a few Auxiliary quantities (like GtF etc.) are
+    necessary for the evaluation of various likelihood functions. This function
+    tries to read these quantities from the HDF5 file, so that we do not have to
+    do many unnecessary calculations during runtime.
+
+    @param t2df:            The DataFile we will write things to
+    @param Tmax:            The full duration of the experiment
+    @param nfreqs:          The number of noise frequencies we require for this
+                            pulsar
+    @param ndmfreqs:        The number of DM frequencies we require for this pulsar
+    @param twoComponent:    Whether or not we do the two-component noise
+                            acceleration
+    @param nSingleFreqs:    The number of single floating noise frequencies
+    @param nSingleDMFreqs:  The number of single floating DM frequencies
+    @param compression:     Whether we use compression (None/frequencies/average)
+    @param likfunc:         Which likelihood function to do it for (all/markx/..)
+    @param memsave:         Whether to save memory
+
+    """
+    def readPulsarAuxiliaries(self, t2df, Tmax, nfreqs, ndmfreqs, \
+            twoComponent=False, nSingleFreqs=0, nSingleDMFreqs=0, \
+            compression='None', likfunc='mark3', memsave=True):
+        # TODO: set this parameter in another place?
+        if twoComponent:
+            self.twoComponentNoise = True
+
+        # Before reading anything to file, we need to know right away how many
+        # fixed and floating frequencies this model contains. This will be
+        # checked with the content of the HDF5 file
+        nf = 0 ; ndmf = 0 ; nsf = nSingleFreqs ; nsdmf = nSingleDMFreqs
+        if nfreqs is not None and nfreqs != 0:
+            nf = nfreqs
+        if ndmfreqs is not None and ndmfreqs != 0:
+            ndmf = ndmfreqs
+
+        # Read in the file frequencies and Tmax
+        file_Tmax = t2df.getData(self.name, 'pic_Tmax')
+        file_freqs = t2df.getData(self.name, 'pic_modelFrequencies')
+
+        if file_Tmax != Tmax or not np.all(np.array(file_freqs) == \
+                np.array([nf, ndmf, nsf, nsdmf])):
+            raise ValueError("File frequencies are not compatible with model frequencies")
+        # Ok, this model seems good to go. Let's start
+
+        # G/H compression matrices
+        self.Gmat = np.array(t2df.getData(self.name, 'pic_Gmat', dontread=memsave))
+        self.Gcmat = np.array(t2df.getData(self.name, 'pic_Gcmat', dontread=memsave))
+        self.Hmat = np.array(t2df.getData(self.name, 'pic_Hmat'))
+        self.Hcmat = np.array(t2df.getData(self.name, 'pic_Hcmat'))
+        self.Homat = np.array(t2df.getData(self.name, 'pic_Homat'))
+        self.Hocmat = np.array(t2df.getData(self.name, 'pic_Hocmat'))
+        self.Gr = np.array(t2df.getData(self.name, 'pic_Gr', dontread=memsave))
+        self.GGr = np.array(t2df.getData(self.name, 'pic_GGr', dontread=memsave))
+        self.Wvec = np.array(t2df.getData(self.name, 'pic_Wvec'))
+        self.Wovec = np.array(t2df.getData(self.name, 'pic_Wovec'))
+        self.Amat = np.array(t2df.getData(self.name, 'pic_Amat', dontread=memsave))
+        self.Aomat = np.array(t2df.getData(self.name, 'pic_Aomat', dontread=memsave))
+        self.AoGr = np.array(t2df.getData(self.name, 'pic_AoGr'))
+        self.Ffreqs = np.array(t2df.getData(self.name, 'pic_Ffreqs'))
+        self.Fdmfreqs = np.array(t2df.getData(self.name, 'pic_Fdmfreqs'))
+
+        # If compression is not done, but Hmat represents a compression matrix,
+        # we need to re-evaluate the lot. Raise an error
+        if (compression == 'None' or compression is None) and \
+                t2df.getShape(self.name, 'pic_Gmat')[1] != \
+                t2df.getShape(self.name, 'pic_Hmat')[1]:
+            raise ValueError("Compressed file detected. Re-calculating all quantities.")
+        elif (compression != 'None' and compression != None) and \
+                t2df.getShape(self.name, 'pic_Gmat')[1] == \
+                t2df.getShape(self.name, 'pic_Hmat')[1]:
+            raise ValueError("Uncompressed file detected. Re-calculating all quantities.")
+
+        if likfunc == 'mark1':
+            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF'))
+            self.GtD = np.array(t2df.getData(self.name, 'pic_GtD'))
+            self.AGr = np.array(t2df.getData(self.name, 'pic_AGr', dontread=memsave))
+            self.AGF = np.array(t2df.getData(self.name, 'pic_AGF', dontread=memsave))
+            self.AoGF = np.array(t2df.getData(self.name, 'pic_AoGF', dontread=memsave))
+            self.Fdmmat = np.array(t2df.getData(self.name, 'pic_Fdmmat', dontread=memsave))
+            self.Dmat = np.array(t2df.getData(self.name, 'pic_Dmat', dontread=memsave))
+            self.DF = np.array(t2df.getData(self.name, 'pic_DF', dontread=memsave))
+            self.Fmat = np.array(t2df.getData(self.name, 'pic_Fmat', dontread=memsave))
+
+        if likfunc == 'mark2':
+            self.AGr = np.array(t2df.getData(self.name, 'pic_AGr'))
+
+        if likfunc == 'mark3' or likfunc == 'mark3fa':
+            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF', dontread=memsave))
+            self.AGr = np.array(t2df.getData(self.name, 'pic_AGr'))
+            self.AGF = np.array(t2df.getData(self.name, 'pic_AGF'))
+            self.AoGF = np.array(t2df.getData(self.name, 'pic_AoGF', dontread=memsave))
+            self.Fmat = np.array(t2df.getData(self.name, 'pic_Fmat'))
+
+        if likfunc == 'mark4':
+            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF', dontread=memsave))
+            self.UtF = np.array(t2df.getData(self.name, 'pic_UtF'))
+            self.AGr = np.array(t2df.getData(self.name, 'pic_AGr'))
+            self.AGU = np.array(t2df.getData(self.name, 'pic_AGU'))
+            self.AoGU = np.array(t2df.getData(self.name, 'pic_AoGU', dontread=memsave))
+            self.avetoas = np.array(t2df.getData(self.name, 'pic_avetoas'))
+            self.U = np.array(t2df.getData(self.name, 'pic_U'))
+            self.Fmat = np.array(t2df.getData(self.name, 'pic_Fmat', dontread=memsave))
+
+        if likfunc == 'mark4ln':
+            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF', dontread=memsave))
+            self.UtF = np.array(t2df.getData(self.name, 'pic_UtF', dontread=memsave))
+            self.SFmat = np.array(t2df.getData(self.name, 'pic_SFmat', dontread=memsave))
+            self.FFmat = np.array(t2df.getData(self.name, 'pic_FFmat', dontread=memsave))
+            self.SFfreqs = np.array(t2df.getData(self.name, 'pic_SFfreqs'))
+            self.UtFF = np.array(t2df.getData(self.name, 'pic_UtFF', dontread=memsave))
+            self.AGr = np.array(t2df.getData(self.name, 'pic_AGr'))
+            self.AGU = np.array(t2df.getData(self.name, 'pic_AGU'))
+            self.AoGU = np.array(t2df.getData(self.name, 'pic_AoGU', dontread=memsave))
+            self.avetoas = np.array(t2df.getData(self.name, 'pic_avetoas'))
+            self.U = np.array(t2df.getData(self.name, 'pic_U'))
+            self.Fmat = np.array(t2df.getData(self.name, 'pic_Fmat', dontread=memsave))
+
+        if likfunc == 'mark6' or likfunc == 'mark6fa':
+            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF', dontread=memsave))
+            self.GGtD = np.array(t2df.getData(self.name, 'pic_GGtD', dontread=memsave))
+            self.Emat = np.array(t2df.getData(self.name, 'pic_Emat'))
+            self.GGtE = np.array(t2df.getData(self.name, 'pic_GGtE', dontread=memsave))
+            self.AGr = np.array(t2df.getData(self.name, 'pic_AGr'))
+            self.AGF = np.array(t2df.getData(self.name, 'pic_AGF', dontread=memsave))
+            self.AGD = np.array(t2df.getData(self.name, 'pic_AGE', dontread=memsave))
+            self.AGE = np.array(t2df.getData(self.name, 'pic_AGD'))
+            self.AoGF = np.array(t2df.getData(self.name, 'pic_AoGF', dontread=memsave))
+            self.AoGD = np.array(t2df.getData(self.name, 'pic_AoGD', dontread=memsave))
+            self.AoGE = np.array(t2df.getData(self.name, 'pic_AoGE', dontread=memsave))
+            self.Fdmmat = np.array(t2df.getData(self.name, 'pic_Fdmmat', dontread=memsave))
+            self.Dmat = np.array(t2df.getData(self.name, 'pic_Dmat', dontread=memsave))
+            self.DF = np.array(t2df.getData(self.name, 'pic_DF', dontread=memsave))
+            self.Fmat = np.array(t2df.getData(self.name, 'pic_Fmat', dontread=memsave))
+
+        if likfunc == 'mark7':
+            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF', dontread=memsave))
+            self.AGr = np.array(t2df.getData(self.name, 'pic_AGr'))
+            self.AGF = np.array(t2df.getData(self.name, 'pic_AGF', dontread=memsave))
+            self.AoGF = np.array(t2df.getData(self.name, 'pic_AoGF', dontread=memsave))
+            self.Fmat = np.array(t2df.getData(self.name, 'pic_Fmat'))
+
+        if likfunc == 'mark8':
+            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF', dontread=memsave))
+            self.GGtD = np.array(t2df.getData(self.name, 'pic_GGtD', dontread=memsave))
+            self.Emat = np.array(t2df.getData(self.name, 'pic_Emat', dontread=memsave))
+            self.GGtE = np.array(t2df.getData(self.name, 'pic_GGtE', dontread=memsave))
+            self.AGr = np.array(t2df.getData(self.name, 'pic_AGr'))
+            self.AGF = np.array(t2df.getData(self.name, 'pic_AGF', dontread=memsave))
+            self.AGD = np.array(t2df.getData(self.name, 'pic_AGE', dontread=memsave))
+            self.AGE = np.array(t2df.getData(self.name, 'pic_AGD', dontread=memsave))
+            self.AoGF = np.array(t2df.getData(self.name, 'pic_AoGF', dontread=memsave))
+            self.AoGD = np.array(t2df.getData(self.name, 'pic_AoGD', dontread=memsave))
+            self.AoGE = np.array(t2df.getData(self.name, 'pic_AoGE', dontread=memsave))
+            self.Fdmmat = np.array(t2df.getData(self.name, 'pic_Fdmmat', dontread=memsave))
+            self.Dmat = np.array(t2df.getData(self.name, 'pic_Dmat'))
+            self.DF = np.array(t2df.getData(self.name, 'pic_DF'))
+            self.Fmat = np.array(t2df.getData(self.name, 'pic_Fmat'))
+
+        if likfunc == 'mark9':
+            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF', dontread=memsave))
+            self.SFmat = np.array(t2df.getData(self.name, 'pic_SFmat', dontread=memsave))
+            self.FFmat = np.array(t2df.getData(self.name, 'pic_FFmat', dontread=memsave))
+            self.SFfreqs = np.array(t2df.getData(self.name, 'pic_SFfreqs'))
+            self.AGr = np.array(t2df.getData(self.name, 'pic_AGr'))
+            self.AGF = np.array(t2df.getData(self.name, 'pic_AGF', dontread=memsave))
+            self.AGFF = np.array(t2df.getData(self.name, 'pic_AGFF'))
+            self.AoGF = np.array(t2df.getData(self.name, 'pic_AoGF', dontread=memsave))
+            self.AoGFF = np.array(t2df.getData(self.name, 'pic_AoGFF', dontread=memsave))
+            self.Fmat = np.array(t2df.getData(self.name, 'pic_Fmat'))
+
+        if likfunc == 'mark10':
+            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF', dontread=memsave))
+            self.GGtD = np.array(t2df.getData(self.name, 'pic_GGtD', dontread=memsave))
+            self.Emat = np.array(t2df.getData(self.name, 'pic_Emat'))
+            self.GGtE = np.array(t2df.getData(self.name, 'pic_GGtE', dontread=memsave))
+            self.SFmat = np.array(t2df.getData(self.name, 'pic_SFmat', dontread=memsave))
+            self.SFdmmat = np.array(t2df.getData(self.name, 'pic_SFdmmat', dontread=memsave))
+            self.FFmat = np.array(t2df.getData(self.name, 'pic_FFmat', dontread=memsave))
+            self.SFfreqs = np.array(t2df.getData(self.name, 'pic_SFfreqs'))
+            self.DSF = np.array(t2df.getData(self.name, 'pic_DSF', dontread=memsave))
+            self.DFF = np.array(t2df.getData(self.name, 'pic_DFF'))
+            self.EEmat = np.array(t2df.getData(self.name, 'pic_EEmat'))
+            self.GGtEE = np.array(t2df.getData(self.name, 'pic_GGtEE'))
+            self.AGr = np.array(t2df.getData(self.name, 'pic_AGr'))
+            self.AGF = np.array(t2df.getData(self.name, 'pic_AGF', dontread=memsave))
+            self.AGFF = np.array(t2df.getData(self.name, 'pic_AGFF'))
+            self.AGD = np.array(t2df.getData(self.name, 'pic_AGD', dontread=memsave))
+            self.AGE = np.array(t2df.getData(self.name, 'pic_AGE'))
+            self.AGEE = np.array(t2df.getData(self.name, 'pic_AGEE'))
+            self.AoGF = np.array(t2df.getData(self.name, 'pic_AoGF', dontread=memsave))
+            self.AoGFF = np.array(t2df.getData(self.name, 'pic_AoGFF', dontread=memsave))
+            self.AoGD = np.array(t2df.getData(self.name, 'pic_AoGD', dontread=memsave))
+            self.AoGE = np.array(t2df.getData(self.name, 'pic_AoGE', dontread=memsave))
+            self.AoGEE = np.array(t2df.getData(self.name, 'pic_AoGEE', dontread=memsave))
+            self.Fdmmat = np.array(t2df.getData(self.name, 'pic_Fdmmat', dontread=memsave))
+            self.Dmat = np.array(t2df.getData(self.name, 'pic_Dmat'))
+            self.DF = np.array(t2df.getData(self.name, 'pic_DF'))
+            self.Fmat = np.array(t2df.getData(self.name, 'pic_Fmat'))
 
 
 
@@ -2048,6 +2804,9 @@ class ptaPulsar(object):
 
 
 class ptaLikelihood(object):
+    # The DataFile object
+    t2df = None
+
     # The ptaPulsar objects
     ptapsrs = []
 
@@ -2069,6 +2828,7 @@ class ptaLikelihood(object):
     likfunc = 'mark3'
 
     # Whether we evaluate the complement of the compressed likelihood
+    compression = 'None'
     evallikcomp = False
 
     # Whether we use the option of forcing the frequency lines to be ordered in
@@ -2106,7 +2866,30 @@ class ptaLikelihood(object):
     skipUpdateToggle = False
 
 
-    def __init__(self, filename=None):
+    """
+    Constructor. Read data/model if filenames are given
+
+    @param h5filename:      HDF5 filename with pulsar data
+    @param jsonfilename:    JSON file with model
+    @param pulsars:         Which pulsars to read ('all' = all, otherwise provide a
+                            list: ['J0030+0451', 'J0437-4715', ...])
+                            WARNING: duplicates are _not_ checked for.
+    """
+    def __init__(self, h5filename=None, jsonfilename=None, pulsars='all', auxFromFile=True):
+        self.clear()
+
+        if h5filename is not None:
+            self.initFromFile(h5filename, pulsars=pulsars)
+
+            if jsonfilename is not None:
+                self.initModelFromFile(jsonfilename, auxFromFile=auxFromFile)
+
+    """
+    Clear all the structures present in the object
+    """
+    # TODO: Do we need to delete all with 'del'?
+    def clear(self):
+        self.t2df = None
         self.ptapsrs = []
         self.ptasignals = []
 
@@ -2123,404 +2906,78 @@ class ptaLikelihood(object):
         self.haveDetSources = False
         self.skipUpdateToggle = False
 
-        if filename is not None:
-            self.initFromFile(filename)
 
-    def initFromFile(self, filename):
-        h5file = h5.File(filename, 'r+')
+    """
+    Initialise this likelihood object from an HDF5 file
 
-        # Retrieve the models group
-        if not "Data" in h5file:
-            h5file.close()
-            h5file = None
-            raise IOError, "no Data group in hdf5 file"
+    @param filename:    Name of the HDF5 file we will be reading
+    @param pulsars:     Which pulsars to read ('all' = all, otherwise provide a
+                        list: ['J0030+0451', 'J0437-4715', ...])
+                        WARNING: duplicates are _not_ checked for.
+    @param append:      If set to True, do not delete earlier read-in pulsars
+    """
+    def initFromFile(self, filename, pulsars='all', append=False):
+        # Retrieve the pulsar list
+        self.t2df = DataFile(filename)
+        psrnames = self.t2df.getPulsarList()
 
-        datagroup = h5file["Data"]
+        # Determine which pulsars we are reading in
+        readpsrs = []
+        if pulsars=='all':
+            readpsrs = psrnames
+        else:
+            # Check if all provided pulsars are indeed in the HDF5 file
+            if np.all(np.array([pulsars[ii] in psrnames for ii in range(len(pulsars))]) == True):
+                readpsrs = pulsars
+            elif pulsars in destpsrnames:
+                pulsars = [pulsars]
+                readpsrs = pulsars
+            else:
+                raise ValueError("ERROR: Not all provided pulsars in HDF5 file")
 
-        # Retrieve the pulsars group
-        if not "Pulsars" in datagroup:
-            h5file.close()
-            h5file = None
-            raise IOError, "no Pulsars group in hdf5 file"
+        # Free earlier pulsars if we are not appending
+        if not append:
+            self.ptapsrs = []
 
-        pulsarsgroup = datagroup["Pulsars"]
-
-        psrnames = list(pulsarsgroup)
-        h5file.close()
-        h5file = None
-
-        for psrname in psrnames:
+        # Initialise all pulsars
+        for psrname in readpsrs:
             newpsr = ptaPulsar()
-            newpsr.readFromH5(filename, psrname)
-            #newpsr.readFromImagination(filename, psrname)
+            newpsr.readFromH5(self.t2df, psrname)
             self.ptapsrs.append(newpsr)
 
-    # TODO: make prior flat in log?
-    def addSignalEfac(self, psrind, index, separateEfacs=False, \
-            varyEfac=True, pmin=0.001, pmax=5.0, pwidth=0.1, pstart=1.0):
-        if separateEfacs:
-            uflagvals = list(set(self.ptapsrs[psrind].flags))   # uniques
-            for flagval in uflagvals:
-                newsignal = ptasignal()
-                newsignal.pulsarind = psrind
-                newsignal.stype = 'efac'
-                newsignal.corr = 'single'
-                newsignal.flagname = 'efacequad'
-                newsignal.flagvalue = flagval
 
-                ind = np.array(self.ptapsrs[psrind].flags) != flagval
-                newsignal.Nvec = self.ptapsrs[psrind].toaerrs**2
-                newsignal.Nvec[ind] = 0.0
-
-                newsignal.bvary = np.array([varyEfac], dtype=np.bool)
-                newsignal.npars = np.sum(newsignal.bvary)
-                newsignal.ntotpars = len(newsignal.bvary)
-
-                newsignal.pmin = np.array([pmin])
-                newsignal.pmax = np.array([pmax])
-                newsignal.pwidth = np.array([pwidth])
-                newsignal.pstart = np.array([pstart])
-
-                newsignal.nindex = index
-                index += newsignal.npars
-
-                self.ptasignals.append(newsignal)
-        else:
-            # One efac to rule them all
-            newsignal = ptasignal()
-            newsignal.pulsarind = psrind
-            newsignal.stype = 'efac'
-            newsignal.corr = 'single'
-            newsignal.flagname = 'pulsarname'
-            newsignal.flagvalue = self.ptapsrs[psrind].name
-            newsignal.Nvec = self.ptapsrs[psrind].toaerrs**2
-
-            newsignal.bvary = np.array([varyEfac], dtype=np.bool)
-            newsignal.npars = np.sum(newsignal.bvary)
-            newsignal.ntotpars = len(newsignal.bvary)
-
-            newsignal.pmin = np.array([pmin])
-            newsignal.pmax = np.array([pmax])
-            newsignal.pwidth = np.array([pwidth])
-            newsignal.pstart = np.array([pstart])
-
-            newsignal.nindex = index
-
-            self.ptasignals.append(newsignal)
-
-    def addSignalEquad(self, psrind, index, \
-            pmin=-10.0, pmax=-5.0, pwidth=0.1, pstart=-8.0, \
-            coarsegrained=False):
-        newsignal = ptasignal()
-        newsignal.pulsarind = psrind
-        if coarsegrained:
-            newsignal.stype = 'jitter'
-        else:
-            newsignal.stype = 'equad'
-        newsignal.corr = 'single'
-        newsignal.flagname = 'pulsarname'
-        newsignal.flagvalue = self.ptapsrs[psrind].name
-        newsignal.Nvec = np.ones(len(self.ptapsrs[psrind].toaerrs))
-        newsignal.npars = 1
-        newsignal.ntotpars = 1
-        newsignal.bvary = np.array([1], dtype=np.bool)
-
-        newsignal.pmin = np.array([pmin])
-        newsignal.pmax = np.array([pmax])
-        newsignal.pwidth = np.array([pwidth])
-        newsignal.pstart = np.array([pstart])
-
-        newsignal.nindex = index
-
-        self.ptasignals.append(newsignal)
-
-    def addSignalNoiseFrequencyLine(self, psrind, index, freqindex):
-        newsignal = ptasignal()
-        newsignal.pulsarind = psrind
-
-        newsignal.stype = 'frequencyline'
-        newsignal.npars = 2
-        newsignal.ntotpars = 2
-        newsignal.bvary = np.array([True, True], dtype=np.bool)
-        newsignal.npsrfreqindex = freqindex
-
-        # 0 = frequency, 1 = amplitude
-        newsignal.pmin = np.array([-9.0, -18])
-        newsignal.pmax = np.array([-5.0, -9.0])
-        newsignal.pstart = np.array([-7, -10.0])
-        newsignal.pwidth = np.array([0.1, 0.1])
-
-        newsignal.corr = 'single'
-        newsignal.nindex = index
-        self.ptasignals.append(newsignal)
-
-
-    def addSignalDMFrequencyLine(self, psrind, index, freqindex):
-        newsignal = ptasignal()
-        newsignal.pulsarind = psrind
-
-        newsignal.stype = 'dmfrequencyline'
-        newsignal.npars = 2
-        newsignal.ntotpars = 2
-        newsignal.bvary = np.array([True, True], dtype=np.bool)
-        newsignal.npsrdmfreqindex = freqindex
-
-        # 1 = frequency, 1 = amplitude
-        newsignal.pmin = np.array([-9.0, -18])
-        newsignal.pmax = np.array([-4.0, -7.0])
-        newsignal.pstart = np.array([-7, -10.0])
-        newsignal.pwidth = np.array([0.1, 0.1])
-
-        newsignal.corr = 'single'
-        newsignal.nindex = index
-        self.ptasignals.append(newsignal)
-
-
-    def addSignalRedNoise(self, psrind, index, Tmax, \
-            noiseModel, fc=None):
-        newsignal = ptasignal()
-        newsignal.pulsarind = psrind
-
-        if noiseModel=='spectrum':
-            newsignal.stype = 'spectrum'
-            newsignal.npars = int(len(self.ptapsrs[psrind].Ffreqs)/2)
-            newsignal.ntotpars = int(len(self.ptapsrs[psrind].Ffreqs)/2)
-            newsignal.bvary = np.array([1]*newsignal.ntotpars, dtype=np.bool)
-
-            newsignal.pmin = np.ones(newsignal.ntotpars) * -18.0
-            newsignal.pmax = np.ones(newsignal.ntotpars) * -7.0
-            newsignal.pstart = np.ones(newsignal.ntotpars) * -10.0
-            newsignal.pwidth = np.ones(newsignal.ntotpars) * 0.1
-        elif noiseModel=='powerlaw':
-            newsignal.stype = 'powerlaw'
-            newsignal.bvary = np.array([1, 1, 0], dtype=np.bool)
-            newsignal.npars = np.sum(newsignal.bvary)
-            newsignal.ntotpars = len(newsignal.bvary)
-
-            newsignal.pmin = np.array([-20.0, 0.02, 1.0e-11])
-            newsignal.pmax = np.array([-10.0, 6.98, 3.0e-9])
-            newsignal.pstart = np.array([-14.0, 2.01, 1.0e-10])
-            newsignal.pwidth = np.array([0.1, 0.1, 5.0e-11])
-        elif noiseModel=='spectralModel':
-            # A in sec^3, alpha unitless, fc in log10(yr^{-1})
-            newsignal.stype = 'spectralModel'
-            newsignal.bvary = np.array([1, 1, 1], dtype=np.bool)
-
-            newsignal.pmin = np.array([-28., 0., -4.])
-            newsignal.pmax = np.array([-14., 12., 2.])
-            newsignal.pstart = np.array([-22., 2., -1.])
-            newsignal.pwidth = np.array([-0.2, 0.1, 0.1])
-
-            if fc is not None:
-                newsignal.bvary[2] = False
-                newsignal.pstart[2] = fc
-
-            newsignal.npars = np.sum(newsignal.bvary)
-            newsignal.ntotpars = len(newsignal.bvary)
-
-        newsignal.corr = 'single'
-        newsignal.Tmax = Tmax
-        newsignal.nindex = index
-        self.ptasignals.append(newsignal)
-
-    def addSignalDMV(self, psrind, index, Tmax, \
-            dmModel):
-        newsignal = ptasignal()
-        newsignal.pulsarind = psrind
-
-        if dmModel=='spectrum':
-            newsignal.stype = 'dmspectrum'
-            newsignal.npars = int(len(self.ptapsrs[psrind].Ffreqs)/2)
-            newsignal.ntotpars = int(len(self.ptapsrs[psrind].Ffreqs)/2)
-            newsignal.bvary = np.array([1]*newsignal.ntotpars, dtype=np.bool)
-
-            newsignal.pmin = np.ones(newsignal.ntotpars) * -14.0
-            newsignal.pmax = np.ones(newsignal.ntotpars) * -3.0
-            newsignal.pstart = np.ones(newsignal.ntotpars) * -7.0
-            newsignal.pwidth = np.ones(newsignal.ntotpars) * 0.1
-        elif dmModel=='powerlaw':
-            newsignal.stype = 'dmpowerlaw'
-            newsignal.bvary = np.array([1, 1, 0], dtype=np.bool)
-            newsignal.npars = np.sum(newsignal.bvary)
-            newsignal.ntotpars = len(newsignal.bvary)
-
-            newsignal.pmin = np.array([-14.0, 0.02, 1.0e-11])
-            newsignal.pmax = np.array([-6.5, 6.98, 3.0e-9])
-            newsignal.pstart = np.array([-13.0, 2.01, 1.0e-10])
-            newsignal.pwidth = np.array([0.1, 0.1, 5.0e-11])
-
-        newsignal.corr = 'single'
-        newsignal.Tmax = Tmax
-        newsignal.nindex = index
-        self.ptasignals.append(newsignal)
-
-    # TODO: use the independent GWB frequencies, instead of those of the first pulsar
-    def addSignalGWB(self, index, Tmax, \
-            gwbModel):
-        newsignal = ptasignal()
-        newsignal.pulsarind = -1
-
-        if gwbModel=='spectrum':
-            newsignal.stype = 'spectrum'
-            newsignal.npars = int(len(self.ptapsrs[0].Ffreqs)/2)
-            newsignal.ntotpars = int(len(self.ptapsrs[0].Ffreqs)/2)
-            newsignal.bvary = np.array([1]*newsignal.ntotpars, dtype=np.bool)
-
-            newsignal.pmin = np.ones(newsignal.ntotpars) * -18.0
-            newsignal.pmax = np.ones(newsignal.ntotpars) * 10.0
-            newsignal.pstart = np.ones(newsignal.ntotpars) * -10.0
-            newsignal.pwidth = np.ones(newsignal.ntotpars) * 0.1
-        elif gwbModel=='powerlaw':
-            newsignal.stype = 'powerlaw'
-            newsignal.bvary = np.array([1, 1, 0], dtype=np.bool)
-            newsignal.npars = np.sum(newsignal.bvary)
-            newsignal.ntotpars = len(newsignal.bvary)
-
-            newsignal.pmin = np.array([-17.0, 1.02, 1.0e-11])
-            newsignal.pmax = np.array([-5.0, 6.98, 3.0e-9])
-            newsignal.pstart = np.array([-14.0, 2.01, 1.0e-10])
-            newsignal.pwidth = np.array([0.1, 0.1, 5.0e-11])
-
-        newsignal.corr = 'gr'
-        newsignal.Tmax = Tmax
-        newsignal.nindex = index
-        newsignal.corrmat = hdcorrmat(self.ptapsrs)           # The H&D matrix
-        self.ptasignals.append(newsignal)
-
-    def addSignalClock(self, index, Tmax, \
-            clockModel):
-        newsignal = ptasignal()
-        newsignal.pulsarind = -1
-
-        if clockModel=='spectrum':
-            newsignal.stype = 'spectrum'
-            newsignal.npars = int(len(self.ptapsrs[0].Ffreqs)/2)
-            newsignal.ntotpars = int(len(self.ptapsrs[0].Ffreqs)/2)
-            newsignal.bvary = np.array([1]*newsignal.ntotpars, dtype=np.bool)
-
-            newsignal.pmin = np.ones(newsignal.ntotpars) * -18.0
-            newsignal.pmax = np.ones(newsignal.ntotpars) * 10.0
-            newsignal.pstart = np.ones(newsignal.ntotpars) * -10.0
-            newsignal.pwidth = np.ones(newsignal.ntotpars) * 0.1
-        elif clockModel=='powerlaw':
-            newsignal.stype = 'powerlaw'
-            newsignal.npars = 2
-            newsignal.ntotpars = 3
-            newsignal.bvary = np.array([1, 1, 0], dtype=np.bool)
-
-            newsignal.pmin = np.array([-17.0, 1.02, 1.0e-11])
-            newsignal.pmax = np.array([-5.0, 6.98, 3.0e-9])
-            newsignal.pstart = np.array([-14.0, 2.01, 1.0e-10])
-            newsignal.pwidth = np.array([0.1, 0.1, 5.0e-11])
-
-        newsignal.corr = 'uniform'
-        newsignal.Tmax = Tmax
-        newsignal.nindex = index
-        newsignal.corrmat = np.ones((len(self.ptapsrs), len(self.ptapsrs)))
-        self.ptasignals.append(newsignal)
-
-    def addSignalDipole(self, index, Tmax, \
-            dipoleModel):
-        newsignal = ptasignal()
-        newsignal.pulsarind = -1
-
-        if dipoleModel=='spectrum':
-            newsignal.stype = 'spectrum'
-            newsignal.npars = int(len(self.ptapsrs[0].Ffreqs)/2)
-            newsignal.ntotpars = int(len(self.ptapsrs[0].Ffreqs)/2)
-            newsignal.bvary = np.array([1]*newsignal.ntotpars, dtype=np.bool)
-
-            newsignal.pmin = np.ones(newsignal.ntotpars) * -18.0
-            newsignal.pmax = np.ones(newsignal.ntotpars) * 10.0
-            newsignal.pstart = np.ones(newsignal.ntotpars) * -10.0
-            newsignal.pwidth = np.ones(newsignal.ntotpars) * 0.1
-        elif dipoleModel=='powerlaw':
-            newsignal.stype = 'powerlaw'
-            newsignal.bvary = np.array([1, 1, 0], dtype=np.bool)
-            newsignal.npars = np.sum(newsignal.bvary)
-            newsignal.ntotpars = len(newsignal.bvary)
-
-            newsignal.pmin = np.array([-17.0, 1.02, 1.0e-11])
-            newsignal.pmax = np.array([-5.0, 6.98, 3.0e-9])
-            newsignal.pstart = np.array([-14.0, 2.01, 1.0e-10])
-            newsignal.pwidth = np.array([0.1, 0.1, 5.0e-11])
-
-        newsignal.corr = 'dipole'
-        newsignal.Tmax = Tmax
-        newsignal.nindex = index
-        newsignal.corrmat = dipolecorrmat(self.ptapsrs)
-        self.ptasignals.append(newsignal)
-
-    def addSignalAniGWB(self, index, Tmax, \
-            anigwbModel, lAniGWB=2):
-        newsignal = ptasignal()
-        newsignal.pulsarind = -1
-        newsignal.aniCorr = aniCorrelations(self.ptapsrs, lAniGWB)
-        nclm = newsignal.aniCorr.clmlength()
-
-        if anigwbModel=='spectrum':
-            newsignal.stype = 'spectrum'
-            newsignal.npars = nclm+int(len(self.ptapsrs[0].Ffreqs)/2)
-            newsignal.ntotpars = nclm+int(len(self.ptapsrs[0].Ffreqs)/2)
-            newsignal.bvary = np.array([1]*newsignal.ntotpars, dtype=np.bool)
-
-            newsignal.pmin = np.ones(newsignal.ntotpars) * -18.0
-            newsignal.pmax = np.ones(newsignal.ntotpars) * 10.0
-            newsignal.pstart = np.ones(newsignal.ntotpars) * -10.0
-            newsignal.pwidth = np.ones(newsignal.ntotpars) * 0.1
-
-            newsignal.pmin[-nclm:] = -5.0
-            newsignal.pmax[-nclm:] = 5.0
-            newsignal.pstart[-nclm:] = 0.0
-            newsignal.pwidth[-nclm:] = 0.2
-        elif anigwbModel=='powerlaw':
-            newsignal.stype = 'powerlaw'
-            newsignal.bvary = np.array([1]*(nclm+3), dtype=np.bool)
-            #newsignal.bvary[1] = False
-            newsignal.bvary[2] = False
-            #newsignal.bvary[3] = False
-            #newsignal.bvary[5] = False
-            newsignal.npars = np.sum(newsignal.bvary)
-            newsignal.ntotpars = len(newsignal.bvary)
-
-            newsignal.pmin = np.ones(newsignal.ntotpars) * -5.0
-            newsignal.pmax = np.ones(newsignal.ntotpars) * 5.0
-            newsignal.pstart = np.ones(newsignal.ntotpars) * 0.0
-            newsignal.pwidth = np.ones(newsignal.ntotpars) * 0.2
-
-            newsignal.pmin[:3] = np.array([-17.0, 1.02, 1.0e-11])
-            newsignal.pmax[:3] = np.array([-5.0, 6.98, 3.0e-9])
-            newsignal.pstart[:3] = np.array([-14.0, 2.01, 1.0e-10])
-            newsignal.pwidth[:3] = np.array([0.1, 0.1, 5.0e-11])
-
-        newsignal.corr = 'anisotropicgwb'
-        newsignal.Tmax = Tmax
-        newsignal.nindex = index
-        self.ptasignals.append(newsignal)
-
-    def addSignalFourierCoeff(self, psrind, index, Tmax, isDM=False):
-        newsignal = ptasignal()
-        newsignal.pulsarind = psrind
+    """
+    Note: This function is not (yet) ready for use
+    """
+    def addSignalFourierCoeffOldOld(self, psrind, index, Tmax, isDM=False):
         if isDM:
-            newsignal.stype = 'dmfouriercoeff'
-            newsignal.npars = len(self.ptapsrs[0].Fdmfreqs)
-            newsignal.ntotpars = len(self.ptapsrs[0].Fdmfreqs)
+            newsignal = dict({
+                'stype':'dmfouriercoeff',
+                'npars':len(self.ptapsrs[0].Fdmfreqs),
+                'ntotpars':len(self.ptapsrs[0].Fdmfreqs),
+                'bvary':np.array([1]*newsignal.ntotpars, dtype=np.bool),
+                'corr':'single',
+                'Tmax':Tmax,
+                'parindex':index
+                })
         else:
-            newsignal.stype = 'fouriercoeff'
-            newsignal.npars = len(self.ptapsrs[0].Ffreqs)
-            newsignal.ntotpars = len(self.ptapsrs[0].Ffreqs)
-        newsignal.bvary = np.array([1]*newsignal.ntotpars, dtype=np.bool)
-        newsignal.corr = 'single'
-        newsignal.Tmax = Tmax
-        newsignal.nindex = index
+            newsignal = dict({
+                'stype':'dmfouriercoeff',
+                'npars':len(self.ptapsrs[0].Ffreqs),
+                'ntotpars':len(self.ptapsrs[0].Ffreqs),
+                'bvary':np.array([1]*newsignal.ntotpars, dtype=np.bool),
+                'corr':'single',
+                'Tmax':Tmax,
+                'parindex':index
+                })
 
         # Since this parameter space is so large, calculate the
         # best first-estimate values of these quantities
         # We assume that many auxiliaries have been set already (is done
         # in initModel, so should be ok)
         # TODO: check whether this works, and make smarter
-        npars = newsignal.npars
-        psr = self.ptapsrs[newsignal.pulsarind]
+        npars = newsignal['npars']
+        psr = self.ptapsrs[newsignal['pulsarind']]
 
         """
         if isDM:
@@ -2549,40 +3006,327 @@ class ptaLikelihood(object):
         self.ptasignals.append(newsignal)
         """
 
-    def addSignalBWM(self, psrind, index):
-        newsignal = ptasignal()
-        newsignal.pulsarind = psrind
-
-        newsignal.stype = 'bwm'
-        newsignal.npars = 5
-        newsignal.ntotpars = 5
-        newsignal.bvary = np.array([True]*5, dtype=np.bool)
-
-        # Find out the maximum and minimum TOA
-        toamax = self.ptapsrs[0].toas[0]
-        toamin = self.ptapsrs[0].toas[0]
-        for psr in self.ptapsrs:
-            if toamax < np.max(psr.toas):
-                toamax = np.max(psr.toas)
-            if toamin > np.min(psr.toas):
-                toamin = np.min(psr.toas)
-
-        # 0 = burst TOA, 1 = amplitude, 2 = raj, 3 = decj, 4 = polarisation
-        newsignal.pmin = np.array([toamin, -18.0, 0.0, 0.0, 0.0])
-        newsignal.pmax = np.array([toamax, -10.0, 2*np.pi, np.pi, np.pi])
-        newsignal.pstart = np.array([0.5*(toamax-toamin), -15.0, 3.0, 1.0, 1.0])
-        newsignal.pwidth = np.array([30*24*3600.0, 0.1, 0.1, 0.1, 0.1])
-
-        newsignal.corr = 'gr'
-        newsignal.nindex = index
-        self.ptasignals.append(newsignal)
 
 
+    """
+    Add a signal to the internal description data structures, based on a signal
+    dictionary
+
+    @param signal:  The signal dictionary we will add to the list
+    @param index:   The index of the first par in the global par list
+    @param Tmax:    The total time-baseline we use for this signal
+    """
+    def addSignal(self, signal, index=0, Tmax=None):
+        # Assert that the necessary keys are present
+        keys = ['pulsarind', 'stype', 'corr', 'bvary', \
+                'pmin', 'pmax', 'pwidth', 'pstart']
+        if not all(k in signal for k in keys):
+            raise ValueError("ERROR: Not all signal keys are present in signal. Keys: {0}. Required: {1}".format(signal.keys(), keys))
+
+        # Determine the time baseline of the array of pulsars
+        if not 'Tmax' in signal:
+            Tstart = np.min(self.ptapsrs[0].toas)
+            Tfinish = np.max(self.ptapsrs[0].toas)
+            for m2psr in self.ptapsrs:
+                Tstart = np.min([np.min(m2psr.toas), Tstart])
+                Tfinish = np.max([np.max(m2psr.toas), Tfinish])
+            Tmax = Tfinish - Tstart
+
+        # Adjust some basic details about the signal
+        signal['Tmax'] = Tmax
+        signal['parindex'] = index
+
+        # Convert a couple of values
+        signal['bvary'] = np.array(signal['bvary'], dtype=np.bool)
+        signal['npars'] = np.sum(signal['bvary'])
+        signal['ntotpars'] = len(signal['bvary'])
+        signal['pmin'] = np.array(signal['pmin'])
+        signal['pmax'] = np.array(signal['pmax'])
+        signal['pwidth'] = np.array(signal['pwidth'])
+        signal['pstart'] = np.array(signal['pstart'])
 
 
+        # Add the signal
+        if signal['stype']=='efac':
+            # Efac
+            self.addSignalEfac(signal)
+        elif signal['stype'] in ['equad', 'jitter']:
+            # Equad or Jitter
+            self.addSignalEquad(signal)
+        elif signal['stype'] in ['powerlaw', 'spectrum', 'spectralModel']:
+            # Any time-correlated signal
+            self.addSignalTimeCorrelated(signal)
+            self.haveStochSources = True
+        elif signal['stype'] in ['dmpowerlaw', 'dmspectrum']:
+            # A DM variation signal
+            self.addSignalDMV(signal)
+            self.haveStochSources = True
+        elif signal['stype'] == 'frequencyline':
+            # Single free-floating frequency line
+            psrSingleFreqs = self.getNumberOfSignals(stype='frequencyline', \
+                    corr='single')
+            signal['npsrfreqindex'] = psrSingleFreqs[signal['pulsarind']]
+            self.addSignalFrequencyLine(signal)
+            self.haveStochSources = True
+        elif signal['stype'] == 'dmfrequencyline':
+            # Single free-floating frequency line
+            psrSingleFreqs = self.getNumberOfSignals(stype='dmfrequencyline', \
+                    corr='single')
+            signal['npsrfreqindex'] = psrSingleFreqs[signal['pulsarind']]
+            self.addSignalFrequencyLine(signal)
+            self.haveStochSources = True
+        elif signal['stype'] == 'bwm':
+            # A burst with memory
+            self.addSignalBWM(signal)
+        else:
+            # Some other unknown signal
+            self.ptasignals.append(signal)
+
+
+
+    """
+    Add an EFAC signal
+
+    Required keys in signal
+    @param psrind:      Index of the pulsar this efac applies to
+    @param index:       Index of first parameter in total parameters array
+    @param flagname:    Name of the flag this efac applies to (field-name)
+    @param flagvalue:   Value of the flag this efac applies to (e.g. CPSR2)
+    @param bvary:       List of indicators, specifying whether parameters can vary
+    @param pmin:        Minimum bound of prior domain
+    @param pmax:        Maximum bound of prior domain
+    @param pwidth:      Typical width of the parameters (e.g. initial stepsize)
+    @param pstart:      Typical start position for the parameters
+
+    # TODO: make prior flat in log?
+    """
+    def addSignalEfac(self, signal):
+        # Assert that all the correct keys are there...
+        keys = ['pulsarind', 'stype', 'corr', 'flagname', 'flagvalue', 'bvary', \
+                'pmin', 'pmax', 'pwidth', 'pstart', 'parindex']
+        if not all(k in signal for k in keys):
+            raise ValueError("ERROR: Not all signal keys are present in efac signal. Keys: {0}. Required: {1}".format(signal.keys(), keys))
+
+        signal['Nvec'] = self.ptapsrs[signal['pulsarind']].toaerrs**2
+
+        if signal['flagname'] != 'pulsarname':
+            # This efac only applies to some TOAs, not all of 'm
+            ind = np.array(self.ptapsrs[signal['pulsarind']].flags) != signal['flagvalue']
+            signal['Nvec'][ind] = 0.0
+
+        self.ptasignals.append(signal.copy())
+
+    """
+    Add an EQUAD or jitter signal
+
+    Required keys in signal
+    @param stype:       Either 'jitter' or 'equad'
+    @param psrind:      Index of the pulsar this signal applies to
+    @param index:       Index of first parameter in total parameters array
+    @param flagname:    Name of the flag this efac applies to (field-name)
+    @param flagvalue:   Value of the flag this efac applies to (e.g. CPSR2)
+    @param bvary:       List of indicators, specifying whether parameters can vary
+    @param pmin:        Minimum bound of prior domain
+    @param pmax:        Maximum bound of prior domain
+    @param pwidth:      Typical width of the parameters (e.g. initial stepsize)
+    @param pstart:      Typical start position for the parameters
+    """
+    def addSignalEquad(self, signal):
+        # Assert that all the correct keys are there...
+        keys = ['pulsarind', 'stype', 'corr', 'flagname', 'flagvalue', 'bvary', \
+                'pmin', 'pmax', 'pwidth', 'pstart', 'parindex']
+        if not all(k in signal for k in keys):
+            raise ValueError("ERROR: Not all signal keys are present in equad signal. Keys: {0}. Required: {1}".format(signal.keys(), keys))
+
+        signal['Nvec'] = np.ones(len(self.ptapsrs[signal['pulsarind']].toaerrs))
+
+        if signal['flagname'] != 'pulsarname':
+            # This equad only applies to some TOAs, not all of 'm
+            ind = np.array(self.ptapsrs[signal['pulsarind']].flags) != signal['flagvalue']
+            signal['Nvec'][ind] = 0.0
+
+        self.ptasignals.append(signal.copy())
+
+
+    """
+    Add a single frequency line signal
+
+    Required keys in signal
+    @param stype:       Either 'frequencyline' or 'dmfrequencyline'
+    @param psrind:      Index of the pulsar this signal applies to
+    @param index:       Index of first parameter in total parameters array
+    @param freqindex:   If there are several of these sources, which is this?
+    @param bvary:       List of indicators, specifying whether parameters can vary
+    @param pmin:        Minimum bound of prior domain
+    @param pmax:        Maximum bound of prior domain
+    @param pwidth:      Typical width of the parameters (e.g. initial stepsize)
+    @param pstart:      Typical start position for the parameters
+    """
+    def addSignalFrequencyLine(self, signal):
+        # Assert that all the correct keys are there...
+        keys = ['pulsarind', 'stype', 'corr', 'bvary', \
+                'pmin', 'pmax', 'pwidth', 'pstart', 'parindex']
+        if not all(k in signal for k in keys):
+            raise ValueError("ERROR: Not all signal keys are present in frequency line signal. Keys: {0}. Required: {1}".format(signal.keys(), keys))
+
+        self.ptasignals.append(signal.copy())
+
+
+    """
+    Add some time-correlated signal
+
+    Required keys in signal
+    @param stype:       Either 'spectrum', 'powerlaw', or 'spectralModel'
+    @param corr:        Either 'single', 'uniform', 'dipole', 'gr', ...
+    @param psrind:      Index of the pulsar this signal applies to
+    @param index:       Index of first parameter in total parameters array
+    @param Tmax         Time baseline of the entire experiment
+    @param bvary:       List of indicators, specifying whether parameters can vary
+    @param pmin:        Minimum bound of prior domain
+    @param pmax:        Maximum bound of prior domain
+    @param pwidth:      Typical width of the parameters (e.g. initial stepsize)
+    @param pstart:      Typical start position for the parameters
+    @param lAniGWB:     In case of an anisotropic GWB, this sets the order of
+                        anisotropy (default=2, also for all other signals)
+    """
+    def addSignalTimeCorrelated(self, signal):
+        # Assert that all the correct keys are there...
+        keys = ['pulsarind', 'stype', 'corr', 'bvary', \
+                'pmin', 'pmax', 'pwidth', 'pstart', 'parindex', 'Tmax']
+        if not all(k in signal for k in keys):
+            raise ValueError("ERROR: Not all signal keys are present in signal. Keys: {0}. Required: {1}".format(signal.keys(), keys))
+        if 'stype' == 'anisotropicgwb':
+            if not 'lAniGWB' in signal:
+                raise ValueError("ERROR: Missing lAniGWB key in signal")
+
+        if signal['corr'] == 'gr':
+            # Correlated with the Hellings \& Downs matrix
+            signal['corrmat'] = hdcorrmat(self.ptapsrs)
+        elif signal['corr'] == 'uniform':
+            # Uniformly correlated (Clock signal)
+            signal['corrmat'] = np.ones((len(self.ptapsrs), len(self.ptapsrs)))
+        elif signal['corr'] == 'dipole':
+            # Dipole correlations (SS Ephemeris)
+            signal['corrmat'] = dipolecorrmat(self.ptapsrs)
+        elif signal['corr'] == 'anisotropicgwb':
+            # Anisotropic GWB correlations
+            signal['aniCorr'] = aniCorrelations(self.ptapsrs, signal['lAniGWB'])
+
+        if signal['corr'] != 'single':
+            # Also fill the Ffreqs array, since we are dealing with correlations
+            numfreqs = np.array([len(self.ptapsrs[ii].Ffreqs) \
+                    for ii in range(len(self.ptapsrs))])
+            ind = np.argmax(numfreqs)
+            signal['Ffreqs'] = self.ptapsrs[ind].Ffreqs.copy()
+
+        self.ptasignals.append(signal.copy())
+
+    """
+    Add some DM variation signal
+
+    Required keys in signal
+    @param stype:       Either 'spectrum', 'powerlaw', or 'spectralModel'
+    @param psrind:      Index of the pulsar this signal applies to
+    @param index:       Index of first parameter in total parameters array
+    @param Tmax         Time baseline of the entire experiment
+    @param bvary:       List of indicators, specifying whether parameters can vary
+    @param pmin:        Minimum bound of prior domain
+    @param pmax:        Maximum bound of prior domain
+    @param pwidth:      Typical width of the parameters (e.g. initial stepsize)
+    @param pstart:      Typical start position for the parameters
+    """
+    def addSignalDMV(self, signal):
+        # Assert that all the correct keys are there...
+        keys = ['pulsarind', 'stype', 'corr', 'bvary', \
+                'pmin', 'pmax', 'pwidth', 'pstart', 'parindex', 'Tmax']
+        if not all(k in signal for k in keys):
+            raise ValueError("ERROR: Not all signal keys are present in DMV signal. Keys: {0}. Required: {1}".format(signal.keys(), keys))
+
+        self.ptasignals.append(signal.copy())
+
+
+    """
+    Add a burst with memory signal
+
+    Required keys in signal
+    @param stype:       Basically always 'bwm'
+    @param psrind:      Index of the pulsar this signal applies to (Earth-burst: -1)
+    @param index:       Index of first parameter in total parameters array
+    @param bvary:       List of indicators, specifying whether parameters can vary
+    @param pmin:        Minimum bound of prior domain
+    @param pmax:        Maximum bound of prior domain
+    @param pwidth:      Typical width of the parameters (e.g. initial stepsize)
+    @param pstart:      Typical start position for the parameters
+    """
+    def addSignalBWM(self, signal):
+        # Assert that all the correct keys are there...
+        keys = ['pulsarind', 'stype', 'corr', 'bvary', \
+                'pmin', 'pmax', 'pwidth', 'pstart', 'parindex']
+        if not all(k in signal for k in keys):
+            raise ValueError("ERROR: Not all signal keys are present in BWM signal. Keys: {0}. Required: {1}".format(signal.keys(), keys))
+
+        self.ptasignals.append(signal.copy())
+
+
+    
+    """
+    Find the number of signals per pulsar matching some criteria, given a list
+    of signal dictionaries. Main use is, for instance, to find the number of
+    free frequency lines per pulsar given the signal model dictionary.
+
+    @param signals: Dictionary of all signals
+    @param stype:   The signal type that must be matched
+    @param corr:    Signal correlation that must be matched
+    """
+    def getNumberOfSignalsFromDict(self, signals, stype='powerlaw', corr='single'):
+        psrSignals = np.zeros(len(self.ptapsrs), dtype=np.int)
+
+        for ii, signal in enumerate(signals):
+            if signal['stype'] == stype and signal['corr'] == corr:
+                if signal['pulsarind'] == -1:
+                    psrSignals[:] += 1
+                else:
+                    psrSignals[signal['pulsarind']] += 1
+
+        return psrSignals
+
+    """
+    Find the number of signals per pulsar matching some criteria in the current
+    signal list.
+
+    @param stype:   The signal type that must be matched
+    @param corr:    Signal correlation that must be matched
+    """
+    def getNumberOfSignals(self, stype='powerlaw', corr='single'):
+        psrSignals = np.zeros(len(self.ptapsrs), dtype=np.int)
+
+        for ii, m2signal in enumerate(self.ptasignals):
+            if m2signal['stype'] == stype and m2signal['corr'] == corr:
+                if m2signal['pulsarind'] == -1:
+                    psrSignals[:] += 1
+                else:
+                    psrSignals[signal.pulsarind] += 1
+
+        return psrSignals
+
+
+    """
+    Check the read-in signal dictionary. Reject improperly defined models
+
+    TODO: Actually implement the checks
+    """
+    def checkSignalDictionary(self, signals):
+        return True
+
+
+    """
+    Allocate memory for the ptaLikelihood attribute matrices that we'll need in
+    the likelihood function.  This function does not perform any calculations,
+    although it does initialise the 'counter' integer arrays like npf and npgs.
+    """
     # TODO: see if we can implement the RJMCMC for the Fourier modes
     # TODO: these quantities should depend on the model, not the likelihood function
-    def allocateAuxiliaries(self):
+    def allocateLikAuxiliaries(self):
         # First figure out how large we have to make the arrays
         npsrs = len(self.ptapsrs)
         self.npf = np.zeros(npsrs, dtype=np.int)
@@ -2684,8 +3428,16 @@ class ptaLikelihood(object):
                     np.sum(self.npff)+np.sum(self.npffdm)))
 
 
-    # Initialise the model
-    def initModel(self, nfreqmodes=20, ndmfreqmodes=None, \
+
+    """
+    Based on somewhat simpler quantities, this function makes a full model
+    dictionary. Standard use would be to save that dictionary in a json file, so
+    that it does not need to be manually created by the user
+
+    @param nfreqmodes:      blah
+    @param dmnfreqmodes:    blah
+    """
+    def makeModelDict(self,  nfreqs=20, ndmfreqs=None, \
             incRedNoise=False, noiseModel='powerlaw', fc=None, \
             incDM=False, dmModel='powerlaw', \
             incClock=False, clockModel='powerlaw', \
@@ -2693,7 +3445,7 @@ class ptaLikelihood(object):
             incDipole=False, dipoleModel='powerlaw', \
             incAniGWB=False, anigwbModel='powerlaw', lAniGWB=1, \
             incBWM=False, \
-            varyEfac=False, incEquad=False, separateEfacs=False, \
+            varyEfac=True, incEquad=False, separateEfacs=False, \
             incCEquad=False, \
             incSingleFreqNoise=False, \
                                         # True
@@ -2701,191 +3453,638 @@ class ptaLikelihood(object):
                                         # [True, ..., False]
             multiplePulsarMultipleFreqNoise=None, \
                                         # [0, 3, 2, ..., 4]
-            dmFrequencyLines=None, \
+            dmFrequencyLines=None,
                                         # [0, 3, 2, ..., 4]
             orderFrequencyLines=False, \
-            compression = 'None', \
-            evalCompressionComplement = None, \
-            likfunc='mark3'):
-        # For every pulsar, construct the auxiliary quantities like the Fourier
-        # design matrix etc
-        if len(self.ptapsrs) < 1:
-            raise IOError, "no pulsars found in hdf5 file"
+            compression = 'frequencies', \
+            evalCompressionComplement = True, \
+            likfunc='mark1'):
+        # We have to determine the number of frequencies we'll need
+        numNoiseFreqs = np.zeros(len(self.ptapsrs), dtype=np.int)
+        numDMFreqs = np.zeros(len(self.ptapsrs), dtype=np.int)
+        numSingleFreqs = np.zeros(len(self.ptapsrs), dtype=np.int)
+        numSingleDMFreqs = np.zeros(len(self.ptapsrs), dtype=np.int)
 
-        Tstart = np.min(self.ptapsrs[0].toas)
-        Tfinish = np.max(self.ptapsrs[0].toas)
+        # Figure out what the frequencies per pulsar are
+        for pindex, m2psr in enumerate(self.ptapsrs):
+            if incDM:
+                if ndmfreqs is None or ndmfreqs=="None":
+                    ndmfreqs = nfreqs
+            else:
+                ndmfreqs = 0
+
+            if incSingleFreqNoise:
+                numSingleFreqs[pindex] = 1
+            elif singlePulsarMultipleFreqNoise is not None:
+                if singlePulsarMultipleFreqNoise[pindex]:
+                    numSingleFreqs[pindex] = 1
+            elif multiplePulsarMultipleFreqNoise is not None:
+                numSingleFreqs[pindex] = multiplePulsarMultipleFreqNoise[pindex]
+
+            if dmFrequencyLines is not None:
+                numSingleDMFreqs[pindex] = dmFrequencyLines[pindex]
+
+            numNoiseFreqs[pindex] = nfreqs
+            numDMFreqs[pindex] = ndmfreqs
+
+        signals = []
+
+        for ii, m2psr in enumerate(self.ptapsrs):
+            if separateEfacs:
+                uflagvals = list(set(m2psr.flags))  # Unique flags
+                for flagval in uflagvals:
+                    newsignal = dict({
+                        "stype":"efac",
+                        "corr":"single",
+                        "pulsarind":ii,
+                        "flagname":"efacequad",
+                        "flagvalue":flagval,
+                        "bvary":[varyEfac],
+                        "pmin":[0.001],
+                        "pmax":[50.0],
+                        "pwidth":[0.1],
+                        "pstart":[1.0]
+                        })
+                    signals.append(newsignal)
+            else:
+                newsignal = dict({
+                    "stype":"efac",
+                    "corr":"single",
+                    "pulsarind":ii,
+                    "flagname":"pulsarname",
+                    "flagvalue":m2psr.name,
+                    "bvary":[varyEfac],
+                    "pmin":[0.001],
+                    "pmax":[50.0],
+                    "pwidth":[0.1],
+                    "pstart":[1.0]
+                    })
+                signals.append(newsignal)
+
+            if incEquad:
+                newsignal = dict({
+                    "stype":"equad",
+                    "corr":"single",
+                    "pulsarind":ii,
+                    "flagname":"pulsarname",
+                    "flagvalue":m2psr.name,
+                    "bvary":[True],
+                    "pmin":[-10.0],
+                    "pmax":[-5.0],
+                    "pwidth":[0.1],
+                    "pstart":[-8.0]
+                    })
+                signals.append(newsignal)
+
+            if incCEquad:
+                newsignal = dict({
+                    "stype":"jitter",
+                    "corr":"single",
+                    "pulsarind":ii,
+                    "flagname":"pulsarname",
+                    "flagvalue":m2psr.name,
+                    "bvary":[True],
+                    "pmin":[-10.0],
+                    "pmax":[-5.0],
+                    "pwidth":[0.1],
+                    "pstart":[-8.0]
+                    })
+                signals.append(newsignal)
+
+            if incRedNoise:
+                if noiseModel=='spectrum':
+                    nfreqs = numNoiseFreqs[ii]
+                    bvary = [True]*nfreqs
+                    pmin = [-18.0]*nfreqs
+                    pmax = [-7.0]*nfreqs
+                    pstart = [-10.0]*nfreqs
+                    pwidth = [0.1]*nfreqs
+                elif noiseModel=='powerlaw':
+                    bvary = [True, True, False]
+                    pmin = [-20.0, 0.02, 1.0e-11]
+                    pmax = [-10.0, 6.98, 3.0e-9]
+                    pstart = [-14.0, 2.01, 1.0e-10]
+                    pwidth = [0.1, 0.1, 5.0e-11]
+                elif noiseModel=='spectralModel':
+                    bvary = [True, True, True]
+                    pmin = [-28.0, 0.0, -4.0]
+                    pmax = [-14.0, 12.0, 2.0]
+                    pstart = [-22.0, 2.0, -1.0]
+                    pwidth = [-0.2, 0.1, 0.1]
+
+                newsignal = dict({
+                    "stype":noiseModel,
+                    "corr":"single",
+                    "pulsarind":ii,
+                    "flagname":"pulsarname",
+                    "flagvalue":m2psr.name,
+                    "bvary":bvary,
+                    "pmin":pmin,
+                    "pmax":pmax,
+                    "pwidth":pwidth,
+                    "pstart":pstart
+                    })
+                signals.append(newsignal)
+
+            if incDM:
+                if dmModel=='spectrum':
+                    nfreqs = numDMFreqs[ii]
+                    bvary = [True]*nfreqs
+                    pmin = [-14.0]*nfreqs
+                    pmax = [-3.0]*nfreqs
+                    pstart = [-7.0]*nfreqs
+                    pwidth = [0.1]*nfreqs
+                    dmModel = 'dmspectrum'
+                elif dmModel=='powerlaw':
+                    bvary = [True, True, False]
+                    pmin = [-14.0, 0.02, 1.0e-11]
+                    pmax = [-6.5, 6.98, 3.0e-9]
+                    pstart = [-13.0, 2.01, 1.0e-10]
+                    pwidth = [0.1, 0.1, 5.0e-11]
+                    dmModel = 'dmpowerlaw'
+
+                newsignal = dict({
+                    "stype":dmModel,
+                    "corr":"single",
+                    "pulsarind":ii,
+                    "flagname":"pulsarname",
+                    "flagvalue":m2psr.name,
+                    "bvary":bvary,
+                    "pmin":pmin,
+                    "pmax":pmax,
+                    "pwidth":pwidth,
+                    "pstart":pstart
+                    })
+                signals.append(newsignal)
+
+            for jj in range(numSingleFreqs[ii]):
+                newsignal = dict({
+                    "stype":'frequencyline',
+                    "corr":"single",
+                    "pulsarind":ii,
+                    "flagname":"pulsarname",
+                    "flagvalue":m2psr.name,
+                    "bvary":[True, True],
+                    "pmin":[-9.0, -18.0],
+                    "pmax":[-5.0, -9.0],
+                    "pwidth":[-0.1, -0.1],
+                    "pstart":[-7.0, -10.0]
+                    })
+                signals.append(newsignal)
+
+            for jj in range(numSingleDMFreqs[ii]):
+                newsignal = dict({
+                    "stype":'dmfrequencyline',
+                    "corr":"single",
+                    "pulsarind":ii,
+                    "flagname":"pulsarname",
+                    "flagvalue":m2psr.name,
+                    "bvary":[True, True],
+                    "pmin":[-9.0, -18.0],
+                    "pmax":[-5.0, -9.0],
+                    "pwidth":[-0.1, -0.1],
+                    "pstart":[-7.0, -10.0]
+                    })
+                signals.append(newsignal)
+
+        if incGWB:
+            if gwbModel=='spectrum':
+                nfreqs = np.max(numNoiseFreqs)
+                bvary = [True]*nfreqs
+                pmin = [-18.0]*nfreqs
+                pmax = [-7.0]*nfreqs
+                pstart = [-10.0]*nfreqs
+                pwidth = [0.1]*nfreqs
+            elif gwbModel=='powerlaw':
+                bvary = [True, True, False]
+                pmin = [-17.0, 1.02, 1.0e-11]
+                pmax = [-10.0, 6.98, 3.0e-9]
+                pstart = [-15.0, 2.01, 1.0e-10]
+                pwidth = [0.1, 0.1, 5.0e-11]
+
+            newsignal = dict({
+                "stype":gwbModel,
+                "corr":"gr",
+                "pulsarind":-1,
+                "bvary":bvary,
+                "pmin":pmin,
+                "pmax":pmax,
+                "pwidth":pwidth,
+                "pstart":pstart
+                })
+            signals.append(newsignal)
+
+        if incClock:
+            if clockModel=='spectrum':
+                nfreqs = np.max(numNoiseFreqs)
+                bvary = [True]*nfreqs
+                pmin = [-18.0]*nfreqs
+                pmax = [-7.0]*nfreqs
+                pstart = [-10.0]*nfreqs
+                pwidth = [0.1]*nfreqs
+            elif clockModel=='powerlaw':
+                bvary = [True, True, False]
+                pmin = [-17.0, 1.02, 1.0e-11]
+                pmax = [-10.0, 6.98, 3.0e-9]
+                pstart = [-15.0, 2.01, 1.0e-10]
+                pwidth = [0.1, 0.1, 5.0e-11]
+
+            newsignal = dict({
+                "stype":clockModel,
+                "corr":"uniform",
+                "pulsarind":-1,
+                "bvary":bvary,
+                "pmin":pmin,
+                "pmax":pmax,
+                "pwidth":pwidth,
+                "pstart":pstart
+                })
+            signals.append(newsignal)
+
+        if incDipole:
+            if dipoleModel=='spectrum':
+                nfreqs = np.max(numNoiseFreqs)
+                bvary = [True]*nfreqs
+                pmin = [-18.0]*nfreqs
+                pmax = [-7.0]*nfreqs
+                pstart = [-10.0]*nfreqs
+                pwidth = [0.1]*nfreqs
+            elif dipoleModel=='powerlaw':
+                bvary = [True, True, False]
+                pmin = [-17.0, 1.02, 1.0e-11]
+                pmax = [-10.0, 6.98, 3.0e-9]
+                pstart = [-15.0, 2.01, 1.0e-10]
+                pwidth = [0.1, 0.1, 5.0e-11]
+
+            newsignal = dict({
+                "stype":dipoleModel,
+                "corr":"dipole",
+                "pulsarind":-1,
+                "bvary":bvary,
+                "pmin":pmin,
+                "pmax":pmax,
+                "pwidth":pwidth,
+                "pstart":pstart
+                })
+            signals.append(newsignal)
+
+        if incAniGWB:
+            nclm = (lAniGWB+1)**2-1
+            clmvary = [True]*nclm
+            clmmin = [-5.0]*nclm
+            clmmax = [5.0]*nclm
+            clmstart = [0.0]*nclm
+            clmwidth = [0.2]*nclm
+            if anigwbModel=='spectrum':
+                nfreqs = np.max(numNoiseFreqs)
+                bvary = [True]*nfreqs + clmvary
+                pmin = [-18.0]*nfreqs + clmmin
+                pmax = [-7.0]*nfreqs + clmmax
+                pstart = [-10.0]*nfreqs + clmstart
+                pwidth = [0.1]*nfreqs + clmwidth
+            elif anigwbModel=='powerlaw':
+                bvary = [True, True, False] + clmvary
+                pmin = [-17.0, 1.02, 1.0e-11] + clmmin
+                pmax = [-10.0, 6.98, 3.0e-9] + clmmax
+                pstart = [-15.0, 2.01, 1.0e-10] + clmstart
+                pwidth = [0.1, 0.1, 5.0e-11] + clmwidth
+
+            newsignal = dict({
+                "stype":anigwbModel,
+                "corr":"anisotropicgwb",
+                "pulsarind":-1,
+                "bvary":bvary,
+                "pmin":pmin,
+                "pmax":pmax,
+                "pwidth":pwidth,
+                "pstart":pstart,
+                "lAniGWB":lAniGWB
+                })
+            signals.append(newsignal)
+
+        if incBWM:
+            toamax = self.ptapsrs[0].toas[0]
+            toamin = self.ptapsrs[0].toas[0]
+            for psr in self.ptapsrs:
+                if toamax < np.max(psr.toas):
+                    toamax = np.max(psr.toas)
+                if toamin > np.min(psr.toas):
+                    toamin = np.min(psr.toas)
+            newsignal = dict({
+                "stype":'bwm',
+                "corr":"gr",
+                "pulsarind":-1,
+                "bvary":[True, True, True, True, True],
+                "pmin":[toamin, -18.0, 0.0, 0.0, 0.0],
+                "pmax":[toamax, -10.0, 2*np.pi, np.pi, np.pi],
+                "pwidth":[30*24*3600.0, 0.1, 0.1, 0.1, 0.1],
+                "pstart":[0.5*(toamax-toamin), -15.0, 3.0, 1.0, 1.0]
+                })
+            signals.append(newsignal)
+
+        # The list of signals
+        modeldict = dict({
+            "file version":2013.12,
+            "author":"piccard-makeModel",
+            "numpulsars":len(self.ptapsrs),
+            "pulsarnames":[self.ptapsrs[ii].name for ii in range(len(self.ptapsrs))],
+            "numNoiseFreqs":list(numNoiseFreqs),
+            "numDMFreqs":list(numDMFreqs),
+            "compression":compression,
+            "orderFrequencyLines":orderFrequencyLines,
+            "evalCompressionComplement":evalCompressionComplement,
+            "likfunc":likfunc,
+            "signals":signals
+            })
+
+        return modeldict
+
+
+    """
+    Create the model dictionary, based on the currently used model
+    """
+    def getModelDict(self):
+        # We have to determine the number of frequencies we'll need
+        npsrs = len(self.ptapsrs)
+        numNoiseFreqs = [int(len(self.ptapsrs[ii].Ffreqs)/2) for ii in range(npsrs)]
+        numDMFreqs = [int(len(self.ptapsrs[ii].Fdmfreqs)/2) for ii in range(npsrs)]
+
+        signals = []
+
+        for ii, m2signal in enumerate(self.ptasignals):
+            signals.append(m2signal.copy())
+
+            # Delete a few redundant quantities
+            if 'Nvec' in signals[-1]:
+                del signals[-1]['Nvec']
+            if 'corrmat' in signals[-1]:
+                del signals[-1]['corrmat']
+            if 'aniCorr' in signals[-1]:
+                del signals[-1]['aniCorr']
+            if 'Ffreqs' in signals[-1]:
+                del signals[-1]['Ffreqs']
+
+            # Numpy arrays are not "JSON serializable"
+            signals[-1]['bvary'] = map(bool, signals[-1]['bvary'])
+            signals[-1]['pmin'] = list(signals[-1]['pmin'])
+            signals[-1]['pmax'] = list(signals[-1]['pmax'])
+            signals[-1]['pstart'] = list(signals[-1]['pstart'])
+            signals[-1]['pwidth'] = list(signals[-1]['pwidth'])
+
+        modeldict = dict({
+            "file version":2013.12,
+            "author":"piccard-makeModel",
+            "numpulsars":len(self.ptapsrs),
+            "pulsarnames":[self.ptapsrs[ii].name for ii in range(len(self.ptapsrs))],
+            "numNoiseFreqs":list(numNoiseFreqs),
+            "numDMFreqs":list(numDMFreqs),
+            "compression":self.compression,
+            "orderFrequencyLines":self.orderFrequencyLines,
+            "evalCompressionComplement":self.evallikcomp,
+            "likfunc":self.likfunc,
+            "signals":signals
+            })
+
+        return modeldict
+
+
+    """
+    Initialise a model from a json file
+
+    @param filename:    Filename of the json file with the model
+    """
+    def initModelFromFile(self, filename, auxFromFile=True):
+        with open(filename) as data_file:
+            model = json.load(data_file)
+        self.initModel(model, fromFile=auxFromFile)
+
+    """
+    Write the model to a json file
+
+    @param filename:    Filename of the json file with the model
+    """
+    def writeModelToFile(self, filename):
+        model = self.getModelDict()
+
+        with open(filename, 'w') as outfile:
+            json.dump(model, outfile, sort_keys=False, indent=4, separators=(',', ': '))
+
+    """
+    Based on single-pulsar model dictionaries, construct a full PTA model
+    dictionary. This function will only check the number of pulsars in the json
+    files, no additional checks are done. Any GW/correlated signal are bluntly
+    combined, so make sure no duplicates exist.
+
+    The likelihood and other settings are copied from the first model in the
+    list
+
+    @param modeldictlist:   List of model dictionaries that will be combined
+    """
+    def combineModelDicts(self, *modeldictlist):
+        # Check the consistency of the dictionaries with the current model
+        ndictpsrs = 0
+        for model in modeldictlist:
+            ndictpsrs += model['numpulsars']
+
+        # If the combined number of pulsars in the dictionaries does not match
+        # the internal number of pulsars: generate an error
+        if ndictpsrs != len(self.ptapsrs):
+            raise IOError, "Number of pulsars does not match sum of dictionary models"
+
+        # Check that all pulsars are present
+        haveDictPulsar = np.array([0]*ndictpsrs, dtype=np.bool)
+        psrnames = [self.ptapsrs[ii].name for ii in range(len(self.ptapsrs))]
+        for model in modeldictlist:
+            for dictpsrname in model['pulsarnames']:
+                if not dictpsrname in psrnames:
+                    raise IOError, "Pulsar {0} not present in internal pulsar list {1}".format(dictpsrname, psrnames)
+                haveDictPulsar[psrnames.index(dictpsrname)] = True
+
+        # Check that _all_ pulsars are present
+        if not np.sum(haveDictPulsar) == len(self.ptapsrs):
+            raise IOError, "Pulsars not present in provided models: {0}".format(\
+                    psrnames[haveDictPulsar == False])
+
+        # Ok, it seems we are good. Let's combine the models
+        nmd = modeldictlist[0].copy()
+        nmd['author'] = 'piccard-combineModelDicts'
+        nmd['numpulsars'] = ndictpsrs
+        nmd['pulsarnames'] = psrnames
+        nmd['numNoiseFreqs'] = [0]*len(psrnames)
+        nmd['numDMFreqs'] = [0]*len(psrnames)
+        nmd['signals'] = []
+        for ii, md in enumerate(modeldictlist):
+            mdpulsars = md['pulsarnames']
+            mdsignals = md['signals']
+            mdpsrind = [0] * len(mdpulsars)
+
+            # Find the indices of these pulsars in the internal psr list
+            for pp, mdp in enumerate(mdpulsars):
+                pind = psrnames.index(mdp)
+                mdpsrind[pp] = pind
+
+            # Now that we have the index translation, set the frequency data
+            for pp, mdp in enumerate(mdpulsars):
+                nmd['numNoiseFreqs'][mdpsrind[pp]] = md['numNoiseFreqs'][pp]
+                nmd['numDMFreqs'][mdpsrind[pp]] = md['numDMFreqs'][pp]
+
+            # Add all the signals
+            for ss, mds in enumerate(mdsignals):
+                # Copy the signal
+                newsignal = mds.copy()
+
+                # Translate the pulsar index
+                if newsignal['pulsarind'] != -1:
+                    newsignal['pulsarind'] = mdpsrind[newsignal['pulsarind']]
+
+                nmd['signals'].append(newsignal)
+
+        return nmd
+
+
+    """
+    Initialise the model.
+    @param numNoiseFreqs:       Dictionary with the full model
+    @param fromFile:            Try to read the necessary Auxiliaries quantities
+                                from the HDF5 file
+    @param verbose:             Give some extra information about progress
+    """
+    def initModel(self, fullmodel, fromFile=True, verbose=False):
+        numNoiseFreqs = fullmodel['numNoiseFreqs']
+        numDMFreqs = fullmodel['numDMFreqs']
+        compression = fullmodel['compression']
+        evalCompressionComplement = fullmodel['evalCompressionComplement']
+        orderFrequencyLines = fullmodel['orderFrequencyLines']
+        likfunc = fullmodel['likfunc']
+        signals = fullmodel['signals']
+
+        if len(self.ptapsrs) < 1:
+            raise IOError, "No pulsars loaded"
+
+        if fullmodel['numpulsars'] != len(self.ptapsrs):
+            raise IOError, "Model does not have the right number of pulsars"
+
+        if not self.checkSignalDictionary(signals):
+            raise IOError, "Signal dictionary not properly defined"
+
+        # Details about the likelihood function
         self.likfunc = likfunc
         self.orderFrequencyLines = orderFrequencyLines
 
+        # Determine the time baseline of the array of pulsars
+        Tstart = np.min(self.ptapsrs[0].toas)
+        Tfinish = np.max(self.ptapsrs[0].toas)
         for m2psr in self.ptapsrs:
             Tstart = np.min([np.min(m2psr.toas), Tstart])
             Tfinish = np.max([np.max(m2psr.toas), Tfinish])
-            #Tstart = np.min([np.min(self.ptapsrs[0].toas), Tstart])
-            #Tfinish = np.max([np.max(self.ptapsrs[0].toas), Tfinish])
-
-        # After processing the parameters, store the number of single frequency lines
-        psrSingleFreqNoiseModes = np.zeros(len(self.ptapsrs), dtype=np.int)
-        psrSingleDMFreqNoiseModes = np.zeros(len(self.ptapsrs), dtype=np.int)
-
-        # Total duration of the experiment
         Tmax = Tfinish - Tstart
-        pindex = 0
-        for m2psr in self.ptapsrs:
-            if incDM:
+
+        # If the compressionComplement is defined, overwrite the default
+        if evalCompressionComplement != 'None':
+            self.evallikcomp = evalCompressionComplement
+            self.compression = compression
+        elif compression == 'None':
+            self.evallikcomp = False
+        else:
+            self.evallikcomp = True
+            self.compression = compression
+
+        # Find out how many single-frequency modes there are
+        numSingleFreqs = self.getNumberOfSignalsFromDict(signals, \
+                stype='frequencyline', corr='single')
+        numSingleDMFreqs = self.getNumberOfSignalsFromDict(signals, \
+                stype='dmfrequencyline', corr='single')
+
+        # Find out how many efac signals there are, and translate that to a
+        # separateEfacs boolean array (for two-component noise analysis)
+        numEfacs = self.getNumberOfSignalsFromDict(signals, \
+                stype='efac', corr='single')
+        separateEfacs = numEfacs > 1
+
+        # Modify design matrices, and create pulsar Auxiliary quantities
+        for pindex, m2psr in enumerate(self.ptapsrs):
+            # If we model DM variations, we will need to include QSD
+            # marginalisation for DM. Modify design matrix accordingly
+            #if dmModel[pindex] != 'None':
+            if numDMFreqs[pindex] > 0:
                 m2psr.addDMQuadratic()
 
-                if ndmfreqmodes is None:
-                    ndmfreqmodes = nfreqmodes
+            # We'll try to read the necessary quantities from the HDF5 file
+            try:
+                if not fromFile:
+                    raise StandardError('Requested to re-create the Auxiliaries')
+                # Read Auxiliaries
+                if verbose:
+                    print "Reading Auxiliaries for {0}".format(m2psr.name)
+                m2psr.readPulsarAuxiliaries(self.t2df, Tmax, \
+                        numNoiseFreqs[pindex], \
+                        numDMFreqs[pindex], not separateEfacs[pindex], \
+                        nSingleFreqs=numSingleFreqs[pindex], \
+                        nSingleDMFreqs=numSingleDMFreqs[pindex], \
+                        likfunc=likfunc, compression=compression, \
+                        memsave=True)
+            except (StandardError, ValueError, KeyError, IOError, RuntimeError) as err:
+                # Create the Auxiliaries ourselves
 
-            nSingleFreqs = 0
-            if incSingleFreqNoise:
-                nSingleFreqs = 1
-                psrSingleFreqNoiseModes[pindex] = 1
-            elif singlePulsarMultipleFreqNoise is not None:
-                if singlePulsarMultipleFreqNoise[pindex]:
-                    nSingleFreqs = 1
-                    psrSingleFreqNoiseModes[pindex] = 1
-            elif multiplePulsarMultipleFreqNoise is not None:
-                nSingleFreqs = multiplePulsarMultipleFreqNoise[pindex]
-                psrSingleFreqNoiseModes[pindex] = multiplePulsarMultipleFreqNoise[pindex]
-
-            nSingleDMFreqs = 0
-            if dmFrequencyLines is not None:
-                nSingleDMFreqs = dmFrequencyLines[pindex]
-                psrSingleDMFreqNoiseModes[pindex] = dmFrequencyLines[pindex]
-
-            m2psr.createAuxiliaries(Tmax, nfreqmodes, ndmfreqmodes, not separateEfacs, \
-                            nSingleFreqs=nSingleFreqs, nSingleDMFreqs=nSingleDMFreqs, \
-                                    likfunc=likfunc, compression=compression)
-
-            # If the compressionComplement is defined, overwrite the default
-            if compression == 'None':
-                self.evallikcomp = False
-            else:
-                self.evallikcomp = True
-
-            if evalCompressionComplement != None:
-                self.evallikcomp = evalCompressionComplement
+                # For every pulsar, construct the auxiliary quantities like the Fourier
+                # design matrix etc
+                if verbose:
+                    print str(err)
+                    print "Creating Auxiliaries for {0}".format(m2psr.name)
+                m2psr.createPulsarAuxiliaries(self.t2df, Tmax, numNoiseFreqs[pindex], \
+                        numDMFreqs[pindex], not separateEfacs[pindex], \
+                                nSingleFreqs=numSingleFreqs[pindex], \
+                                nSingleDMFreqs=numSingleDMFreqs[pindex], \
+                                likfunc=likfunc, compression=compression, \
+                                write='likfunc')
 
             # When selecting Fourier modes, like in mark7/mark8, the binclude vector
             # indicates whether or not a frequency is included in the likelihood. By
             # default they are all 'on'
             if self.likfunc == 'mark7' or self.likfunc == 'mark8':
-                m2psr.setLimitedModeAuxiliaries([1]*nfreqmodes, [1]*ndmfreqmodes, \
-                        likfunc=self.likfunc)
-
-            pindex += 1
+                m2psr.setLimitedModeAuxiliaries([1]*numNoiseFreqs[pindex], \
+                        [1]*numDMFreqs[pindex], likfunc=self.likfunc)
 
         # Initialise the ptasignal objects
-        # Currently: one efac per pulsar, and red noise
         self.ptasignals = []
         index = 0
-        for ii in range(len(self.ptapsrs)):
-            # When adding efac signals, there may be many
-            noldsignals = len(self.ptasignals)
-            self.addSignalEfac(ii, index, separateEfacs, varyEfac)
-            nnewsignals = len(self.ptasignals)
-            for jj in range(noldsignals, nnewsignals):
-                index += self.ptasignals[jj].npars
+        for ii, signal in enumerate(signals):
+            self.addSignal(signal, index, Tmax)
+            index += self.ptasignals[-1]['npars']
 
-            if incEquad:
-                self.addSignalEquad(ii, index)
-                index += self.ptasignals[-1].npars
-                
-            if incCEquad:
-                self.addSignalEquad(ii, index, coarsegrained=True)
-                index += self.ptasignals[-1].npars
-
-            if incRedNoise:
-                self.addSignalRedNoise(ii, index, Tmax, noiseModel, fc)
-                index += self.ptasignals[-1].npars
-                self.haveStochSources = True
-
-            if incDM:
-                self.addSignalDMV(ii, index, Tmax, dmModel)
-                index += self.ptasignals[-1].npars
-                self.haveStochSources = True
-
-            for jj in range(psrSingleFreqNoiseModes[ii]):
-                self.addSignalNoiseFrequencyLine(ii, index, jj)
-                index += self.ptasignals[-1].npars
-                self.haveStochSources = True
-
-            for jj in range(psrSingleDMFreqNoiseModes[ii]):
-                self.addSignalDMFrequencyLine(ii, index, jj)
-                index += self.ptasignals[-1].npars
-                self.haveStochSources = True
-
-        if incGWB:
-            self.addSignalGWB(index, Tmax, gwbModel)
-            index += self.ptasignals[-1].npars
-            self.haveStochSources = True
-
-        if incClock:
-            self.addSignalClock(index, Tmax, clockModel)
-            index += self.ptasignals[-1].npars
-            self.haveStochSources = True
-
-        if incDipole:
-            self.addSignalDipole(index, Tmax, dipoleModel)
-            index += self.ptasignals[-1].npars
-            self.haveStochSources = True
-
-        if incAniGWB:
-            self.addSignalAniGWB(index, Tmax, anigwbModel, lAniGWB)
-            index += self.ptasignals[-1].npars
-            self.haveStochSources = True
-
-        if incBWM:
-            self.addSignalBWM(-1, index)
-            self.haveDetSources = True
-            index += self.ptasignals[-1].npars
-
-
-        # If the frequency coefficients are included explicitly (mark1
-        # likelihood), we need a couple of extra signals
-        if likfunc=='mark1':
-            for ii in range(len(self.ptapsrs)):
-                self.addSignalFourierCoeff(ii, index, Tmax)
-                index += self.ptasignals[-1].npars
-
-                if incDM:
-                    self.addSignalFourierCoeff(ii, index, Tmax, isDM=True)
-                    index += self.ptasignals[-1].npars
-
-        self.allocateAuxiliaries()
+        self.allocateLikAuxiliaries()
         self.initPrior()
         self.pardes = self.getModelParameterList()
 
 
+    """
+    Get a list of all the model parameters, the parameter indices, and the
+    descriptions
+    """
     def getModelParameterList(self):
         pardes = []
 
-        for ii in range(len(self.ptasignals)):
-            sig = self.ptasignals[ii]
-
+        for ii, sig in enumerate(self.ptasignals):
             pindex = 0
-            for jj in range(sig.ntotpars):
-                if sig.bvary[jj]:
+            for jj in range(sig['ntotpars']):
+                if sig['bvary'][jj]:
                     # This parameter is in the mcmc
-                    # TODO: the parameter index for varying/nonvarying
-                    # parameters is inconsistent throughout the code
-                    index = sig.nindex + pindex
+                    index = sig['parindex'] + pindex
                     pindex += 1
                 else:
                     index = -1
 
-                psrindex = sig.pulsarind
-                if sig.stype == 'efac':
-                    flagname = sig.flagname
-                    flagvalue = 'efac'+sig.flagvalue
-                elif sig.stype == 'equad':
-                    flagname = sig.flagname
-                    flagvalue = 'equad'+sig.flagvalue
-                elif sig.stype == 'jitter':
-                    flagname = sig.flagname
-                    flagvalue = 'jitter'+sig.flagvalue
-                elif sig.stype == 'spectrum':
+                psrindex = sig['pulsarind']
+                if sig['stype'] == 'efac':
+                    flagname = sig['flagname']
+                    flagvalue = 'efac'+sig['flagvalue']
+                elif sig['stype'] == 'equad':
+                    flagname = sig['flagname']
+                    flagvalue = 'equad'+sig['flagvalue']
+                elif sig['stype'] == 'jitter':
+                    flagname = sig['flagname']
+                    flagvalue = 'jitter'+sig['flagvalue']
+                elif sig['stype'] == 'spectrum':
                     flagname = 'frequency'
 
                     if jj >= len(self.ptapsrs[psrindex].Ffreqs)/2:
@@ -2901,18 +4100,18 @@ class ptaLikelihood(object):
                         flagvalue = 'C_(' + str(lani) + ',' + str(mani) + ')'
                     else:
                         flagvalue = str(self.ptapsrs[psrindex].Ffreqs[2*jj])
-                elif sig.stype == 'dmspectrum':
+                elif sig['stype'] == 'dmspectrum':
                     flagname = 'dmfrequency'
                     flagvalue = str(self.ptapsrs[psrindex].Fdmfreqs[2*jj])
-                elif sig.stype == 'powerlaw':
+                elif sig['stype'] == 'powerlaw':
                     flagname = 'powerlaw'
 
                     if jj < 3:
-                        if sig.corr == 'gr':
+                        if sig['corr'] == 'gr':
                             flagvalue = ['GWB-Amplitude', 'GWB-spectral-index', 'low-frequency-cutoff'][jj]
-                        elif sig.corr == 'uniform':
+                        elif sig['corr'] == 'uniform':
                             flagvalue = ['CLK-Amplitude', 'CLK-spectral-index', 'low-frequency-cutoff'][jj]
-                        elif sig.corr == 'dipole':
+                        elif sig['corr'] == 'dipole':
                             flagvalue = ['DIP-Amplitude', 'DIP-spectral-index', 'low-frequency-cutoff'][jj]
                         else:
                             flagvalue = ['RN-Amplitude', 'RN-spectral-index', 'low-frequency-cutoff'][jj]
@@ -2922,16 +4121,16 @@ class ptaLikelihood(object):
                         lani = int(np.sqrt(clmind))
                         mani = clmind - lani*(lani+1)
                         flagvalue = 'C_(' + str(lani) + ',' + str(mani) + ')'
-                elif sig.stype == 'dmpowerlaw':
+                elif sig['stype'] == 'dmpowerlaw':
                     flagname = 'dmpowerlaw'
                     flagvalue = ['DM-Amplitude', 'DM-spectral-index', 'low-frequency-cutoff'][jj]
-                elif sig.stype == 'spectralModel':
+                elif sig['stype'] == 'spectralModel':
                     flagname = 'spectralModel'
                     flagvalue = ['SM-Amplitude', 'SM-spectral-index', 'SM-corner-frequency'][jj]
-                elif sig.stype == 'frequencyline':
+                elif sig['stype'] == 'frequencyline':
                     flagname = 'frequencyline'
                     flagvalue = ['Line-Freq', 'Line-Ampl'][jj]
-                elif sig.stype == 'bwm':
+                elif sig['stype'] == 'bwm':
                     flagname = 'BurstWithMemory'
                     flagvalue = ['burst-arrival', 'amplitude', 'raj', 'decj', 'polarisation'][jj]
                 else:
@@ -2940,7 +4139,7 @@ class ptaLikelihood(object):
 
                 pardes.append(\
                         {'index': index, 'pulsar': psrindex, 'sigindex': ii, \
-                            'sigtype': sig.stype, 'correlation': sig.corr, \
+                            'sigtype': sig['stype'], 'correlation': sig['corr'], \
                             'name': flagname, 'id': flagvalue})
 
         return pardes
@@ -2989,8 +4188,8 @@ class ptaLikelihood(object):
     def setDimensions(self):
         self.dimensions = 0
         for m2signal in self.ptasignals:
-            m2signal.npars = np.sum(m2signal.bvary)
-            self.dimensions += m2signal.npars
+            m2signal['npars'] = np.sum(m2signal['bvary'])
+            self.dimensions += m2signal['npars']
 
 
     """
@@ -3007,12 +4206,12 @@ class ptaLikelihood(object):
 
         index = 0
         for m2signal in self.ptasignals:
-            for ii in range(m2signal.ntotpars):
-                if m2signal.bvary[ii]:
-                    self.pmin[index] = m2signal.pmin[ii]
-                    self.pmax[index] = m2signal.pmax[ii]
-                    self.pwidth[index] = m2signal.pwidth[ii]
-                    self.pstart[index] = m2signal.pstart[ii]
+            for ii in range(m2signal['ntotpars']):
+                if m2signal['bvary'][ii]:
+                    self.pmin[index] = m2signal['pmin'][ii]
+                    self.pmax[index] = m2signal['pmax'][ii]
+                    self.pwidth[index] = m2signal['pwidth'][ii]
+                    self.pstart[index] = m2signal['pstart'][ii]
                     index += 1
 
     """
@@ -3024,11 +4223,11 @@ class ptaLikelihood(object):
         psrind = []
         names = []
 
-        for ii in range(len(self.ptasignals)):
-            if self.ptasignals[ii].stype == 'efac' and self.ptasignals[ii].bvary[0]:
-                parind.append(self.ptasignals[ii].nindex)
-                psrind.append(self.ptasignals[ii].pulsarind)
-                names.append(self.ptasignals[ii].flagvalue)
+        for ii, m2signal in enumerate(self.ptasignals):
+            if m2signal['stype'] == 'efac' and m2signal['bvary'][0]:
+                parind.append(m2signal['parindex'])
+                psrind.append(m2signal['pulsarind'])
+                names.append(m2signal['flagvalue'])
 
         return (parind, psrind, names)
 
@@ -3044,39 +4243,39 @@ class ptaLikelihood(object):
         parmin = []
         parmax = []
         freqs = []
-        for ii in range(len(self.ptasignals)):
-            if self.ptasignals[ii].stype == 'spectrum' or self.ptasignals[ii].stype == 'dmspectrum':
-                if self.ptasignals[ii].stype == 'spectrum' and self.ptasignals[ii].corr == 'single':
-                    signame.append('Red noise ' + self.ptapsrs[self.ptasignals[ii].pulsarind].name)
-                    signameshort.append('rnspectrum-' + self.ptapsrs[self.ptasignals[ii].pulsarind].name)
+        for ii, m2signal in enumerate(self.ptasignals):
+            if m2signal['stype'] == 'spectrum' or m2signal['stype'] == 'dmspectrum':
+                if m2signal['stype'] == 'spectrum' and m2signal['corr'] == 'single':
+                    signame.append('Red noise ' + self.ptapsrs[m2signal['pulsarind']].name)
+                    signameshort.append('rnspectrum-' + self.ptapsrs[m2signal['pulsarind']].name)
                     freqs.append(np.sort(np.array(list(set(self.ptapsrs[0].Ffreqs)))))
-                elif self.ptasignals[ii].stype == 'spectrum' and self.ptasignals[ii].corr == 'gr':
+                elif m2signal['stype'] == 'spectrum' and m2signal['corr'] == 'gr':
                     signame.append('GWB spectrum')
                     signameshort.append('gwbspectrum')
                     freqs.append(np.sort(np.array(list(set(self.ptapsrs[0].Ffreqs)))))
-                elif self.ptasignals[ii].stype == 'spectrum' and self.ptasignals[ii].corr == 'uniform':
+                elif m2signal['stype'] == 'spectrum' and m2signal['corr'] == 'uniform':
                     signame.append('Clock spectrum')
                     signameshort.append('clockspectrum')
                     freqs.append(np.sort(np.array(list(set(self.ptapsrs[0].Ffreqs)))))
-                elif self.ptasignals[ii].stype == 'spectrum' and self.ptasignals[ii].corr == 'dipole':
+                elif m2signal['stype'] == 'spectrum' and m2signal['corr'] == 'dipole':
                     signame.append('Dipole spectrum')
                     signameshort.append('dipolespectrum')
                     freqs.append(np.sort(np.array(list(set(self.ptapsrs[0].Ffreqs)))))
-                elif self.ptasignals[ii].stype == 'spectrum' and self.ptasignals[ii].corr == 'anisotropicgwb':
+                elif m2signal['stype'] == 'spectrum' and m2signal['corr'] == 'anisotropicgwb':
                     signame.append('Anisotropy spectrum')
                     signameshort.append('anisotropyspectrum')
                     freqs.append(np.sort(np.array(list(set(self.ptapsrs[0].Ffreqs)))))
-                elif self.ptasignals[ii].stype == 'dmspectrum':
-                    signame.append('DM variation ' + self.ptapsrs[self.ptasignals[ii].pulsarind].name)
-                    signameshort.append('dmspectrum-' + self.ptapsrs[self.ptasignals[ii].pulsarind].name)
-                    freqs.append(np.sort(np.array(list(set(self.ptapsrs[self.ptasignals[ii].pulsarind].Fdmfreqs)))))
+                elif m2signal['stype'] == 'dmspectrum':
+                    signame.append('DM variation ' + self.ptapsrs[m2signal['pulsarind']].name)
+                    signameshort.append('dmspectrum-' + self.ptapsrs[m2signal['pulsarind']].name)
+                    freqs.append(np.sort(np.array(list(set(self.ptapsrs[m2signal['pulsarind']].Fdmfreqs)))))
                 else:
                     signame.append('Spectrum')
                     signameshort.append('spectrum')
                     freqs.append(np.sort(np.array(list(set(self.ptapsrs[0].Ffreqs)))))
 
-                parmin.append(self.ptasignals[ii].nindex)
-                parmax.append(self.ptasignals[ii].nindex+self.ptasignals[ii].npars)
+                parmin.append(m2signal['parindex'])
+                parmax.append(m2signal['parindex']+m2signal['npars'])
 
         return (signame, signameshort, parmin, parmax, freqs)
 
@@ -3103,49 +4302,49 @@ class ptaLikelihood(object):
         for ss in range(len(self.ptasignals)):
             m2signal = self.ptasignals[ss]
             if selection[ss]:
-                if m2signal.stype == 'efac':
-                    if m2signal.npars == 1:
-                        pefac = parameters[m2signal.nindex]
+                if m2signal['stype'] == 'efac':
+                    if m2signal['npars'] == 1:
+                        pefac = parameters[m2signal['parindex']]
                     else:
-                        pefac = m2signal.pstart[0]
+                        pefac = m2signal['pstart'][0]
 
-                    if self.ptapsrs[m2signal.pulsarind].twoComponentNoise:
-                        self.ptapsrs[m2signal.pulsarind].Nwvec += \
-                                self.ptapsrs[m2signal.pulsarind].Wvec * pefac**2
-                        self.ptapsrs[m2signal.pulsarind].Nwovec += \
-                                self.ptapsrs[m2signal.pulsarind].Wovec * pefac**2
+                    if self.ptapsrs[m2signal['pulsarind']].twoComponentNoise:
+                        self.ptapsrs[m2signal['pulsarind']].Nwvec += \
+                                self.ptapsrs[m2signal['pulsarind']].Wvec * pefac**2
+                        self.ptapsrs[m2signal['pulsarind']].Nwovec += \
+                                self.ptapsrs[m2signal['pulsarind']].Wovec * pefac**2
                     #else:
-                    self.ptapsrs[m2signal.pulsarind].Nvec += m2signal.Nvec * pefac**2
+                    self.ptapsrs[m2signal['pulsarind']].Nvec += m2signal['Nvec'] * pefac**2
 
-                    #if m2signal.bvary[0]:
-                    #    pefac = parameters[m2signal.nindex]
+                    #if m2signal['bvary'][0]:
+                    #    pefac = parameters[m2signal['parindex']]
                     #else:
-                    #    pefac = parameters[m2signal.ntotindex]
-                    #self.ptapsrs[m2signal.pulsarind].Nvec += m2signal.Nvec * pefac**2
-                elif m2signal.stype == 'equad':
-                    if m2signal.npars == 1:
-                        pequadsqr = 10**(2*parameters[m2signal.nindex])
+                    #    pefac = parameters[m2signal['ntotindex']]
+                    #self.ptapsrs[m2signal['pulsarind']].Nvec += m2signal['Nvec'] * pefac**2
+                elif m2signal['stype'] == 'equad':
+                    if m2signal['npars'] == 1:
+                        pequadsqr = 10**(2*parameters[m2signal['parindex']])
                     else:
-                        pequadsqr = 10**(2*m2signal.pstart[0])
+                        pequadsqr = 10**(2*m2signal['pstart'][0])
 
-                    if self.ptapsrs[m2signal.pulsarind].twoComponentNoise:
-                        self.ptapsrs[m2signal.pulsarind].Nwvec += pequadsqr
-                        self.ptapsrs[m2signal.pulsarind].Nwovec += pequadsqr
+                    if self.ptapsrs[m2signal['pulsarind']].twoComponentNoise:
+                        self.ptapsrs[m2signal['pulsarind']].Nwvec += pequadsqr
+                        self.ptapsrs[m2signal['pulsarind']].Nwovec += pequadsqr
                     #else:
-                    self.ptapsrs[m2signal.pulsarind].Nvec += m2signal.Nvec * pequadsqr
-                elif m2signal.stype == 'jitter':
-                    if m2signal.npars == 1:
-                        pequadsqr = 10**(2*parameters[m2signal.nindex])
+                    self.ptapsrs[m2signal['pulsarind']].Nvec += m2signal['Nvec'] * pequadsqr
+                elif m2signal['stype'] == 'jitter':
+                    if m2signal['npars'] == 1:
+                        pequadsqr = 10**(2*parameters[m2signal['parindex']])
                     else:
-                        pequadsqr = 10**(2*m2signal.pstart[0])
+                        pequadsqr = 10**(2*m2signal['pstart'][0])
 
-                    self.ptapsrs[m2signal.pulsarind].Qamp = pequadsqr
+                    self.ptapsrs[m2signal['pulsarind']].Qamp = pequadsqr
 
-                    #if m2signal.bvary[0]:
-                    #    pequadsqr = 10**(2*parameters[m2signal.nindex])
+                    #if m2signal['bvary'][0]:
+                    #    pequadsqr = 10**(2*parameters[m2signal['parindex']])
                     #else:
-                    #    pequadsqr = 10**(2*parameters[m2signal.ntotindex])
-                    #self.ptapsrs[m2signal.pulsarind].Nvec += m2signal.Nvec * pequadsqr
+                    #    pequadsqr = 10**(2*parameters[m2signal['ntotindex']])
+                    #self.ptapsrs[m2signal['pulsarind']].Nvec += m2signal['Nvec'] * pequadsqr
 
 
     """
@@ -3176,14 +4375,14 @@ class ptaLikelihood(object):
             m2signal = self.ptasignals[ss]
             if selection[ss]:
                 # Create a parameters array for this particular signal
-                sparameters = m2signal.pstart.copy()
-                sparameters[m2signal.bvary] = \
-                        parameters[m2signal.nindex:m2signal.nindex+m2signal.npars]
-                if m2signal.stype == 'spectrum':
-                    if m2signal.corr == 'single':
-                        findex = np.sum(self.npff[:m2signal.pulsarind])
-                        # nfreq = int(self.npf[m2signal.pulsarind]/2)
-                        nfreq = m2signal.npars
+                sparameters = m2signal['pstart'].copy()
+                sparameters[m2signal['bvary']] = \
+                        parameters[m2signal['parindex']:m2signal['parindex']+m2signal['npars']]
+                if m2signal['stype'] == 'spectrum':
+                    if m2signal['corr'] == 'single':
+                        findex = np.sum(self.npff[:m2signal['pulsarind']])
+                        # nfreq = int(self.npf[m2signal['pulsarind']]/2)
+                        nfreq = m2signal['npars']
 
                         # Pcdoubled is an array where every element of the parameters
                         # of this m2signal is repeated once (e.g. [1, 1, 3, 3, 2, 2, 5, 5, ...]
@@ -3193,19 +4392,19 @@ class ptaLikelihood(object):
                         # Fill the phi matrix
                         di = np.diag_indices(2*nfreq)
                         self.Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += 10**pcdoubled
-                    elif m2signal.corr in ['gr', 'uniform', 'dipole', 'anisotropicgwb']:
-                        nfreq = m2signal.npars
+                    elif m2signal['corr'] in ['gr', 'uniform', 'dipole', 'anisotropicgwb']:
+                        nfreq = m2signal['npars']
 
-                        if m2signal.corr in ['gr', 'uniform', 'dipole']:
+                        if m2signal['corr'] in ['gr', 'uniform', 'dipole']:
                             pcdoubled = np.array([sparameters, sparameters]).T.flatten()
-                            corrmat = m2signal.corrmat
-                        elif m2signal.corr == 'anisotropicgwb':
-                            nclm = m2signal.aniCorr.clmlength()
+                            corrmat = m2signal['corrmat']
+                        elif m2signal['corr'] == 'anisotropicgwb':
+                            nclm = m2signal['aniCorr'].clmlength()
                             pcdoubled = np.array([\
                                     sparameters[:-nclm],\
                                     sparameters[:-nclm]]).T.flatten()
                             clm = sparameters[-nclm:]
-                            corrmat = m2signal.aniCorr.corrmat(clm)
+                            corrmat = m2signal['aniCorr'].corrmat(clm)
 
                         indexa = 0
                         indexb = 0
@@ -3219,41 +4418,39 @@ class ptaLikelihood(object):
                                 indexb += self.npff[bb]
                             indexb = 0
                             indexa += self.npff[aa]
-                elif m2signal.stype == 'dmspectrum':
-                    if m2signal.corr == 'single':
-                        findex = np.sum(self.npffdm[:m2signal.pulsarind])
-                        nfreq = int(self.npfdm[m2signal.pulsarind]/2)
+                elif m2signal['stype'] == 'dmspectrum':
+                    if m2signal['corr'] == 'single':
+                        findex = np.sum(self.npffdm[:m2signal['pulsarind']])
+                        nfreq = int(self.npfdm[m2signal['pulsarind']]/2)
 
                         pcdoubled = np.array([sparameters, sparameters]).T.flatten()
 
                         # Fill the Theta matrix
                         self.Thetavec[findex:findex+2*nfreq] += 10**pcdoubled
-                elif m2signal.stype == 'powerlaw':
-                    spd = 24 * 3600.0
-                    spy = 365.25 * spd
+                elif m2signal['stype'] == 'powerlaw':
                     Amp = 10**sparameters[0]
                     Si = sparameters[1]
 
-                    if m2signal.corr == 'single':
-                        findex = np.sum(self.npff[:m2signal.pulsarind])
-                        nfreq = int(self.npf[m2signal.pulsarind]/2)
-                        freqpy = self.ptapsrs[m2signal.pulsarind].Ffreqs * spy
-                        pcdoubled = (Amp**2 * spy**3 / (12*np.pi*np.pi * m2signal.Tmax)) * freqpy ** (-Si)
+                    if m2signal['corr'] == 'single':
+                        findex = np.sum(self.npff[:m2signal['pulsarind']])
+                        nfreq = int(self.npf[m2signal['pulsarind']]/2)
+                        freqpy = self.ptapsrs[m2signal['pulsarind']].Ffreqs * pic_spy
+                        pcdoubled = (Amp**2 * pic_spy**3 / (12*np.pi*np.pi * m2signal['Tmax'])) * freqpy ** (-Si)
 
                         # Fill the phi matrix
                         di = np.diag_indices(2*nfreq)
                         self.Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += pcdoubled
-                    elif m2signal.corr in ['gr', 'uniform', 'dipole', 'anisotropicgwb']:
-                        freqpy = self.ptapsrs[0].Ffreqs * spy
-                        pcdoubled = (Amp**2 * spy**3 / (12*np.pi*np.pi * m2signal.Tmax)) * freqpy ** (-Si)
+                    elif m2signal['corr'] in ['gr', 'uniform', 'dipole', 'anisotropicgwb']:
+                        freqpy = m2signal['Ffreqs'] * pic_spy
+                        pcdoubled = (Amp**2 * pic_spy**3 / (12*np.pi*np.pi * m2signal['Tmax'])) * freqpy ** (-Si)
                         nfreq = len(freqpy)
 
-                        if m2signal.corr in ['gr', 'uniform', 'dipole']:
-                            corrmat = m2signal.corrmat
-                        elif m2signal.corr == 'anisotropicgwb':
-                            nclm = m2signal.aniCorr.clmlength()
+                        if m2signal['corr'] in ['gr', 'uniform', 'dipole']:
+                            corrmat = m2signal['corrmat']
+                        elif m2signal['corr'] == 'anisotropicgwb':
+                            nclm = m2signal['aniCorr'].clmlength()
                             clm = sparameters[-nclm:]
-                            corrmat = m2signal.aniCorr.corrmat(clm)
+                            corrmat = m2signal['aniCorr'].corrmat(clm)
 
                         indexa = 0
                         indexb = 0
@@ -3270,36 +4467,34 @@ class ptaLikelihood(object):
                                 indexb += self.npff[bb]
                             indexb = 0
                             indexa += self.npff[aa]
-                elif m2signal.stype == 'spectralModel':
-                    spd = 24 * 3600.0
-                    spy = 365.25 * spd
+                elif m2signal['stype'] == 'spectralModel':
                     Amp = 10**sparameters[0]
                     alpha = sparameters[1]
-                    fc = 10**sparameters[2] / spy
+                    fc = 10**sparameters[2] / pic_spy
 
-                    if m2signal.corr == 'single':
-                        findex = np.sum(self.npff[:m2signal.pulsarind])
-                        nfreq = int(self.npf[m2signal.pulsarind]/2)
-                        freqpy = self.ptapsrs[m2signal.pulsarind].Ffreqs
-                        pcdoubled = (Amp * spy**3 / m2signal.Tmax) * ((1 + (freqpy/fc)**2)**(-0.5*alpha))
+                    if m2signal['corr'] == 'single':
+                        findex = np.sum(self.npff[:m2signal['pulsarind']])
+                        nfreq = int(self.npf[m2signal['pulsarind']]/2)
+                        freqpy = self.ptapsrs[m2signal['pulsarind']].Ffreqs
+                        pcdoubled = (Amp * pic_spy**3 / m2signal['Tmax']) * ((1 + (freqpy/fc)**2)**(-0.5*alpha))
 
-                        #pcdoubled = (Amp * spy**3 / (m2signal.Tmax)) * freqpy ** (-Si)
+                        #pcdoubled = (Amp * pic_spy**3 / (m2signal['Tmax'])) * freqpy ** (-Si)
 
                         # Fill the phi matrix
                         di = np.diag_indices(2*nfreq)
                         self.Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += pcdoubled
-                    elif m2signal.corr in ['gr', 'uniform', 'dipole', 'anisotropicgwb']:
-                        freqpy = self.ptapsrs[0].Ffreqs * spy
-                        pcdoubled = (Amp * spy**3 / m2signal.Tmax) / \
+                    elif m2signal['corr'] in ['gr', 'uniform', 'dipole', 'anisotropicgwb']:
+                        freqpy = self.ptapsrs[0].Ffreqs * pic_spy
+                        pcdoubled = (Amp * pic_spy**3 / m2signal['Tmax']) / \
                                 ((1 + (freqpy/fc)**2)**(-0.5*alpha))
                         nfreq = len(freqpy)
 
-                        if m2signal.corr in ['gr', 'uniform', 'dipole']:
-                            corrmat = m2signal.corrmat
-                        elif m2signal.corr == 'anisotropicgwb':
-                            nclm = m2signal.aniCorr.clmlength()
-                            clm = sparameters[-nclm:m2signal.nindex+m2signal.npars]
-                            corrmat = m2signal.aniCorr.corrmat(clm)
+                        if m2signal['corr'] in ['gr', 'uniform', 'dipole']:
+                            corrmat = m2signal['corrmat']
+                        elif m2signal['corr'] == 'anisotropicgwb':
+                            nclm = m2signal['aniCorr'].clmlength()
+                            clm = sparameters[-nclm:m2signal['parindex']+m2signal['npars']]
+                            corrmat = m2signal['aniCorr'].corrmat(clm)
 
                         indexa = 0
                         indexb = 0
@@ -3316,35 +4511,33 @@ class ptaLikelihood(object):
                                 indexb += self.npff[bb]
                             indexb = 0
                             indexa += self.npff[aa]
-                elif m2signal.stype == 'dmpowerlaw':
-                    spd = 24 * 3600.0
-                    spy = 365.25 * spd
+                elif m2signal['stype'] == 'dmpowerlaw':
                     Amp = 10**sparameters[0]
                     Si = sparameters[1]
 
-                    if m2signal.corr == 'single':
-                        findex = np.sum(self.npffdm[:m2signal.pulsarind])
-                        nfreq = int(self.npfdm[m2signal.pulsarind]/2)
-                        freqpy = self.ptapsrs[m2signal.pulsarind].Fdmfreqs * spy
+                    if m2signal['corr'] == 'single':
+                        findex = np.sum(self.npffdm[:m2signal['pulsarind']])
+                        nfreq = int(self.npfdm[m2signal['pulsarind']]/2)
+                        freqpy = self.ptapsrs[m2signal['pulsarind']].Fdmfreqs * pic_spy
                         # TODO: change the units of the DM signal
-                        pcdoubled = (Amp**2 * spy**3 / (12*np.pi*np.pi * m2signal.Tmax)) * freqpy ** (-Si)
+                        pcdoubled = (Amp**2 * pic_spy**3 / (12*np.pi*np.pi * m2signal['Tmax'])) * freqpy ** (-Si)
 
                         # Fill the Theta matrix
                         self.Thetavec[findex:findex+2*nfreq] += pcdoubled
 
-                elif m2signal.stype == 'frequencyline':
+                elif m2signal['stype'] == 'frequencyline':
                     # For a frequency line, the FFmatrix is assumed to be set elsewhere
-                    findex = np.sum(self.npff[:m2signal.pulsarind]) + \
-                            self.npf[m2signal.pulsarind] + 2*m2signal.npsrfreqindex
+                    findex = np.sum(self.npff[:m2signal['pulsarind']]) + \
+                            self.npf[m2signal['pulsarind']] + 2*m2signal['npsrfreqindex']
 
                     pcdoubled = np.array([sparameters[1], sparameters[1]])
                     di = np.diag_indices(2)
 
                     self.Phi[findex:findex+2, findex:findex+2][di] += 10**pcdoubled
-                elif m2signal.stype == 'dmfrequencyline':
+                elif m2signal['stype'] == 'dmfrequencyline':
                     # For a DM frequency line, the DFF is assumed to be set elsewhere
-                    findex = np.sum(self.npffdm[:m2signal.pulsarind]) + \
-                            self.npfdm[m2signal.pulsarind] + 2*m2signal.npsrdmfreqindex
+                    findex = np.sum(self.npffdm[:m2signal['pulsarind']]) + \
+                            self.npfdm[m2signal['pulsarind']] + 2*m2signal['npsrdmfreqindex']
 
                     pcdoubled = np.array([sparameters[1], sparameters[1]])
                     self.Thetavec[findex:findex+2] += 10**pcdoubled
@@ -3364,12 +4557,12 @@ class ptaLikelihood(object):
             m2signal = self.ptasignals[ss]
             if selection[ss]:
                 # Create a parameters array for this particular signal
-                sparameters = m2signal.pstart.copy()
-                sparameters[m2signal.bvary] = \
-                        parameters[m2signal.nindex:m2signal.nindex+m2signal.npars]
-                if m2signal.stype == 'bwm':
+                sparameters = m2signal['pstart'].copy()
+                sparameters[m2signal['bvary']] = \
+                        parameters[m2signal['parindex']:m2signal['parindex']+m2signal['npars']]
+                if m2signal['stype'] == 'bwm':
                     for pp in range(len(self.ptapsrs)):
-                        if m2signal.pulsarind == pp or m2signal.pulsarind == -1:
+                        if m2signal['pulsarind'] == pp or m2signal['pulsarind'] == -1:
                             bwmsig = bwmsignal(sparameters, \
                                     self.ptapsrs[pp].raj, self.ptapsrs[pp].decj, \
                                     self.ptapsrs[pp].toas)
@@ -3539,10 +4732,10 @@ class ptaLikelihood(object):
 
         # Loop over all signals, and find the (DM)spectrum parameters
         for m2signal in self.ptasignals:
-            if m2signal.stype == 'spectrum' and m2signal.corr == 'single':
+            if m2signal['stype'] == 'spectrum' and m2signal['corr'] == 'single':
                 # Red noise, see if we need to include it
-                findex = int(np.sum(self.npf[:m2signal.pulsarind])/2)
-                nfreq = int(self.npf[m2signal.pulsarind]/2)
+                findex = int(np.sum(self.npf[:m2signal['pulsarind']])/2)
+                nfreq = int(self.npf[m2signal['pulsarind']]/2)
 
                 # Select the common frequency modes
                 inc = np.logical_and(bfind[findex:findex+nfreq], bcurfind[findex:findex+nfreq])
@@ -3550,10 +4743,10 @@ class ptaLikelihood(object):
                 newind = np.logical_and(bfind[findex:findex+nfreq], inc == False)
 
                 if np.sum(newind) > 0:
-                    lp -= np.sum(np.log(m2signal.pmax[newind] - m2signal.pmin[newind]))
-            elif m2signal.stype == 'dmspectrum' and m2signal.corr == 'single':
-                fdmindex = int(np.sum(self.npfdm[:m2signal.pulsarind])/2)
-                nfreqdm = int(self.npfdm[m2signal.pulsarind]/2)
+                    lp -= np.sum(np.log(m2signal['pmax'][newind] - m2signal['pmin'][newind]))
+            elif m2signal['stype'] == 'dmspectrum' and m2signal['corr'] == 'single':
+                fdmindex = int(np.sum(self.npfdm[:m2signal['pulsarind']])/2)
+                nfreqdm = int(self.npfdm[m2signal['pulsarind']]/2)
 
                 # Select the common frequency modes
                 inc = np.logical_and(bfdmind[findex:findex+nfreq], bcurfdmind[findex:findex+nfreq])
@@ -3561,7 +4754,7 @@ class ptaLikelihood(object):
                 newind = np.logical_and(bfind[findex:findex+nfreq], inc == False)
 
                 if np.sum(newind) > 0:
-                    lp -= np.sum(np.log(m2signal.pmax[newind] - m2signal.pmin[newind]))
+                    lp -= np.sum(np.log(m2signal['pmax'][newind] - m2signal['pmin'][newind]))
 
         # Update the step position in trans-dimensional parameter space (model space)
         for psr in self.ptapsrs:
@@ -3597,19 +4790,19 @@ class ptaLikelihood(object):
         # Check if we need to draw new red noise parameters
         if npropmod1 > curmod1:
             for m2signal in self.ptasignals:
-                if m2signal.stype == 'spectrum' and m2signal.corr == 'single':
-                    indexfull = m2signal.nindex+npropmod1-1
+                if m2signal['stype'] == 'spectrum' and m2signal['corr'] == 'single':
+                    indexfull = m2signal['parindex']+npropmod1-1
                     index = npropmod1-1
-                    newparameters[indexfull] = m2signal.pmin[index] + \
-                            np.random.rand() * (m2signal.pmax[index] - m2signal.pmin[index])
+                    newparameters[indexfull] = m2signal['pmin'][index] + \
+                            np.random.rand() * (m2signal['pmax'][index] - m2signal['pmin'][index])
 
         if npropmod2 > curmod2:
             for m2signal in self.ptasignals:
-                if m2signal.stype == 'dmspectrum':
-                    indexfull = m2signal.nindex+npropmod2-1
+                if m2signal['stype'] == 'dmspectrum':
+                    indexfull = m2signal['parindex']+npropmod2-1
                     index = npropmod2-1
-                    newparameters[indexfull] = m2signal.pmin[index] + \
-                            np.random.rand() * (m2signal.pmax[index] - m2signal.pmin[index])
+                    newparameters[indexfull] = m2signal['pmin'][index] + \
+                            np.random.rand() * (m2signal['pmax'][index] - m2signal['pmin'][index])
 
         return newparameters
 
@@ -3624,8 +4817,8 @@ class ptaLikelihood(object):
         # Loop over all signals, and obtain the new frequencies of the lines
         for ss in range(len(self.ptasignals)):
             m2signal = self.ptasignals[ss]
-            if m2signal.stype == 'frequencyline':
-                self.ptapsrs[m2signal.pulsarind].SFfreqs[2*m2signal.npsrfreqindex:2*m2signal.npsrfreqindex+2] = parameters[m2signal.nindex]
+            if m2signal['stype'] == 'frequencyline':
+                self.ptapsrs[m2signal['pulsarind']].SFfreqs[2*m2signal['npsrfreqindex']:2*m2signal['npsrfreqindex']+2] = parameters[m2signal['parindex']]
 
         for pindex in range(len(self.ptapsrs)):
             m2psr = self.ptapsrs[pindex]
@@ -3866,7 +5059,9 @@ class ptaLikelihood(object):
     Profiling execution time. Put MDC1 open challenge 1 in the file
     mdc1-open1.h5, and load with:
     ===============================================================================
-    setup_mark3 = "import numpy as np, piccard as pic, matplotlib.pyplot as plt ; m3lik = pic.ptaLikelihood() ; m3lik.initFromFile('mdc1-open1.h5') ; m3lik.initModel(15, modelIndependentGWB=False, modelIndependentNoise=False, modelIndependentDM=False, modelIndependentAniGWB=False, varyEfac=False, incRedNoise=True, incEquad=False, separateEfacs=False, incGWB=True, incDM=False, incAniGWB=False, lAniGWB=2, likfunc='mark3') ; m3lik.initPrior()"
+    setup_mark3 = "import numpy as np, piccard as pic, matplotlib.pyplot as plt
+    ; m3lik = pic.ptaLikelihood() ; m3lik.initFromFile('mdc1-open1.h5') ;
+    m3lik.initModelOld(15, modelIndependentGWB=False, modelIndependentNoise=False, modelIndependentDM=False, modelIndependentAniGWB=False, varyEfac=False, incRedNoise=True, incEquad=False, separateEfacs=False, incGWB=True, incDM=False, incAniGWB=False, lAniGWB=2, likfunc='mark3') ; m3lik.initPrior()"
     timeit.timeit('m3lik.logposterior(m3lik.pstart)', setup=setup_mark3, number=1000)
     ===============================================================================
 
@@ -4108,6 +5303,7 @@ class ptaLikelihood(object):
 
     implements coarse-graining, without added frequency lines
 
+    TODO: does not do deterministic sources yet
     """
     def mark4loglikelihood(self, parameters):
         npsrs = len(self.ptapsrs)
@@ -4652,6 +5848,8 @@ class ptaLikelihood(object):
                           include.
     psrnfinc, psrnfdminc: integer array, indicating how many frequencies per
                           pulsar to include. Overrides psrbfinc and psrbfdminc
+
+    NOTE: Since JSON update this needs some tweaks
     """
     def mark7loglikelihood(self, parameters, psrbfinc=None, psrbfdminc=None, \
             psrnfinc=None, psrnfdminc=None):
@@ -4785,7 +5983,9 @@ class ptaLikelihood(object):
     Profiling execution time. Put J0437 of the ipta-2013 set in the file
     J0437.h5, and load with:
     =============================================================================
-    setup_mark8 = "import numpy as np, piccard as pic, matplotlib.pyplot as plt ; m3lik = pic.ptaLikelihood() ; m3lik.initFromFile('J0437.h5') ; m3lik.initModel(30, modelIndependentGWB=False, modelIndependentNoise=True, modelIndependentDM=True, modelIndependentAniGWB=False, varyEfac=True, incRedNoise=True, incEquad=True, separateEfacs=True, incGWB=False, incDM=True, incAniGWB=False, lAniGWB=2, likfunc='mark6') ; m3lik.initPrior()"
+    setup_mark8 = "import numpy as np, piccard as pic, matplotlib.pyplot as plt
+    ; m3lik = pic.ptaLikelihood() ; m3lik.initFromFile('J0437.h5') ;
+    m3lik.initModelOld(30, modelIndependentGWB=False, modelIndependentNoise=True, modelIndependentDM=True, modelIndependentAniGWB=False, varyEfac=True, incRedNoise=True, incEquad=True, separateEfacs=True, incGWB=False, incDM=True, incAniGWB=False, lAniGWB=2, likfunc='mark6') ; m3lik.initPrior()"
     =============================================================================
 
     Call with:
@@ -4802,6 +6002,8 @@ class ptaLikelihood(object):
     Mark F:   0.41 sec     0.82 sec
     Mark G:   0.83 sec     0.91 sec
     Mark H:   0.76 sec     0.84 sec
+
+    NOTE: Since JSON update this needs some tweaks
     """
     def mark8loglikelihood(self, parameters, psrbfinc=None, psrbfdminc=None, \
             psrnfinc=None, psrnfdminc=None):
@@ -4944,6 +6146,8 @@ class ptaLikelihood(object):
     mark9 loglikelihood of the pta model/likelihood implementation
 
     like mark3loglikelihood, but with single frequency lines
+
+    NOTE: Since JSON update this needs some tweaks
     """
     def mark9loglikelihood(self, parameters):
         npsrs = len(self.ptapsrs)
@@ -5053,6 +6257,8 @@ class ptaLikelihood(object):
 
     Just like mark6loglikelihood, but now with single DM frequencies included in
     the model
+
+    NOTE: Since JSON update this needs some tweaks
     """
     def mark10loglikelihood(self, parameters):
         npsrs = len(self.ptapsrs)
@@ -5197,40 +6403,40 @@ class ptaLikelihood(object):
 
         # Loop over all signals
         for m2signal in self.ptasignals:
-            if m2signal.stype == 'powerlaw' and m2signal.corr == 'anisotropicgwb':
-                nclm = m2signal.aniCorr.clmlength()
-                # lp += parameters[m2signal.nindex]
+            if m2signal['stype'] == 'powerlaw' and m2signal['corr'] == 'anisotropicgwb':
+                nclm = m2signal['aniCorr'].clmlength()
+                # lp += parameters[m2signal['parindex']]
 
-                sparameters = m2signal.pstart.copy()
-                nvaryclm = np.sum(m2signal.bvary[3:])
-                nskip = np.sum(m2signal.bvary[:3])
-                sparameters[3:][m2signal.bvary[3:]] = \
-                        parameters[m2signal.nindex+nskip:m2signal.nindex+nskip+nvaryclm]
+                sparameters = m2signal['pstart'].copy()
+                nvaryclm = np.sum(m2signal['bvary'][3:])
+                nskip = np.sum(m2signal['bvary'][:3])
+                sparameters[3:][m2signal['bvary'][3:]] = \
+                        parameters[m2signal['parindex']+nskip:m2signal['parindex']+nskip+nvaryclm]
 
-                clm = sparameters[m2signal.ntotpars-nclm:m2signal.ntotpars]
-                if m2signal.aniCorr.priorIndicator(clm) == False:
+                clm = sparameters[m2signal['ntotpars']-nclm:m2signal['ntotpars']]
+                if m2signal['aniCorr'].priorIndicator(clm) == False:
                     lp -= 1e99
-            elif m2signal.stype == 'powerlaw' and m2signal.corr != 'single':
-                lp += parameters[m2signal.nindex]
-            elif m2signal.stype == 'spectrum' and m2signal.corr == 'anisotropicgwb':
-                nclm = m2signal.aniCorr.clmlength()
-                sparameters = m2signal.pstart.copy()
-                nfreqs = m2signal.ntotpars - nclm
-                nvaryclm = np.sum(m2signal.bvary[nfreqs:])
-                nskip = np.sum(m2signal.bvary[:nfreqs])
-                sparameters[nfreqs:][m2signal.bvary[nfreqs:]] = \
-                        parameters[m2signal.nindex+nskip:m2signal.nindex+nskip+nvaryclm]
+            elif m2signal['stype'] == 'powerlaw' and m2signal['corr'] != 'single':
+                lp += parameters[m2signal['parindex']]
+            elif m2signal['stype'] == 'spectrum' and m2signal['corr'] == 'anisotropicgwb':
+                nclm = m2signal['aniCorr'].clmlength()
+                sparameters = m2signal['pstart'].copy()
+                nfreqs = m2signal['ntotpars'] - nclm
+                nvaryclm = np.sum(m2signal['bvary'][nfreqs:])
+                nskip = np.sum(m2signal['bvary'][:nfreqs])
+                sparameters[nfreqs:][m2signal['bvary'][nfreqs:]] = \
+                        parameters[m2signal['parindex']+nskip:m2signal['parindex']+nskip+nvaryclm]
 
-                clm = sparameters[m2signal.nindex+m2signal.ntotpars-nclm:m2signal.nindex+m2signal.ntotpars]
+                clm = sparameters[m2signal['parindex']+m2signal['ntotpars']-nclm:m2signal['parindex']+m2signal['ntotpars']]
 
-                if m2signal.aniCorr.priorIndicator(clm) == False:
+                if m2signal['aniCorr'].priorIndicator(clm) == False:
                     lp -= 1e99
-            elif m2signal.stype == 'spectrum' and m2signal.corr != 'single':
-                lp += np.sum(parameters[m2signal.nindex:m2signal.nindex+m2signal.npars])
+            elif m2signal['stype'] == 'spectrum' and m2signal['corr'] != 'single':
+                lp += np.sum(parameters[m2signal['parindex']:m2signal['parindex']+m2signal['npars']])
 
             # Divide by the prior range
-            if np.sum(m2signal.bvary) > 0:
-                lp -= np.sum(np.log(m2signal.pmax[m2signal.bvary]-m2signal.pmin[m2signal.bvary]))
+            if np.sum(m2signal['bvary']) > 0:
+                lp -= np.sum(np.log(m2signal['pmax'][m2signal['bvary']]-m2signal['pmin'][m2signal['bvary']]))
         return lp
 
     # Note: the inclusion of a uniform-amplitude part can have a big influence
@@ -5252,26 +6458,26 @@ class ptaLikelihood(object):
 
         # Loop over all signals
         for m2signal in self.ptasignals:
-            if m2signal.stype == 'spectrum' and m2signal.corr == 'single':
+            if m2signal['stype'] == 'spectrum' and m2signal['corr'] == 'single':
                 # Red noise, see if we need to include it
-                findex = int(np.sum(self.npf[:m2signal.pulsarind])/2)
-                nfreq = int(self.npf[m2signal.pulsarind]/2)
+                findex = int(np.sum(self.npf[:m2signal['pulsarind']])/2)
+                nfreq = int(self.npf[m2signal['pulsarind']]/2)
                 inc = np.logical_and(bfind[findex:findex+nfreq], bcurfind[findex:findex+nfreq])
 
                 if np.sum(inc) > 0:
-                    lp -= np.sum(np.log(m2signal.pmax[inc] - m2signal.pmin[inc]))
+                    lp -= np.sum(np.log(m2signal['pmax'][inc] - m2signal['pmin'][inc]))
                     #lp -= np.sum(inc) * 1.0
-            elif m2signal.stype == 'dmspectrum' and m2signal.corr == 'single':
-                fdmindex = int(np.sum(self.npfdm[:m2signal.pulsarind])/2)
-                nfreqdm = int(self.npfdm[m2signal.pulsarind]/2)
+            elif m2signal['stype'] == 'dmspectrum' and m2signal['corr'] == 'single':
+                fdmindex = int(np.sum(self.npfdm[:m2signal['pulsarind']])/2)
+                nfreqdm = int(self.npfdm[m2signal['pulsarind']]/2)
                 inc = np.logical_and(bfdmind[findex:findex+nfreq], bcurfdmind[findex:findex+nfreq])
 
                 if np.sum(inc) > 0:
-                    lp -= np.sum(np.log(m2signal.pmax[inc] - m2signal.pmin[inc]))
+                    lp -= np.sum(np.log(m2signal['pmax'][inc] - m2signal['pmin'][inc]))
                     #lp -= np.sum(inc) * 1.0
             else:
-                if np.sum(m2signal.bvary) > 0:
-                    lp -= np.sum(np.log(m2signal.pmax[m2signal.bvary]-m2signal.pmin[m2signal.bvary]))
+                if np.sum(m2signal['bvary']) > 0:
+                    lp -= np.sum(np.log(m2signal['pmax'][m2signal['bvary']]-m2signal['pmin'][m2signal['bvary']]))
 
         return lp
 
@@ -5289,8 +6495,8 @@ class ptaLikelihood(object):
                 # Loop over all signals, and obtain the new frequencies of the lines
                 for ss in range(len(self.ptasignals)):
                     m2signal = self.ptasignals[ss]
-                    if m2signal.stype == 'frequencyline':
-                        self.ptapsrs[m2signal.pulsarind].SFfreqs[2*m2signal.npsrfreqindex:2*m2signal.npsrfreqindex+2] = parameters[m2signal.nindex]
+                    if m2signal['stype'] == 'frequencyline':
+                        self.ptapsrs[m2signal['pulsarind']].SFfreqs[2*m2signal['npsrfreqindex']:2*m2signal['npsrfreqindex']+2] = parameters[m2signal['parindex']]
 
                 for m2psr in self.ptapsrs:
                     if m2psr.frequencyLinesAdded > 0:
@@ -5388,6 +6594,9 @@ class ptaLikelihood(object):
     """
     Simple signal generation, use frequency domain for power-law signals by
     default
+
+    NOTE: the G-matrix is ignored when generating data (so generating pre-fit
+    data)
     """
     def gensig(self, parameters=None, filename=None, timedomain=False):
         if parameters == None:
@@ -5430,7 +6639,7 @@ class ptaLikelihood(object):
                 totDFmat[nindex:nindex+npobs, fdmindex:fdmindex+nppfdm] = self.ptapsrs[ii].DF
                 totDmat[nindex:nindex+npobs, nindex:nindex+npobs] = self.ptapsrs[ii].Dmat
 
-            totG[nindex:nindex+npobs, gindex:gindex+npgs] = self.ptapsrs[ii].Gmat
+            totG[nindex:nindex+npobs, gindex:gindex+npgs] = self.ptapsrs[ii].Hmat
             tottoas[nindex:nindex+npobs] = self.ptapsrs[ii].toas
             tottoaerrs[nindex:nindex+npobs] = self.ptapsrs[ii].toaerrs
 
@@ -5442,34 +6651,30 @@ class ptaLikelihood(object):
 
             # Do time-domain stuff explicitly here, for now
             for m2signal in self.ptasignals:
-                sparameters = m2signal.pstart.copy()
-                sparameters[m2signal.bvary] = \
-                        parameters[m2signal.nindex:m2signal.nindex+m2signal.npars]
+                sparameters = m2signal['pstart'].copy()
+                sparameters[m2signal['bvary']] = \
+                        parameters[m2signal['parindex']:m2signal['parindex']+m2signal['npars']]
 
-                if m2signal.stype == 'powerlaw' and m2signal.corr == 'single':
-                    spd = 24 * 3600.0
-                    spy = 365.25 * spd
+                if m2signal['stype'] == 'powerlaw' and m2signal['corr'] == 'single':
                     Amp = 10**sparameters[0]
                     Si = sparameters[1]
 
-                    nindex = np.sum(self.npobs[:m2signal.pulsarind])
-                    ncurobs = self.npobs[m2signal.pulsarind]
+                    nindex = np.sum(self.npobs[:m2signal['pulsarind']])
+                    ncurobs = self.npobs[m2signal['pulsarind']]
 
                     Cr[nindex:nindex+ncurobs,nindex:nindex+ncurobs] +=\
-                            Cred_sec(self.ptapsrs[m2signal.pulsarind].toas,\
+                            Cred_sec(self.ptapsrs[m2signal['pulsarind']].toas,\
                             alpha=0.5*(3-Si),\
                             fL=1.0/100) * (Amp**2)
-                elif m2signal.stype == 'dmpowerlaw' and m2signal.corr == 'single':
-                    spd = 24 * 3600.0
-                    spy = 365.25 * spd
+                elif m2signal['stype'] == 'dmpowerlaw' and m2signal['corr'] == 'single':
                     Amp = 10**sparameters[0]
                     Si = sparameters[1]
 
-                    nindex = np.sum(self.npobs[:m2signal.pulsarind])
-                    ncurobs = self.npobs[m2signal.pulsarind]
+                    nindex = np.sum(self.npobs[:m2signal['pulsarind']])
+                    ncurobs = self.npobs[m2signal['pulsarind']]
 
                     Cdm[nindex:nindex+ncurobs,nindex:nindex+ncurobs] +=\
-                            Cred_sec(self.ptapsrs[m2signal.pulsarind].toas,\
+                            Cred_sec(self.ptapsrs[m2signal['pulsarind']].toas,\
                             alpha=0.5*(3-Si),\
                             fL=1.0/100) * (Amp**2)
 
@@ -5483,8 +6688,12 @@ class ptaLikelihood(object):
                 Cov += np.dot(totDFmat, np.dot(np.diag(self.Thetavec), totDFmat.T))
 
         # Create the projected covariance matrix, and decompose it
-        totG = np.eye(Cov.shape[0])
-        GCG = np.dot(totG.T, np.dot(Cov, totG))
+        # WARNING: for now we are ignoring the G-matrix when generating data
+        if True:
+            totG = np.eye(Cov.shape[0])
+            GCG = Cov
+        else:
+            GCG = np.dot(totG.T, np.dot(Cov, totG))
 
         try:
             cf = sl.cholesky(GCG).T
@@ -5524,40 +6733,13 @@ class ptaLikelihood(object):
         plt.show()
         """
 
-
+        # If required, write all this to HDF5 file
         if filename != None:
-            h5file = h5.File(filename, 'a')
+            t2df = DataFile(filename)
 
-            if not "Data" in h5file:
-                h5file.close()
-                h5file = None
-                raise IOError, "no Data group in hdf5 file"
-
-            datagroup = h5file["Data"]
-
-            # Retrieve the pulsars group
-            if not "Pulsars" in datagroup:
-                h5file.close()
-                h5file = None
-                raise IOError, "no Pulsars group in hdf5 file"
-
-            pulsarsgroup = datagroup["Pulsars"]
-
-            for ii in range(len(self.ptapsrs)):
-                psrname = self.ptapsrs[ii].name
-
-                #print pulsarsgroup[psrname]['prefitRes'][:]
-                #print pulsarsgroup[psrname]['postfitRes'][:]
-
-                pulsarsgroup[psrname]['prefitRes'][:] = self.ptapsrs[ii].residuals
-                pulsarsgroup[psrname]['postfitRes'][:] = self.ptapsrs[ii].residuals
-
-                #pulsarsgroup[psrname].create_dataset('prefitRes', data=np.double(self.ptapsrs[ii].residuals))
-                #pulsarsgroup[psrname].create_dataset('postfitRes', data=np.double(self.ptapsrs[ii].residuals))
-
-            h5file.close()
-            h5file = None
-
+            for ii, psr in enumerate(self.ptapsrs):
+                t2df.addData(psr.name, 'prefitRes', psr.residuals, overwrite=True)
+                t2df.addData(psr.name, 'postfitRes', psr.residuals, overwrite=True)
 
 
     """
@@ -5931,66 +7113,27 @@ existing par/tim files.
 @param timlist: the tim-files of the pulsars. Using as input for the simulation
 @param simlist: the tim-files with generated TOAs, based on the original tim-files
 @param parameters: parameters of the model from which to generate the mock data
-@param h5file: the hdf5-file we will create which holds the newly simulated data
-@param ....: all the same parameters given to 'initModel', from which the model
-             is built. The model should be compatible with 'parameters'
+@param h5file:  the hdf5-file we will create which holds the newly simulated data
+@param kwargs   all the same parameters given to 'makeModelDict', from which the model
+                is built. The model should be compatible with 'parameters'
     
 """
-def simulateFullSet(parlist, timlist, simlist, parameters, h5file, \
-            nfreqmodes=20, ndmfreqmodes=None, \
-            incRedNoise=False, noiseModel='powerlaw', fc=None, \
-            incDM=False, dmModel='powerlaw', \
-            incClock=False, clockModel='powerlaw', \
-            incGWB=False, gwbModel='powerlaw', \
-            incDipole=False, dipoleModel='powerlaw', \
-            incAniGWB=False, anigwbModel='powerlaw', lAniGWB=1, \
-            incBWM=False, \
-            varyEfac=False, incEquad=False, separateEfacs=False, \
-            incCEquad=False, \
-            incSingleFreqNoise=False, \
-                                        # True
-            singlePulsarMultipleFreqNoise=None, \
-                                        # [True, ..., False]
-            multiplePulsarMultipleFreqNoise=None, \
-                                        # [0, 3, 2, ..., 4]
-            dmFrequencyLines=None, \
-                                        # [0, 3, 2, ..., 4]
-            orderFrequencyLines=False, \
-            compression = 'None', \
-            evalCompressionComplement = None, \
-            likfunc='mark3'):
-
+def simulateFullSet(parlist, timlist, simlist, parameters, h5file, **kwargs):
     if len(parlist) != len(timlist) or len(parlist) != len(simlist):
         raise IOError("ERROR: list of par/tim/sim files should be of equal size")
 
     # Create the hdf5-file from the par/tim files
     t2df = DataFile(h5file)
     for ii in range(len(parlist)):
-        t2df.addpulsar(parlist[ii], timlist[ii])
+        t2df.addTempoPulsar(parlist[ii], timlist[ii])
 
-    # Create the model
+    # Apply the model, and generate a realisation of data
     likob = ptaLikelihood(h5file)
-    likob.initModel(nfreqmodes=nfreqmodes, ndmfreqmodes=ndmfreqmodes, \
-            incRedNoise=incRedNoise, noiseModel=noiseModel, fc=fc, \
-            incDM=incDM, dmModel=dmModel, \
-            incClock=incClock, clockModel=clockModel, \
-            incGWB=incGWB, gwbModel=gwbModel, \
-            incDipole=incDipole, dipoleModel=dipoleModel, \
-            incAniGWB=incAniGWB, anigwbModel=anigwbModel, lAniGWB=lAniGWB, \
-            incBWM=incBWM, varyEfac=varyEfac, \
-            incEquad=incEquad, separateEfacs=separateEfacs, \
-            incCEquad=incCEquad, incSingleFreqNoise=incSingleFreqNoise, \
-            singlePulsarMultipleFreqNoise=singlePulsarMultipleFreqNoise, \
-            multiplePulsarMultipleFreqNoise=multiplePulsarMultipleFreqNoise, \
-            dmFrequencyLines=dmFrequencyLines, \
-            orderFrequencyLines=orderFrequencyLines, \
-            compression=compression, \
-            evalCompressionComplement=evalCompressionComplement, \
-            likfunc=likfunc)
-
-    # Generate the signal, and write to the hdf5-file
+    modeldict = likob.makeModelDict(**kwargs)
+    likob.initModel(modeldict)
     likob.gensig(parameters=parameters, filename=h5file)
 
+    # Write the sim-files to disk
     for ii in range(len(parlist)):
         psr = t2.tempopulsar(parlist[ii], timlist[ii])
         psr.stoas[:] -= psr.residuals() / 86400.0
@@ -6416,8 +7559,6 @@ def makespectrumplot(chain, parstart=1, numfreqs=10, freqs=None, \
     fig = plt.figure()
 
     # For plotting reference spectra
-    spd = 24 * 3600.0
-    spy = 365.25 * spd
     pfreqs = 10 ** ufreqs
     ypl = None
     ysm = None
@@ -6429,29 +7570,28 @@ def makespectrumplot(chain, parstart=1, numfreqs=10, freqs=None, \
 
         if Apl is not None and gpl is not None and Tmax is not None:
             Apl = 10**Apl
-            ypl = (Apl**2 * spy**3 / (12*np.pi*np.pi * (Tmax))) * ((pfreqs * spy) ** (-gpl))
+            ypl = (Apl**2 * pic_spy**3 / (12*np.pi*np.pi * (Tmax))) * ((pfreqs * pic_spy) ** (-gpl))
             plt.plot(np.log10(pfreqs), np.log10(ypl), 'g--', linewidth=2.0)
 
         if Asm is not None and asm is not None and Tmax is not None:
             Asm = 10**Asm
-            fcsm = fcsm / spy
-            ysm = (Asm * spy**3 / Tmax) * ((1 + (pfreqs/fcsm)**2)**(-0.5*asm))
+            fcsm = fcsm / pic_spy
+            ysm = (Asm * pic_spy**3 / Tmax) * ((1 + (pfreqs/fcsm)**2)**(-0.5*asm))
             plt.plot(np.log10(pfreqs), np.log10(ysm), 'r--', linewidth=2.0)
 
 
         #plt.axis([np.min(ufreqs)-0.1, np.max(ufreqs)+0.1, np.min(yval-yerr)-1, np.max(yval+yerr)+1])
         plt.xlabel("Frequency [log(f/Hz)]")
         #if True:
-        #    spd = 24 * 3600.0
-        #    spy = 365.25 * spd
         #    #freqs = likobhy.ptapsrs[0].Ffreqs
         #    Tmax = 156038571.88061461
         #    Apl = 10**-13.3 ; Asm = 10**-24
         #    apl = 4.33 ; asm = 4.33
-        #    fc = (10**-1.0)/spy
+        #    fc = (10**-1.0)/pic_spy
 
-        #    pcsm = (Asm * spy**3 / Tmax) * ((1 + (freqs/fc)**2)**(-0.5*asm))
-        #    pcpl = (Apl**2 * spy**3 / (12*np.pi*np.pi * Tmax)) * (freqs*spy) ** (-apl)
+        #    pcsm = (Asm * pic_spy**3 / Tmax) * ((1 + (freqs/fc)**2)**(-0.5*asm))
+        #    pcpl = (Apl**2 * pic_spy**3 / (12*np.pi*np.pi * Tmax)) * \
+        #    (freqs*pic_spy) ** (-apl)
         #    plt.plot(np.log10(freqs), np.log10(pcsm), 'r--', linewidth=2.0)
         #    plt.plot(np.log10(freqs), np.log10(pcpl), 'g--', linewidth=2.0)
 
@@ -6528,6 +7668,8 @@ def upperlimitplot2d(chain, par1=72, par2=73, ymin=None, ymax=None):
 """
 Given a mcmc chain file, this function returns the maximum posterior value, and
 the parameters
+
+NOTE: Deprecated
 """
 def getmlfromchain(chainfilename):
   emceechain = np.loadtxt(chainfilename)
@@ -6626,6 +7768,18 @@ MCMC
 def makeresultsplot(likob, chainfilename, outputdir):
     (logpost, loglik, emceechain, labels) = ReadMCMCFile(chainfilename)
 
+    # Make a ll-plot figure
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    ax.plot(np.arange(len(logpost)), logpost, 'b-')
+    ax.grid(True)
+    ax.set_xlabel('Sample number')
+    ax.set_ylabel('Log-posterior')
+    fileout = outputdir+'/logpost'
+    plt.savefig(fileout+'.png')
+    plt.savefig(fileout+'.eps')
+    plt.close(fig)
+
     # List all varying parameters
     dopar = np.array([1]*likob.dimensions, dtype=np.bool)
 
@@ -6672,18 +7826,23 @@ def makeresultsplot(likob, chainfilename, outputdir):
 
             ax.set_title(r'Efac values, page ' + str(pp))
             ax.set_ylabel(r'EFAC')
-            #ax.legend(('Rutger', 'Rutger ML', 'Lindley', 'Steve',), shadow=True, fancybox=True, numpoints=1)
-            ax.set_yscale('log')
+            #ax.legend(('One', 'Rutger ML', 'Two', 'Three',), shadow=True, fancybox=True, numpoints=1)
+            #ax.set_yscale('log')
 
             xtickNames = plt.setp(ax, xticklabels=efacnames[minpar:maxpar])
             #plt.getp(xtickNames)
             plt.setp(xtickNames, rotation=45, fontsize=8, ha='right')
 
-            for ii in range(len(efacnames)):
-                print str(efacnames[ii]) + ":  " + str(yval[ii]) + " +/- " + str(yerr[ii])
+            efacfileout = open(outputdir+'/efac-page-'+str(pp)+'.txt', 'w')
+            for ii in range(minpar, maxpar):
+                print str(efacnames[ii]) + ":  " + str(yval[ii-minpar]) + " +/- " + str(yerr[ii-minpar])
+                efacfileout.write(str(efacnames[ii]) + "  " + str(yval[ii-minpar]) + "  " + str(yerr[ii-minpar]))
+
+            efacfileout.close()
 
             plt.savefig(fileout+'.png')
             plt.savefig(fileout+'.eps')
+            plt.close(fig)
 
     # Make a plot of the spectra of all pulsars
     spectrumname, spectrumnameshort, spmin, spmax, spfreqs = likob.getSpectraNumbers()
@@ -6719,6 +7878,7 @@ def makeresultsplot(likob, chainfilename, outputdir):
 
         plt.savefig(fileout+'.png')
         plt.savefig(fileout+'.eps')
+        plt.close(fig)
 
     # Make a triplot of all the other parameters
     if np.sum(dopar) > 1:
@@ -6727,6 +7887,7 @@ def makeresultsplot(likob, chainfilename, outputdir):
         triplot(emceechain, parlabels=labels, plotparameters=indices)
         plt.savefig(fileout+'.png')
         plt.savefig(fileout+'.eps')
+        plt.close(fig)
     if np.sum(dopar) == 1:
         # Make a single plot
         indices = np.flatnonzero(np.array(dopar == True))
@@ -6735,6 +7896,7 @@ def makeresultsplot(likob, chainfilename, outputdir):
         fileout = outputdir+'/triplot'
         plt.savefig(fileout+'.png')
         plt.savefig(fileout+'.eps')
+        plt.close(fig)
 
 
 
@@ -6774,9 +7936,7 @@ def Runtwalk(likob, steps, chainfilename, initfile=None, thin=1, analyse=False):
         nsteps = burnindata.shape[0]
         dim = burnindata.shape[1]
         if(ndim != dim):
-          print "ERROR: burnin file not same dimensions!"
-          print "mismatch: ", ndim, dim
-          exit()
+            raise ValueError("ERROR: burnin file not same dimensions. Mismatch {0} {1}".format(ndim, dim))
 
         # Get starting position
         indices = np.random.randint(0, nsteps, 1)
@@ -6938,9 +8098,7 @@ def RunMetropolis(likob, steps, chainfilename, initfile=None, resize=0.088):
     nsteps = burnindata.shape[0]
     dim = burnindata.shape[1]
     if(ndim != dim):
-      print "ERROR: burnin file not same dimensions!"
-      print "mismatch: ", ndim, dim
-      exit()
+        raise ValueError("ERROR: burnin file not same dimensions. Mismatch {0} {1}".format(ndim, dim))
 
     # Get starting position
     indices = np.random.randint(0, nsteps, 1)
@@ -7026,8 +8184,7 @@ def Runemcee(likob, steps, chainfilename, initfile=None, savechain=False, a=2.0)
     nsteps = burnindata.shape[0]
     dim = burnindata.shape[1]
     if(ndim != dim):
-      print "ERROR: burnin file not same dimensions!"
-      exit()
+        raise ValueError("ERROR: burnin file not same dimensions. Mismatch {0} {1}".format(ndim, dim))
     indices = np.random.randint(0, nsteps, nwalkers)
     p0 = [burnindata[i] for i in indices]
   else:
@@ -7184,9 +8341,7 @@ def RunPTMCMC(likob, steps, chainsdir, initfile=None, resize=0.088):
         nsteps = burnindata.shape[0]
         dim = burnindata.shape[1]
         if(ndim != dim):
-            print "ERROR: burnin file not same dimensions!"
-            print "mismatch: ", ndim, dim
-            exit()
+            raise ValueError("ERROR: burnin file not same dimensions. Mismatch {0} {1}".format(ndim, dim))
 
         # Get starting position
         indices = np.random.randint(0, nsteps, 1)
