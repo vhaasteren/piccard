@@ -3530,7 +3530,7 @@ class ptaLikelihood(object):
                     "flagvalue":m2psr.name,
                     "bvary":[True],
                     "pmin":[-10.0],
-                    "pmax":[-5.0],
+                    "pmax":[-4.5],
                     "pwidth":[0.1],
                     "pstart":[-8.0]
                     })
@@ -7171,7 +7171,8 @@ def confinterval(samples, sigmalevel=2, onesided=False, weights=None):
     y = ecdf(x)
   else:
     # MultiNest chain with weights or no statsmodel.api package
-    hist, xedges = np.histogram(samples[:], bins=bins, range=(xmin,xmax), weights=weights, density=True)
+    # hist, xedges = np.histogram(samples[:], bins=bins, range=(xmin,xmax), weights=weights, density=True)
+    hist, xedges = np.histogram(samples[:], bins=bins, range=(xmin,xmax), weights=weights)
     x = np.delete(xedges, -1) + 0.5*(xedges[1] - xedges[0])     # This was originally 1.5*, but turns out this is a bug plotting of 'stepstyle' in matplotlib
     y = np.cumsum(hist) / np.sum(hist)
 
@@ -7800,10 +7801,11 @@ def makeresultsplot(likob, chainfilename, outputdir):
             yval = np.zeros(maxpar-minpar)
             yerr = np.zeros(maxpar-minpar)
 
-            for ii in range(maxpar-minpar):
+            #for ii in range(maxpar-minpar):
+            for ii in range(minpar, maxpar):
                 fmin, fmax = confinterval(emceechain[:, efacparind[ii]], sigmalevel=1)
-                yval[ii] = (fmax + fmin) * 0.5
-                yerr[ii] = (fmax - fmin) * 0.5
+                yval[ii-minpar] = (fmax + fmin) * 0.5
+                yerr[ii-minpar] = (fmax - fmin) * 0.5
 
             # Now make the plot
             fig = plt.figure()
