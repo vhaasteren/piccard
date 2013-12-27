@@ -746,12 +746,22 @@ Calculate the daily-averaging exploder matrix, and the daily averaged site
 arrival times. In the modelling, the residuals will not be changed. It is only
 for calculating correlations
 
+@param toas:        vector of site arrival times. (Seconds)
+@param calcInverse: Boolean that indicates whether the pseudo-inverse of U needs
+                    to be calculated
+
+@return:            Either (avetoas, U), with avetoas the everage toas, and U
+                    the exploder matrix. Or (avetoas, U, Ui), with Ui the
+                    pseudo-inverse of U
+
 Input is a vector of site arrival times. Returns the reduced-size average toas,
 and the exploder matrix  Cfull = U Cred U^{T}
+Of the output, a property of the matrices U and Ui is that:
+np.dot(Ui, U) = np.ones(len(avetoas))
 
 TODO: Make more 'Pythonic'
 """
-def dailyaveragequantities(toas):
+def dailyaveragequantities(toas, calcInverse=False):
     timespan = 10       # Same observation if within 10 seconds
 
     processed = np.array([0]*len(toas), dtype=np.bool)  # No toas processed yet
@@ -773,7 +783,14 @@ def dailyaveragequantities(toas):
         avetoas = np.append(avetoas, np.mean(toas[dailyind]))
         processed[dailyind] = True
 
-    return (avetoas, U)
+    returnvalues = (avetoas, U)
+
+    # Calculate the pseudo-inverse if necessary
+    if calcInverse:
+        Ui = ((1.0/np.sum(U, axis=0)) * U).T
+        returnvalues = (avetoas, U, Ui)
+
+    return returnvalues
 
 
 
@@ -1710,7 +1727,8 @@ class ptaPulsar(object):
         # F-compression
         # W s V^{T} = G^{T} F F^{T} G    H = G Wl
 
-    @param compression: what kind of compression to use: None/average/frequencies
+    @param compression: what kind of compression to use. Can be \
+                        None/average/frequencies/avefrequencies
     @param nfmodes: when using frequencies, use this number if not -1
     @param ndmodes: when using dm frequencies, use this number if not -1
     """
@@ -1774,7 +1792,7 @@ class ptaPulsar(object):
             Vmat, s, Vh = sl.svd(Ho)
             self.Homat = Vmat[:, :Ho.shape[1]]
             self.Hocmat = Vmat[:, Ho.shape[1]:]
-        elif compression == 'frequencies':
+        elif compression == 'frequencies' or compression == 'avefrequencies':
             Ftot = np.zeros((len(self.toas), 0))
 
             # Decide on the (dm)frequencies to include
@@ -1818,7 +1836,14 @@ class ptaPulsar(object):
                 Vmat, svec, Vhsvd = sl.svd(self.DF)
                 Ftot = np.append(Ftot, Vmat[:, :l].copy(), axis=1)
 
-            GF = np.dot(self.Gmat.T, Ftot)
+            if compression == 'avefrequencies':
+                # Calculate U and Ui
+                (self.avetoas, self.U, Ui) = dailyaveragequantities(self.toas, calcInverse=False)
+                UUi = np.dot(U, Ui)
+                GF = np.dot(self.Gmat.T, np.dot(UUi, Ftot))
+            else:
+                GF = np.dot(self.Gmat.T, Ftot)
+
             GFFG = np.dot(GF, GF.T)
 
             # Construct an orthogonal basis, and singular (eigen) values
