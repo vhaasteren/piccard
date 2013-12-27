@@ -1838,8 +1838,8 @@ class ptaPulsar(object):
 
             if compression == 'avefrequencies':
                 # Calculate U and Ui
-                (self.avetoas, self.U, Ui) = dailyaveragequantities(self.toas, calcInverse=False)
-                UUi = np.dot(U, Ui)
+                (self.avetoas, self.U, Ui) = dailyaveragequantities(self.toas, calcInverse=True)
+                UUi = np.dot(self.U, Ui)
                 GF = np.dot(self.Gmat.T, np.dot(UUi, Ftot))
             else:
                 GF = np.dot(self.Gmat.T, Ftot)
@@ -3327,7 +3327,7 @@ class ptaLikelihood(object):
     @param corr:    Signal correlation that must be matched
     """
     def getNumberOfSignals(self, stype='powerlaw', corr='single'):
-        return getNumberOfSignalsFromDict(self.ptasignals, stype, corr)
+        return self.getNumberOfSignalsFromDict(self.ptasignals, stype, corr)
 
     """
     Find the signal numbers of a certain type and correlation
@@ -3488,6 +3488,7 @@ class ptaLikelihood(object):
             incBWM=False, \
             varyEfac=True, incEquad=False, separateEfacs=False, \
             incCEquad=False, \
+            incJitter=False, \
             incSingleFreqNoise=False, \
                                         # True
             singlePulsarMultipleFreqNoise=None, \
@@ -3577,7 +3578,7 @@ class ptaLikelihood(object):
                     })
                 signals.append(newsignal)
 
-            if incCEquad:
+            if incCEquad or incJitter:
                 newsignal = dict({
                     "stype":"jitter",
                     "corr":"single",
@@ -7810,11 +7811,15 @@ MCMC
 """
 def makeresultsplot(likob, chainfilename, outputdir):
     (logpost, loglik, emceechain, labels) = ReadMCMCFile(chainfilename)
+    if logpost is None:
+        lp = loglik
+    else:
+        lp = logpost
 
     # Make a ll-plot figure
     fig = plt.figure()
     ax = fig.add_subplot(111)
-    ax.plot(np.arange(len(logpost)), logpost, 'b-')
+    ax.plot(np.arange(len(lp)), lp, 'b-')
     ax.grid(True)
     ax.set_xlabel('Sample number')
     ax.set_ylabel('Log-posterior')
@@ -8511,7 +8516,11 @@ Obtain the MCMC chain as a numpy array, and a list of parameter indices
 """
 def ReadMCMCFile(chainfile, parametersfile=None, sampler='auto', nolabels=False):
     if sampler.lower() == 'auto':
+        mnparametersfile2 = chainfile+'post_equal_weights.dat.mnparameters.txt'
         # Auto-detect the sampler
+        if os.path.exists(mnparametersfile2):
+            chainfile = chainfile + 'post_equal_weights.dat'
+
         parametersfile = chainfile+'.parameters.txt'
         mnparametersfile = chainfile+'.mnparameters.txt'
         ptparametersfile = chainfile+'/ptparameters.txt'
