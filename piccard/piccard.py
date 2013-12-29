@@ -3593,6 +3593,12 @@ class ptaLikelihood(object):
                     })
                 signals.append(newsignal)
 
+                # If compression 
+                if compression != 'average' and compression != 'avefrequencies' \
+                        and likfunc[:5] != 'mark4':
+                    print "WARNING: Jitter included, but likelihood function will deal with it as an equad."
+                    print "         Use an adequate compression level, or a 'mark4' likelihood"
+
             if incRedNoise:
                 if noiseModel=='spectrum':
                     nfreqs = numNoiseFreqs[ii]
@@ -4326,8 +4332,13 @@ class ptaLikelihood(object):
     Loop over all signals, and fill the diagonal pulsar noise covariance matrix
     (based on efac/equad)
     For two-component noise model, fill the total weights vector
+
+    @param parameters:  The total parameters vector
+    @param selection:   Boolean array, indicating which parameters to include
+    @param incJitter:   Whether or not to include Jitter in the noise vectort
+
     """
-    def setPsrNoise(self, parameters, selection=None):
+    def setPsrNoise(self, parameters, selection=None, incJitter=True):
         # For every pulsar, set the noise vector to zero
         for m2psr in self.ptapsrs:
             if m2psr.twoComponentNoise:
@@ -4355,14 +4366,9 @@ class ptaLikelihood(object):
                                 self.ptapsrs[m2signal['pulsarind']].Wvec * pefac**2
                         self.ptapsrs[m2signal['pulsarind']].Nwovec += \
                                 self.ptapsrs[m2signal['pulsarind']].Wovec * pefac**2
-                    #else:
+
                     self.ptapsrs[m2signal['pulsarind']].Nvec += m2signal['Nvec'] * pefac**2
 
-                    #if m2signal['bvary'][0]:
-                    #    pefac = parameters[m2signal['parindex']]
-                    #else:
-                    #    pefac = parameters[m2signal['ntotindex']]
-                    #self.ptapsrs[m2signal['pulsarind']].Nvec += m2signal['Nvec'] * pefac**2
                 elif m2signal['stype'] == 'equad':
                     if m2signal['npars'] == 1:
                         pequadsqr = 10**(2*parameters[m2signal['parindex']])
@@ -4372,7 +4378,7 @@ class ptaLikelihood(object):
                     if self.ptapsrs[m2signal['pulsarind']].twoComponentNoise:
                         self.ptapsrs[m2signal['pulsarind']].Nwvec += pequadsqr
                         self.ptapsrs[m2signal['pulsarind']].Nwovec += pequadsqr
-                    #else:
+
                     self.ptapsrs[m2signal['pulsarind']].Nvec += m2signal['Nvec'] * pequadsqr
                 elif m2signal['stype'] == 'jitter':
                     if m2signal['npars'] == 1:
@@ -4382,11 +4388,13 @@ class ptaLikelihood(object):
 
                     self.ptapsrs[m2signal['pulsarind']].Qamp = pequadsqr
 
-                    #if m2signal['bvary'][0]:
-                    #    pequadsqr = 10**(2*parameters[m2signal['parindex']])
-                    #else:
-                    #    pequadsqr = 10**(2*parameters[m2signal['ntotindex']])
-                    #self.ptapsrs[m2signal['pulsarind']].Nvec += m2signal['Nvec'] * pequadsqr
+                    if incJitter:
+                        # Need to include it just like the equad (for compresison)
+                        self.ptapsrs[m2signal['pulsarind']].Nvec += m2signal['Nvec'] * pequadsqr
+
+                        if self.ptapsrs[m2signal['pulsarind']].twoComponentNoise:
+                            self.ptapsrs[m2signal['pulsarind']].Nwvec += pequadsqr
+                            self.ptapsrs[m2signal['pulsarind']].Nwovec += pequadsqr
 
 
     """
@@ -4919,9 +4927,14 @@ class ptaLikelihood(object):
 
         # MARK A
 
+        self.setPsrNoise(parameters, incJitter=False)
+
         # If this is already evaluated in the likelihood, do not do it here
         if not self.skipUpdateToggle:
-            self.setPsrNoise(parameters)
+            # Put stuff here that can be skipped if the likelihood function is
+            # called before this one
+            # setPsrNoise is not here anymore, since jitter can differs
+            # TODO: make a toggle that decides whether jitter is included
 
             if self.haveDetSources:
                 self.updateDetSources(parameters)
@@ -5352,7 +5365,8 @@ class ptaLikelihood(object):
 
         # MARK A
 
-        self.setPsrNoise(parameters)
+        # We do noise explicitly
+        self.setPsrNoise(parameters, incJitter=False)
 
         # MARK B
 
