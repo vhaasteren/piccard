@@ -746,11 +746,23 @@ Calculate the daily-averaging exploder matrix, and the daily averaged site
 arrival times. In the modelling, the residuals will not be changed. It is only
 for calculating correlations
 
+@param toas:        vector of site arrival times. (Seconds)
+@param calcInverse: Boolean that indicates whether the pseudo-inverse of U needs
+                    to be calculated
+
+@return:            Either (avetoas, U), with avetoas the everage toas, and U
+                    the exploder matrix. Or (avetoas, U, Ui), with Ui the
+                    pseudo-inverse of U
+
 Input is a vector of site arrival times. Returns the reduced-size average toas,
 and the exploder matrix  Cfull = U Cred U^{T}
+Of the output, a property of the matrices U and Ui is that:
+np.dot(Ui, U) = np.ones(len(avetoas))
+
+TODO: Make more 'Pythonic'
 """
-def dailyaveragequantities(toas):
-    spd = 3600.0 * 0.1     # Seconds per hr/10
+def dailyaveragequantities(toas, calcInverse=False):
+    timespan = 10       # Same observation if within 10 seconds
 
     processed = np.array([0]*len(toas), dtype=np.bool)  # No toas processed yet
     U = np.zeros((len(toas), 0))
@@ -759,8 +771,8 @@ def dailyaveragequantities(toas):
     while not np.all(processed):
         npindex = np.where(processed == False)[0]
         ind = npindex[0]
-        satmin = toas[ind] - spd
-        satmax = toas[ind] + spd
+        satmin = toas[ind] - timespan
+        satmax = toas[ind] + timespan
 
         dailyind = np.where(np.logical_and(toas > satmin, toas < satmax))[0]
 
@@ -771,7 +783,14 @@ def dailyaveragequantities(toas):
         avetoas = np.append(avetoas, np.mean(toas[dailyind]))
         processed[dailyind] = True
 
-    return (avetoas, U)
+    returnvalues = (avetoas, U)
+
+    # Calculate the pseudo-inverse if necessary
+    if calcInverse:
+        Ui = ((1.0/np.sum(U, axis=0)) * U).T
+        returnvalues = (avetoas, U, Ui)
+
+    return returnvalues
 
 
 
@@ -1708,13 +1727,16 @@ class ptaPulsar(object):
         # F-compression
         # W s V^{T} = G^{T} F F^{T} G    H = G Wl
 
-    @param compression: what kind of compression to use: None/average/frequencies
+    @param compression: what kind of compression to use. Can be \
+                        None/average/frequencies/avefrequencies
     @param nfmodes: when using frequencies, use this number if not -1
     @param ndmodes: when using dm frequencies, use this number if not -1
     """
     def constructCompressionMatrix(self, compression='None', \
             nfmodes=-1, ndmodes=-1, likfunc='mark3', threshold=1.0):
         if compression == 'average':
+            # To be sure, just construct the averages again. But is already done
+            # in 'createPulsarAuxiliaries'
             if likfunc[:5] != 'mark4':
                 (self.avetoas, self.U) = dailyaveragequantities(self.toas)
 
@@ -1770,7 +1792,7 @@ class ptaPulsar(object):
             Vmat, s, Vh = sl.svd(Ho)
             self.Homat = Vmat[:, :Ho.shape[1]]
             self.Hocmat = Vmat[:, Ho.shape[1]:]
-        elif compression == 'frequencies':
+        elif compression == 'frequencies' or compression == 'avefrequencies':
             Ftot = np.zeros((len(self.toas), 0))
 
             # Decide on the (dm)frequencies to include
@@ -1814,7 +1836,14 @@ class ptaPulsar(object):
                 Vmat, svec, Vhsvd = sl.svd(self.DF)
                 Ftot = np.append(Ftot, Vmat[:, :l].copy(), axis=1)
 
-            GF = np.dot(self.Gmat.T, Ftot)
+            if compression == 'avefrequencies':
+                # Calculate U and Ui
+                (self.avetoas, self.U, Ui) = dailyaveragequantities(self.toas, calcInverse=False)
+                UUi = np.dot(U, Ui)
+                GF = np.dot(self.Gmat.T, np.dot(UUi, Ftot))
+            else:
+                GF = np.dot(self.Gmat.T, Ftot)
+
             GFFG = np.dot(GF, GF.T)
 
             # Construct an orthogonal basis, and singular (eigen) values
@@ -3298,16 +3327,28 @@ class ptaLikelihood(object):
     @param corr:    Signal correlation that must be matched
     """
     def getNumberOfSignals(self, stype='powerlaw', corr='single'):
-        psrSignals = np.zeros(len(self.ptapsrs), dtype=np.int)
+        return getNumberOfSignalsFromDict(self.ptasignals, stype, corr)
 
-        for ii, m2signal in enumerate(self.ptasignals):
-            if m2signal['stype'] == stype and m2signal['corr'] == corr:
-                if m2signal['pulsarind'] == -1:
-                    psrSignals[:] += 1
-                else:
-                    psrSignals[signal.pulsarind] += 1
+    """
+    Find the signal numbers of a certain type and correlation
 
-        return psrSignals
+    @param signals: Dictionary of all signals
+    @param stype:   The signal type that must be matched
+    @param corr:    Signal correlation that must be matched
+    @param psrind:  Pulsar index that must be matched (-2 means all)
+    """
+    def getSignalNumbersFromDict(self, signals, stype='powerlaw', \
+            corr='single', psrind=-2):
+        signalNumbers = []
+
+        for ii, signal in enumerate(signals):
+            if signal['stype'] == stype and signal['corr'] == corr:
+                if psrind == -2:
+                    signalNumbers.append(ii)
+                elif signal['pulsarind'] == psrind:
+                    signalNumbers.append(ii)
+
+        return np.array(signalNumbers, dtype=np.int)
 
 
     """
@@ -3453,7 +3494,7 @@ class ptaLikelihood(object):
                                         # [True, ..., False]
             multiplePulsarMultipleFreqNoise=None, \
                                         # [0, 3, 2, ..., 4]
-            dmFrequencyLines=None,
+            dmFrequencyLines=None, \
                                         # [0, 3, 2, ..., 4]
             orderFrequencyLines=False, \
             compression = 'frequencies', \
@@ -3530,7 +3571,7 @@ class ptaLikelihood(object):
                     "flagvalue":m2psr.name,
                     "bvary":[True],
                     "pmin":[-10.0],
-                    "pmax":[-5.0],
+                    "pmax":[-4.5],
                     "pwidth":[0.1],
                     "pstart":[-8.0]
                     })
@@ -7171,7 +7212,8 @@ def confinterval(samples, sigmalevel=2, onesided=False, weights=None):
     y = ecdf(x)
   else:
     # MultiNest chain with weights or no statsmodel.api package
-    hist, xedges = np.histogram(samples[:], bins=bins, range=(xmin,xmax), weights=weights, density=True)
+    # hist, xedges = np.histogram(samples[:], bins=bins, range=(xmin,xmax), weights=weights, density=True)
+    hist, xedges = np.histogram(samples[:], bins=bins, range=(xmin,xmax), weights=weights)
     x = np.delete(xedges, -1) + 0.5*(xedges[1] - xedges[0])     # This was originally 1.5*, but turns out this is a bug plotting of 'stepstyle' in matplotlib
     y = np.cumsum(hist) / np.sum(hist)
 
@@ -7687,6 +7729,7 @@ chain, plot the different walkers independently
 
 Maximum number of figures is an optional parameter (for emcee can be large)
 
+NOTE: Do not use, except for emcee nowadays
 """
 def makellplot(chainfilename, numfigs=2, emceesort=False):
   emceechain = np.loadtxt(chainfilename)
@@ -7783,7 +7826,33 @@ def makeresultsplot(likob, chainfilename, outputdir):
     # List all varying parameters
     dopar = np.array([1]*likob.dimensions, dtype=np.bool)
 
-    # First make a plot of all efac's
+    # First plot the timing residuals, coloured by backend system, for each pulsar
+    becolours = ['b', 'g', 'r', 'c', 'm', 'y', 'k']
+    for pp, psr in enumerate(likob.ptapsrs):
+        fileout = outputdir+'/residuals-' + psr.name
+        fig = plt.figure()
+        ax = fig.add_subplot(111)
+
+        backends = list(set(psr.flags))
+        for bb, backend in enumerate(backends):
+            toaind = np.array(np.array(psr.flags) == backend, dtype=np.bool)
+            respl = ax.errorbar(psr.toas[toaind]/pic_spd, \
+                    psr.residuals[toaind]*1e6, \
+                    yerr=psr.toaerrs[toaind]*1e6, fmt='.', \
+                    c=becolours[bb % len(becolours)])
+
+        ax.set_xlabel('TOA [MJD] - 53000')
+        ax.set_ylabel(r'Residual [$\mu$s]')
+        ax.set_title(psr.name)
+        ax.grid(True)
+
+        plt.savefig(fileout+'.png')
+        plt.savefig(fileout+'.eps')
+
+        plt.close(fig)
+        
+
+    # Make a plot of all efac's
     efacparind, efacpsrind, efacnames = likob.getEfacNumbers()
     dopar[efacparind] = False
 
@@ -7800,10 +7869,11 @@ def makeresultsplot(likob, chainfilename, outputdir):
             yval = np.zeros(maxpar-minpar)
             yerr = np.zeros(maxpar-minpar)
 
-            for ii in range(maxpar-minpar):
+            #for ii in range(maxpar-minpar):
+            for ii in range(minpar, maxpar):
                 fmin, fmax = confinterval(emceechain[:, efacparind[ii]], sigmalevel=1)
-                yval[ii] = (fmax + fmin) * 0.5
-                yerr[ii] = (fmax - fmin) * 0.5
+                yval[ii-minpar] = (fmax + fmin) * 0.5
+                yerr[ii-minpar] = (fmax - fmin) * 0.5
 
             # Now make the plot
             fig = plt.figure()
@@ -7836,7 +7906,8 @@ def makeresultsplot(likob, chainfilename, outputdir):
             efacfileout = open(outputdir+'/efac-page-'+str(pp)+'.txt', 'w')
             for ii in range(minpar, maxpar):
                 print str(efacnames[ii]) + ":  " + str(yval[ii-minpar]) + " +/- " + str(yerr[ii-minpar])
-                efacfileout.write(str(efacnames[ii]) + "  " + str(yval[ii-minpar]) + "  " + str(yerr[ii-minpar]))
+                efacfileout.write(str(efacnames[ii]) + "  " + str(yval[ii-minpar]) + \
+                                "  " + str(yerr[ii-minpar]) + "\n")
 
             efacfileout.close()
 
@@ -7899,6 +7970,66 @@ def makeresultsplot(likob, chainfilename, outputdir):
         plt.close(fig)
 
 
+"""
+Given a likelihood object, an MCMC chain file, and a JSON model file, this
+function will process the MCMC chain and finds the upper-limit noise values that
+should be used when deciding how many frequencies should be used in the
+modelling. These values should later be given to 'numfreqsFromSpectrum', but for
+now are written to the JSON file.
+For now, this is only done for noise powerlaw signals, and DM powerlaw signals
+
+@param likob:           The likelihood object belonging to the MCMC chain
+@param chainfilename:   Name of the MCMC file that we will read in
+@param jsonfile:        Name of the JSON file we will write to
+"""
+def calculateCompressionSpectrum(likob, chainfilename, jsonfile):
+    # Find the power-law signals, and the DM signals
+    rnsigs = likob.getSignalNumbersFromDict(likob.ptasignals, stype='powerlaw', \
+            corr='single')
+    dmsigs = likob.getSignalNumbersFromDict(likob.ptasignals, stype='dmpowerlaw', \
+            corr='single')
+    allsigs = np.append(rnsigs, dmsigs)
+
+    # Read in the MCMC chain
+    (logpost, loglik, chain, labels) = ReadMCMCFile(chainfilename)
+
+    # Find the maximum likelihood value
+    mlind = np.argmax(loglik)
+
+    # For each of these, find the maximum amplitude signal to use for
+    # compression
+    for ss in allsigs:
+        pi = likob.ptasignals[ss]['parindex']
+
+        # Figure out the spectral index
+        #if likob.ptasignals[ss]['stype'] == 'dmpowerlaw':
+        #    si = 2.0
+        #else:
+        #    si = 3.3
+
+        # Figure out which chain points to use
+        if likob.ptasignals[ss]['bvary'][0] and \
+                likob.ptasignals[ss]['bvary'][1]:
+            si = chain[mlind, pi+1]
+
+            # Both amplitude and spectral index in chain
+            chainindices = np.flatnonzero(np.logical_and( \
+                    chain[:,pi+1] > si-0.1, \
+                    chain[:,pi+1] < si+0.1))
+        elif likob.ptasignals[ss]['bvary'][0]:
+            chainindices = np.arange(chain.shape[0])
+        else:
+            continue
+
+        # Find the two-sigma upper-limit on the amplitude
+        minamp, maxamp = confinterval(chain[:,pi][chainindices], \
+                sigmalevel=3, onesided=True)
+
+        # Add the maximum amplitude and spectral index to the dictionary
+        likob.ptasignals[ss]['compressionSpectrum'] = [maxamp, si]
+
+    # Write the JSON file to disk
+    likob.writeModelToFile(jsonfile)
 
 
 
