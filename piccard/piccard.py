@@ -83,7 +83,8 @@ except ImportError:
 pic_DMk = 4.15e3        # Units MHz^2 cm^3 pc sec
 
 pic_spd = 86400.0       # Seconds per day
-pic_spy = 31556926.0    # Seconds per year (yr = 365.25 days, so Julian years)
+#pic_spy = 31556926.0    # Seconds per year (yr = 365.25 days, so Julian years)
+pic_spy =  31557600.0    # Seconds per year (yr = 365.25 days, so Julian years)
 pic_T0 = 53000.0        # MJD to which all HDF5 toas are referenced
 
 
@@ -747,17 +748,17 @@ arrival times. In the modelling, the residuals will not be changed. It is only
 for calculating correlations
 
 @param toas:        vector of site arrival times. (Seconds)
-@param calcInverse: Boolean that indicates whether the pseudo-inverse of U needs
+@param calcInverse: Boolean that indicates whether the pseudo-inverse of Umat needs
                     to be calculated
 
-@return:            Either (avetoas, U), with avetoas the everage toas, and U
-                    the exploder matrix. Or (avetoas, U, Ui), with Ui the
-                    pseudo-inverse of U
+@return:            Either (avetoas, Umat), with avetoas the everage toas, and Umat
+                    the exploder matrix. Or (avetoas, Umat, Ui), with Ui the
+                    pseudo-inverse of Umat
 
 Input is a vector of site arrival times. Returns the reduced-size average toas,
-and the exploder matrix  Cfull = U Cred U^{T}
-Of the output, a property of the matrices U and Ui is that:
-np.dot(Ui, U) = np.ones(len(avetoas))
+and the exploder matrix  Cfull = Umat Cred Umat^{T}
+Of the output, a property of the matrices Umat and Ui is that:
+np.dot(Ui, Umat) = np.ones(len(avetoas))
 
 TODO: Make more 'Pythonic'
 """
@@ -765,7 +766,7 @@ def dailyaveragequantities(toas, calcInverse=False):
     timespan = 10       # Same observation if within 10 seconds
 
     processed = np.array([0]*len(toas), dtype=np.bool)  # No toas processed yet
-    U = np.zeros((len(toas), 0))
+    Umat = np.zeros((len(toas), 0))
     avetoas = np.empty(0)
 
     while not np.all(processed):
@@ -779,16 +780,16 @@ def dailyaveragequantities(toas, calcInverse=False):
         newcol = np.zeros((len(toas)))
         newcol[dailyind] = 1.0
 
-        U = np.append(U, np.array([newcol]).T, axis=1)
+        Umat = np.append(Umat, np.array([newcol]).T, axis=1)
         avetoas = np.append(avetoas, np.mean(toas[dailyind]))
         processed[dailyind] = True
 
-    returnvalues = (avetoas, U)
+    returnvalues = (avetoas, Umat)
 
     # Calculate the pseudo-inverse if necessary
     if calcInverse:
-        Ui = ((1.0/np.sum(U, axis=0)) * U).T
-        returnvalues = (avetoas, U, Ui)
+        Ui = ((1.0/np.sum(Umat, axis=0)) * Umat).T
+        returnvalues = (avetoas, Umat, Ui)
 
     return returnvalues
 
@@ -1738,14 +1739,14 @@ class ptaPulsar(object):
             # To be sure, just construct the averages again. But is already done
             # in 'createPulsarAuxiliaries'
             if likfunc[:5] != 'mark4':
-                (self.avetoas, self.U) = dailyaveragequantities(self.toas)
+                (self.avetoas, self.Umat) = dailyaveragequantities(self.toas)
 
-            # This assumes that self.U has already been set
-            GU = np.dot(self.Gmat.T, self.U)
+            # This assumes that self.Umat has already been set
+            GU = np.dot(self.Gmat.T, self.Umat)
             GUUG = np.dot(GU, GU.T)
 
             # Construct an orthogonal basis, and singular values
-            # svech, Vmath = sl.eigh(GUUG)
+            #svech, Vmath = sl.eigh(GUUG)
             Vmat, svec, Vhsvd = sl.svd(GUUG)
 
             # Decide how many basis vectors we'll take. (Would be odd if this is
@@ -1756,15 +1757,21 @@ class ptaPulsar(object):
             #print "svec:   ", svec
             #print "cumrms: ", cumrms
             #print "totrms: ", totrms
-            l = np.flatnonzero( (cumrms/totrms) > threshold )[0] + 1
+            inds = (cumrms/totrms) >= threshold
+            if np.sum(inds) > 0:
+                # We can compress
+                l = np.flatnonzero( inds )[0] + 1
+            else:
+                # We cannot compress, keep all
+                l = self.Umat.shape[1]
 
             print "Number of U basis vectors for " + \
-                    self.name + ": " + str(self.U.shape) + \
+                    self.name + ": " + str(self.Umat.shape) + \
                     " --> " + str(l)
             """
-            ll = self.U.shape[1]
+            ll = self.Umat.shape[1]
 
-            print "U: ", self.U.shape
+            print "Umat: ", self.Umat.shape
             print "CumRMS:    ", cumrms
             print "cumrms[l] / tot = ", cumrms[l] / totrms
             print "svec range:   ", svec[130:150]
@@ -1789,9 +1796,14 @@ class ptaPulsar(object):
             self.Hcmat = Vmat[:, l:]
 
             # For compression-complements, construct Ho and Hoc
-            Vmat, s, Vh = sl.svd(Ho)
-            self.Homat = Vmat[:, :Ho.shape[1]]
-            self.Hocmat = Vmat[:, Ho.shape[1]:]
+            if Ho.shape[1] > 0:
+                Vmat, s, Vh = sl.svd(Ho)
+                self.Homat = Vmat[:, :Ho.shape[1]]
+                self.Hocmat = Vmat[:, Ho.shape[1]:]
+            else:
+                self.Homat = np.zeros((Vmat.shape[0], 0))
+                self.Hocmat = np.eye(Vmat.shape[0])
+
         elif compression == 'frequencies' or compression == 'avefrequencies':
             Ftot = np.zeros((len(self.toas), 0))
 
@@ -1837,9 +1849,11 @@ class ptaPulsar(object):
                 Ftot = np.append(Ftot, Vmat[:, :l].copy(), axis=1)
 
             if compression == 'avefrequencies':
-                # Calculate U and Ui
-                (self.avetoas, self.U, Ui) = dailyaveragequantities(self.toas, calcInverse=True)
-                UUi = np.dot(self.U, Ui)
+                print "WARNING: this type of compression is only for testing purposes"
+
+                # Calculate Umat and Ui
+                (self.avetoas, self.Umat, Ui) = dailyaveragequantities(self.toas, calcInverse=True)
+                UUi = np.dot(self.Umat, Ui)
                 GF = np.dot(self.Gmat.T, np.dot(UUi, Ftot))
             else:
                 GF = np.dot(self.Gmat.T, Ftot)
@@ -1853,6 +1867,7 @@ class ptaPulsar(object):
             # Decide how many basis vectors we'll take.
             cumrms = np.cumsum(svec)
             totrms = np.sum(svec)
+            # print "Freqs: ", cumrms / totrms
             l = np.flatnonzero( (cumrms/totrms) >= threshold )[0] + 1
             # l = Ftot.shape[1]-8         # This line would cause the threshold to be ignored
 
@@ -1965,7 +1980,7 @@ class ptaPulsar(object):
             self.DF = np.zeros((len(self.freqs), 0))
 
         # Create the dailay averaged residuals
-        (self.avetoas, self.U) = dailyaveragequantities(self.toas)
+        (self.avetoas, self.Umat) = dailyaveragequantities(self.toas)
 
         # Write these quantities to disk
         if write != 'no':
@@ -1977,7 +1992,7 @@ class ptaPulsar(object):
             t2df.addData(self.name, 'pic_DF', self.DF)
 
             t2df.addData(self.name, 'pic_avetoas', self.avetoas)
-            t2df.addData(self.name, 'pic_U', self.U)
+            t2df.addData(self.name, 'pic_Umat', self.Umat)
 
         # Next we'll need the G-matrices, and the compression matrices.
         U, s, Vh = sl.svd(self.Mmat)
@@ -2117,9 +2132,9 @@ class ptaPulsar(object):
             self.Gr = np.dot(self.Hmat.T, self.residuals)
             self.GGr = np.dot(self.Hmat, self.Gr)
             self.GtF = np.dot(self.Hmat.T, self.Fmat)
-            GtU = np.dot(self.Hmat.T, self.U)
+            GtU = np.dot(self.Hmat.T, self.Umat)
 
-            self.UtF = np.dot(self.U.T, self.Fmat)
+            self.UtF = np.dot(self.Umat.T, self.Fmat)
 
             # For two-component noise
             # Diagonalise GtEfG
@@ -2135,7 +2150,7 @@ class ptaPulsar(object):
                 self.Wovec, self.Aomat = sl.eigh(HotNeHo)
 
                 Hor = np.dot(self.Homat.T, self.residuals)
-                HotU = np.dot(self.Homat.T, self.U)
+                HotU = np.dot(self.Homat.T, self.Umat)
                 self.AoGr = np.dot(self.Aomat.T, Hor)
                 self.AoGU = np.dot(self.Aomat.T, HotU)
             else:
@@ -2164,9 +2179,9 @@ class ptaPulsar(object):
             self.Gr = np.dot(self.Hmat.T, self.residuals)
             self.GGr = np.dot(self.Hmat, self.Gr)
             self.GtF = np.dot(self.Hmat.T, self.Fmat)
-            GtU = np.dot(self.Hmat.T, self.U)
+            GtU = np.dot(self.Hmat.T, self.Umat)
 
-            self.UtF = np.dot(self.U.T, self.Fmat)
+            self.UtF = np.dot(self.Umat.T, self.Fmat)
 
             # Initialise the single frequency with a frequency of 10 / yr
             self.frequencyLinesAdded = nSingleFreqs
@@ -2176,7 +2191,7 @@ class ptaPulsar(object):
             self.FFmat = np.append(self.Fmat, self.SFmat, axis=1)
             self.SFfreqs = np.log10(np.array([sfreqs, sfreqs]).T.flatten())
 
-            self.UtFF = np.dot(self.U.T, self.FFmat)
+            self.UtFF = np.dot(self.Umat.T, self.FFmat)
 
             # For two-component noise
             # Diagonalise GtEfG
@@ -2192,7 +2207,7 @@ class ptaPulsar(object):
                 self.Wovec, self.Aomat = sl.eigh(HotNeHo)
 
                 Hor = np.dot(self.Homat.T, self.residuals)
-                HotU = np.dot(self.Homat.T, self.U)
+                HotU = np.dot(self.Homat.T, self.Umat)
                 self.AoGr = np.dot(self.Aomat.T, Hor)
                 self.AoGU = np.dot(self.Aomat.T, HotU)
             else:
@@ -2667,7 +2682,7 @@ class ptaPulsar(object):
             self.AGU = np.array(t2df.getData(self.name, 'pic_AGU'))
             self.AoGU = np.array(t2df.getData(self.name, 'pic_AoGU', dontread=memsave))
             self.avetoas = np.array(t2df.getData(self.name, 'pic_avetoas'))
-            self.U = np.array(t2df.getData(self.name, 'pic_U'))
+            self.Umat = np.array(t2df.getData(self.name, 'pic_Umat'))
             self.Fmat = np.array(t2df.getData(self.name, 'pic_Fmat', dontread=memsave))
 
         if likfunc == 'mark4ln':
@@ -2681,7 +2696,7 @@ class ptaPulsar(object):
             self.AGU = np.array(t2df.getData(self.name, 'pic_AGU'))
             self.AoGU = np.array(t2df.getData(self.name, 'pic_AoGU', dontread=memsave))
             self.avetoas = np.array(t2df.getData(self.name, 'pic_avetoas'))
-            self.U = np.array(t2df.getData(self.name, 'pic_U'))
+            self.Umat = np.array(t2df.getData(self.name, 'pic_Umat'))
             self.Fmat = np.array(t2df.getData(self.name, 'pic_Fmat', dontread=memsave))
 
         if likfunc == 'mark6' or likfunc == 'mark6fa':
@@ -4352,7 +4367,7 @@ class ptaLikelihood(object):
             selection = np.array([1]*len(self.ptasignals), dtype=np.bool)
 
         # Loop over all white noise signals, and fill the pulsar Nvec
-        for ss in range(len(self.ptasignals)):
+        for ss, m2signal in enumerate(self.ptasignals):
             m2signal = self.ptasignals[ss]
             if selection[ss]:
                 if m2signal['stype'] == 'efac':
@@ -4877,7 +4892,7 @@ class ptaLikelihood(object):
                     m2psr.SFmat = singleFreqFourierModes(m2psr.toas, 10**m2psr.SFfreqs[::2])
                     m2psr.FFmat = np.append(m2psr.Fmat, m2psr.SFmat, axis=1)
 
-                    m2psr.UtFF = np.dot(m2psr.U.T, m2psr.FFmat)
+                    m2psr.UtFF = np.dot(m2psr.Umat.T, m2psr.FFmat)
                 else:
                     m2psr.SFmat = singleFreqFourierModes(m2psr.toas, 10**m2psr.SFfreqs[::2])
                     m2psr.FFmat = np.append(m2psr.Fmat, m2psr.SFmat, axis=1)
@@ -4944,25 +4959,29 @@ class ptaLikelihood(object):
         # Armed with the Noise (and it's inverse), we'll construct the
         # auxiliaries for all pulsars
         for ii in range(npsrs):
-            if self.ptapsrs[ii].twoComponentNoise:
-                self.rGr[ii] = np.sum(self.ptapsrs[ii].AoGr ** 2 / self.ptapsrs[ii].Nwovec)
-                self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nwovec))
+            if self.npgos[ii] > 0:
+                if self.ptapsrs[ii].twoComponentNoise:
+                    self.rGr[ii] = np.sum(self.ptapsrs[ii].AoGr ** 2 / self.ptapsrs[ii].Nwovec)
+                    self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nwovec))
+                else:
+                    Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
+                    NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Hocmat.T).T
+                    GcNiGc = np.dot(self.ptapsrs[ii].Hocmat.T, NiGc)
+                    GcNir = np.dot(NiGc.T, self.ptapsrs[ii].detresiduals)
+
+                    try:
+                        cf = sl.cho_factor(GcNiGc)
+                        self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nvec)) + \
+                                2*np.sum(np.log(np.diag(cf[0])))
+                        GcNiGcr = sl.cho_solve(cf, GcNir)
+                    except np.linalg.LinAlgError:
+                        print "comploglikelihood: GcNiGc singular"
+
+                    self.rGr[ii] = np.dot(self.ptapsrs[ii].detresiduals, Nir) \
+                            - np.dot(GcNir, GcNiGcr)
             else:
-                Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
-                NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Hocmat.T).T
-                GcNiGc = np.dot(self.ptapsrs[ii].Hocmat.T, NiGc)
-                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].detresiduals)
-
-                try:
-                    cf = sl.cho_factor(GcNiGc)
-                    self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nvec)) + \
-                            2*np.sum(np.log(np.diag(cf[0])))
-                    GcNiGcr = sl.cho_solve(cf, GcNir)
-                except np.linalg.LinAlgError:
-                    print "comploglikelihood: GcNiGc singular"
-
-                self.rGr[ii] = np.dot(self.ptapsrs[ii].detresiduals, Nir) \
-                        - np.dot(GcNir, GcNiGcr)
+                self.rGr[ii] = 0
+                self.GNGldet[ii] = 0
 
         # Now we are ready to return the log-likelihood
         return -0.5*np.sum(self.npgos)*np.log(2*np.pi) \
@@ -5366,6 +5385,7 @@ class ptaLikelihood(object):
         # MARK A
 
         # We do noise explicitly
+        # Jitter is done here in the likelihood. Do not add to diagonal noise
         self.setPsrNoise(parameters, incJitter=False)
 
         # MARK B
@@ -5397,7 +5417,7 @@ class ptaLikelihood(object):
                 Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
                 NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Hcmat.T).T
                 GcNiGc = np.dot(self.ptapsrs[ii].Hcmat.T, NiGc)
-                NiU = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].U.T).T
+                NiU = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Umat.T).T
                 GcNir = np.dot(NiGc.T, self.ptapsrs[ii].detresiduals)
                 GcNiU = np.dot(NiGc.T, self.ptapsrs[ii].Umat)
 
@@ -5415,7 +5435,7 @@ class ptaLikelihood(object):
                 self.rGU[uindex:uindex+nus] = np.dot(self.ptapsrs[ii].detresiduals, NiU) \
                         - np.dot(GcNir, GcNiGcU)
                 self.UGGNGGU[uindex:uindex+nus, uindex:uindex+nus] = \
-                        np.dot(NiU.T, self.ptapsrs[ii].U) - np.dot(GcNiU.T, GcNiGcU)
+                        np.dot(NiU.T, self.ptapsrs[ii].Umat) - np.dot(GcNiU.T, GcNiGcU)
 
 
 
@@ -5481,6 +5501,10 @@ class ptaLikelihood(object):
         # Mark F
 
         # Now we are ready to return the log-likelihood
+        #print rGSigmaGr, PhiLD, SigmaLD, np.trace(self.UGGNGGU), \
+        #        np.trace(Phiinv), np.trace(self.Phi)
+        #print self.Phi
+
         return -0.5*np.sum(self.npgs)*np.log(2*np.pi) \
                 -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) \
                 + 0.5*rGSigmaGr - 0.5*PhiLD - 0.5*SigmaLD
@@ -5529,7 +5553,7 @@ class ptaLikelihood(object):
                 Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
                 NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Hcmat.T).T
                 GcNiGc = np.dot(self.ptapsrs[ii].Hcmat.T, NiGc)
-                NiU = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].U.T).T
+                NiU = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Umat.T).T
                 GcNir = np.dot(NiGc.T, self.ptapsrs[ii].detresiduals)
                 GcNiU = np.dot(NiGc.T, self.ptapsrs[ii].Umat)
 
@@ -5547,7 +5571,7 @@ class ptaLikelihood(object):
                 self.rGU[uindex:uindex+nus] = np.dot(self.ptapsrs[ii].detresiduals, NiU) \
                         - np.dot(GcNir, GcNiGcU)
                 self.UGGNGGU[uindex:uindex+nus, uindex:uindex+nus] = \
-                        np.dot(NiU.T, self.ptapsrs[ii].U) - np.dot(GcNiU.T, GcNiGcU)
+                        np.dot(NiU.T, self.ptapsrs[ii].Umat) - np.dot(GcNiU.T, GcNiGcU)
 
 
 
@@ -6796,6 +6820,158 @@ class ptaLikelihood(object):
             for ii, psr in enumerate(self.ptapsrs):
                 t2df.addData(psr.name, 'prefitRes', psr.residuals, overwrite=True)
                 t2df.addData(psr.name, 'postfitRes', psr.residuals, overwrite=True)
+
+
+
+    """
+    Blah
+    """
+    def gensigjit(self, parameters=None, filename=None, timedomain=False):
+        if parameters == None:
+            parameters = self.pstart.copy()
+
+        npsrs = len(self.ptapsrs)
+
+        self.setPsrNoise(parameters)
+
+        if self.haveStochSources:
+            self.constructPhiAndTheta(parameters)
+
+        # Allocate some auxiliary matrices
+        Cov = np.zeros((np.sum(self.npobs), np.sum(self.npobs)))
+        totFmat = np.zeros((np.sum(self.npobs), np.sum(self.npf)))
+        totDFmat = np.zeros((np.sum(self.npobs), np.sum(self.npf)))
+        totDmat = np.zeros((np.sum(self.npobs), np.sum(self.npobs)))
+        totG = np.zeros((np.sum(self.npobs), np.sum(self.npgs)))
+        tottoas = np.zeros(np.sum(self.npobs))
+        tottoaerrs = np.zeros(np.sum(self.npobs))
+
+        # Fill the auxiliary matrices
+        for ii in range(npsrs):
+            nindex = np.sum(self.npobs[:ii])
+            findex = np.sum(self.npf[:ii])
+            fdmindex = np.sum(self.npfdm[:ii])
+            gindex = np.sum(self.npgs[:ii])
+            npobs = self.npobs[ii]
+            nppf = self.npf[ii]
+            nppfdm = self.npfdm[ii]
+            npgs = self.npgs[ii]
+            #if self.ptapsrs[ii].twoComponentNoise:
+            #    pass
+            #else:
+            #    pass
+            Cov[nindex:nindex+npobs, nindex:nindex+npobs] = np.diag(self.ptapsrs[ii].Nvec)
+            totFmat[nindex:nindex+npobs, findex:findex+nppf] = self.ptapsrs[ii].Fmat
+
+            if self.ptapsrs[ii].DF is not None:
+                totDFmat[nindex:nindex+npobs, fdmindex:fdmindex+nppfdm] = self.ptapsrs[ii].DF
+                totDmat[nindex:nindex+npobs, nindex:nindex+npobs] = self.ptapsrs[ii].Dmat
+
+            totG[nindex:nindex+npobs, gindex:gindex+npgs] = self.ptapsrs[ii].Hmat
+            tottoas[nindex:nindex+npobs] = self.ptapsrs[ii].toas
+            tottoaerrs[nindex:nindex+npobs] = self.ptapsrs[ii].toaerrs
+
+
+        if timedomain:
+            # The time-domain matrices for red noise and DM variations
+            Cr = np.zeros((np.sum(self.npobs), np.sum(self.npobs)))     # Time domain red signals
+            Cdm = np.zeros((np.sum(self.npobs), np.sum(self.npobs)))    # Time domain red DM signals
+
+            # Do time-domain stuff explicitly here, for now
+            for m2signal in self.ptasignals:
+                sparameters = m2signal['pstart'].copy()
+                sparameters[m2signal['bvary']] = \
+                        parameters[m2signal['parindex']:m2signal['parindex']+m2signal['npars']]
+
+                if m2signal['stype'] == 'powerlaw' and m2signal['corr'] == 'single':
+                    Amp = 10**sparameters[0]
+                    Si = sparameters[1]
+
+                    nindex = np.sum(self.npobs[:m2signal['pulsarind']])
+                    ncurobs = self.npobs[m2signal['pulsarind']]
+
+                    Cr[nindex:nindex+ncurobs,nindex:nindex+ncurobs] +=\
+                            Cred_sec(self.ptapsrs[m2signal['pulsarind']].toas,\
+                            alpha=0.5*(3-Si),\
+                            fL=1.0/100) * (Amp**2)
+                elif m2signal['stype'] == 'dmpowerlaw' and m2signal['corr'] == 'single':
+                    Amp = 10**sparameters[0]
+                    Si = sparameters[1]
+
+                    nindex = np.sum(self.npobs[:m2signal['pulsarind']])
+                    ncurobs = self.npobs[m2signal['pulsarind']]
+
+                    Cdm[nindex:nindex+ncurobs,nindex:nindex+ncurobs] +=\
+                            Cred_sec(self.ptapsrs[m2signal['pulsarind']].toas,\
+                            alpha=0.5*(3-Si),\
+                            fL=1.0/100) * (Amp**2)
+
+
+            Cov += Cr
+            Cov += np.dot(totDmat, np.dot(Cdm, totDmat))
+        else:
+            # Construct them from Phi/Theta
+            Cov += np.dot(totFmat, np.dot(self.Phi, totFmat.T))
+            if self.Thetavec is not None and len(self.Thetavec) == totDFmat.shape[1]:
+                Cov += np.dot(totDFmat, np.dot(np.diag(self.Thetavec), totDFmat.T))
+
+        # Create the projected covariance matrix, and decompose it
+        # WARNING: for now we are ignoring the G-matrix when generating data
+        if True:
+            totG = np.eye(Cov.shape[0])
+            GCG = Cov
+        else:
+            GCG = np.dot(totG.T, np.dot(Cov, totG))
+
+        try:
+            cf = sl.cholesky(GCG).T
+        except np.linalg.LinAlgError as err:
+            U, s, Vh = sl.svd(GCG)
+            if not np.all(s > 0):
+                raise ValueError("ERROR: GCG singular according to SVD")
+            # TODO: check if this is the right order?
+            cf = np.dot(U, np.diag(np.sqrt(s)))
+
+        # Generate the data in the Cholesky-basis
+        xi = np.random.randn(GCG.shape[0])
+        ygen = np.dot(totG, np.dot(cf, xi))
+
+        # Save the data
+        tindex = 0
+        for ii in range(len(self.ptapsrs)):
+            nobs = len(self.ptapsrs[ii].residuals)
+            self.ptapsrs[ii].residuals = ygen[tindex:tindex+nobs]
+            tindex += nobs
+
+        # Add the deterministic sources:
+        if self.haveDetSources:
+            self.updateDetSources(parameters)
+
+            for psr in self.ptapsrs:
+                psr.residuals = 2 * psr.residuals + psr.detresiduals
+
+        """
+        # Display the data
+        #plt.errorbar(tottoas, ygen, yerr=tottoaerrs, fmt='.', c='blue')
+        plt.errorbar(self.ptapsrs[0].toas, \
+                self.ptapsrs[0].residuals, \
+                yerr=self.ptapsrs[0].toaerrs, fmt='.', c='blue')
+                
+        plt.grid(True)
+        plt.show()
+        """
+
+        # If required, write all this to HDF5 file
+        if filename != None:
+            t2df = DataFile(filename)
+
+            for ii, psr in enumerate(self.ptapsrs):
+                t2df.addData(psr.name, 'prefitRes', psr.residuals, overwrite=True)
+                t2df.addData(psr.name, 'postfitRes', psr.residuals, overwrite=True)
+
+
+
+
 
 
     """
