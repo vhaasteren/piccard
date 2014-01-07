@@ -758,7 +758,7 @@ for calculating correlations
 Input is a vector of site arrival times. Returns the reduced-size average toas,
 and the exploder matrix  Cfull = Umat Cred Umat^{T}
 Of the output, a property of the matrices Umat and Ui is that:
-np.dot(Ui, Umat) = np.ones(len(avetoas))
+np.dot(Ui, Umat) = np.eye(len(avetoas))
 
 TODO: Make more 'Pythonic'
 """
@@ -1741,9 +1741,33 @@ class ptaPulsar(object):
             if likfunc[:5] != 'mark4':
                 (self.avetoas, self.Umat) = dailyaveragequantities(self.toas)
 
+            # We will do a weighted fit
+            w = 1.0/self.toaerrs**0
+
+            # Create the weighted projection matrix (oblique projection)
+            UWU = np.dot(self.Umat.T, (w * self.Umat.T).T)
+            cf = sl.cho_factor(UWU)
+            UWUi = sl.cho_solve(cf, np.eye(UWU.shape[0]))
+            P = np.dot(self.Umat, np.dot(UWUi, self.Umat.T * w))
+            PuG = np.dot(P, self.Gmat)
+            GUUG = np.dot(PuG.T, PuG)
+
+            """
+            # Build a projection matrix for U
+            Pu = np.dot(self.Umat, Ui)
+            PuG = np.dot(Pu, self.Gmat)
+            Vmat, svec, Vhsvd = sl.svd(np.dot(self.Gmat.T, PuG))
+
+            UU = np.dot(self.Umat.T, self.Umat)
+            cf = sl.cho_factor(UU)
+            UUi = sl.cho_solve(cf, np.eye(UU.shape[0]))
+            Pu = np.dot(self.Umat, np.dot(UUi, self.Umat.T))
+
             # This assumes that self.Umat has already been set
-            GU = np.dot(self.Gmat.T, self.Umat)
-            GUUG = np.dot(GU, GU.T)
+            #GU = np.dot(self.Gmat.T, self.Umat)
+            #GUUG = np.dot(GU, GU.T)
+            GUUG = np.dot(self.Gmat.T, np.dot(Pu, self.Gmat))
+            """
 
             # Construct an orthogonal basis, and singular values
             #svech, Vmath = sl.eigh(GUUG)
