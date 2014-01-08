@@ -442,6 +442,7 @@ class DataFile(object):
         # Read the timing model parameter descriptions
         psr.ptmdescription = map(str, self.getData(psrname, 'tmp_name'))
         psr.ptmpars = np.array(self.getData(psrname, 'tmp_valpre'))
+        psr.ptmparerrs = np.array(self.getData(psrname, 'tmp_errpre'))
         psr.flags = map(str, self.getData(psrname, 'efacequad', 'Flags'))
 
         # Read the position of the pulsar
@@ -1448,6 +1449,7 @@ class ptaPulsar(object):
         self.Gcmat = None
         self.Mmat = None
         self.ptmpars = []
+        self.ptmparerrs = []
         self.ptmdescription = []
         self.flags = None
         self.name = "J0000+0000"
@@ -1602,6 +1604,9 @@ class ptaPulsar(object):
                         the timing model parameters. Note that the timing model
                         parameters are not really 'new', just re-selected
 
+    TODO: Split this function in two parts. One that receives a list of
+          names/identifiers of which parameters to include. The other that
+          constructs the list, and calls that function.
     """
     def getModifiedDesignMatrix(self, addDMQSD=False, addQSD=False, \
             removeJumps=False, removeAll=False):
@@ -1961,6 +1966,15 @@ class ptaPulsar(object):
             Vmat, s, Vh = sl.svd(Ho)
             self.Homat = Vmat[:, :Ho.shape[1]]
             self.Hocmat = Vmat[:, Ho.shape[1]:]
+        elif compression == 'numerical':
+            # Only include (DM)QSD in the G-matrix. The other parameters can be
+            # handled numerically with 'timingmodel' signals
+            (newM, newG, newGc, newptmpars, newptmdescription) = \
+                    self.getModifiedDesignMatrix(removeAll=True)
+            self.Hmat = newG
+            self.Hcmat = newGc
+            self.Homat = np.zeros((self.Hmat.shape[0], 0))
+            self.Hocmat = np.zeros((self.Hmat.shape[0], 0))
         elif compression == 'None' or compression is None:
             self.Hmat = self.Gmat
             self.Hcmat = self.Gcmat
@@ -3190,6 +3204,11 @@ class ptaLikelihood(object):
         elif signal['stype'] == 'bwm':
             # A burst with memory
             self.addSignalBWM(signal)
+            self.haveDetSources = True
+        elif signal['stype'] == 'timingmodel':
+            # A Tempo2 timing model, except for (DM)QSD parameters
+            self.addSignalTimingModel(signal)
+            self.haveDetSources = True
         else:
             # Some other unknown signal
             self.ptasignals.append(signal)
@@ -3376,6 +3395,40 @@ class ptaLikelihood(object):
                 'pmin', 'pmax', 'pwidth', 'pstart', 'parindex']
         if not all(k in signal for k in keys):
             raise ValueError("ERROR: Not all signal keys are present in BWM signal. Keys: {0}. Required: {1}".format(signal.keys(), keys))
+
+        self.ptasignals.append(signal.copy())
+
+    """
+    Add a signal that represents a numerical tempo2 timing model
+
+    Required keys in signal
+    @param stype:       Basically always 'timingmodel' (TODO: include nonlinear)
+    @param psrind:      Index of the pulsar this signal applies to
+    @param index:       Index of first parameter in total parameters array
+    @param bvary:       List of indicators, specifying whether parameters can vary
+    @param pmin:        Minimum bound of prior domain
+    @param pmax:        Maximum bound of prior domain
+    @param pwidth:      Typical width of the parameters (e.g. initial stepsize)
+    @param pstart:      Typical start position for the parameters
+    @param parid:       The identifiers (as used in par-file) that identify
+                        which parameters are included
+    """
+    def addSignalTimingModel(self, signal):
+        # Assert that all the correct keys are there...
+        keys = ['pulsarind', 'stype', 'corr', 'bvary', 'parid', \
+                'pmin', 'pmax', 'pwidth', 'pstart', 'parindex']
+        if not all(k in signal for k in keys):
+            raise ValueError("ERROR: Not all signal keys are present in TimingModel signal. Keys: {0}. Required: {1}".format(signal.keys(), keys))
+
+        # Assert that this signal applies to a pulsar
+        if signal['pulsarind'] < 0 or signal['pulsarind'] >= len(self.ptapsrs):
+            raise ValueError("ERROR: timingmodel signal applied to non-pulsar ({0})".format(signal['pulsarind']))
+
+        # Check that the parameters included here are also present in the design
+        # matrix
+        for ii, parid in enumerate(signal['parid']):
+            if not parid in self.ptapsrs[signal['pulsarind']].ptmdescription:
+                raise ValueError("ERROR: timingmodel signal contains non-valid parameter id")
 
         self.ptasignals.append(signal.copy())
 
@@ -3568,7 +3621,7 @@ class ptaLikelihood(object):
             incGWB=False, gwbModel='powerlaw', \
             incDipole=False, dipoleModel='powerlaw', \
             incAniGWB=False, anigwbModel='powerlaw', lAniGWB=1, \
-            incBWM=False, \
+            incBWM=False, incTimingModel=False, \
             varyEfac=True, incEquad=False, separateEfacs=False, \
             incCEquad=False, \
             incJitter=False, \
@@ -3775,6 +3828,57 @@ class ptaLikelihood(object):
                     "pmax":[-5.0, -9.0],
                     "pwidth":[-0.1, -0.1],
                     "pstart":[-7.0, -10.0]
+                    })
+                signals.append(newsignal)
+
+            if incTimingModel:
+                # Just do the timing-model fit ourselves here, in order to set
+                # the prior.
+                w = 1.0 / self.ptapsrs[ii].toaerrs**2
+                Sigi = np.dot(self.ptapsrs[ii].Mmat.T, (w * self.ptapsrs[ii].Mmat.T).T)
+                try:
+                    cf = sl.cho_factor(Sigi)
+                    Sigma = sl.cho_solve(cf, np.eye(Sigi.shape[0]))
+                except np.linalg.LinAlgError:
+                    U, s, Vh = sl.svd(Sigi)
+                    if not np.all(s > 0):
+                        raise ValueError("Sigi singular according to SVD")
+                    Sigma = np.dot(Vh.T, np.dot(np.diag(1.0/s), U.T))
+                tmperrs = np.sqrt(np.diag(Sigma))
+
+                # Create a modified design matrix (one that we will analytically
+                # marginalise over).
+                (newM, newG, newGc, newptmpars, newptmdescription) = \
+                        self.ptapsrs[ii].getModifiedDesignMatrix(removeAll=True)
+
+                # Select the numerical parameters. These are the ones not
+                # present in the quantities that getModifiedDesignMatrix
+                # returned
+                parids=[]
+                bvary = []
+                pmin = []
+                pmax = []
+                pwidth = []
+                pstart = []
+                for jj, parid in enumerate(self.ptapsrs[ii].ptmdescription):
+                    if not parid in newptmdescription:
+                        parids += [parid]
+                        bvary += [True]
+                        pmin += [-55.0 * tmperrs[jj]]
+                        pmax += [55.0 * tmperrs[jj]]
+                        pwidth += [(pmax[-1]-pmin[-1])/50.0]
+                        pstart += [0.0]
+
+                newsignal = dict({
+                    "stype":'timingmodel',
+                    "corr":"single",
+                    "pulsarind":ii,
+                    "bvary":bvary,
+                    "pmin":pmin,
+                    "pmax":pmax,
+                    "pwidth":pwidth,
+                    "pstart":pstart,
+                    "parid":parids
                     })
                 signals.append(newsignal)
 
@@ -4218,6 +4322,8 @@ class ptaLikelihood(object):
                 elif sig['stype'] == 'spectrum':
                     flagname = 'frequency'
 
+                    # If there are more parameters than frequencies, this is an
+                    # anisotropic background
                     if jj >= len(self.ptapsrs[psrindex].Ffreqs)/2:
                         # clmind is index of clm's, plus one, since we do not
                         # model the c_00 term explicitly like that (it is the
@@ -4264,6 +4370,9 @@ class ptaLikelihood(object):
                 elif sig['stype'] == 'bwm':
                     flagname = 'BurstWithMemory'
                     flagvalue = ['burst-arrival', 'amplitude', 'raj', 'decj', 'polarisation'][jj]
+                elif sig['stype'] == 'timingmodel':
+                    flagname = 'linear-timingmodel'
+                    flagvalue = sig['parid'][jj]
                 else:
                     flagname = 'none'
                     flagvalue = 'none'
@@ -4705,6 +4814,29 @@ class ptaLikelihood(object):
                             if self.ptapsrs[pp].twoComponentNoise:
                                 Gr = np.dot(self.ptapsrs[pp].Hmat.T, self.ptapsrs[pp].detresiduals)
                                 self.ptapsrs[pp].AGr = np.dot(self.ptapsrs[pp].Amat.T, Gr)
+                elif m2signal['stype'] == 'timingmodel':
+                    # This one only applies to one pulsar at a time
+                    ind = []
+                    pp = m2signal['pulsarind']
+                    newdes = m2signal['parid']
+
+                    # Create slicing vector (select parameters actually in signal)
+                    for jj, parid in enumerate(self.ptapsrs[pp].ptmdescription):
+                        if parid in newdes:
+                            ind += [True]
+                        else:
+                            ind += [False]
+                    ind = np.array(ind, dtype=np.bool)
+
+                    # residuals = M * pars
+                    self.ptapsrs[pp].detresiduals = self.ptapsrs[pp].residuals - \
+                            np.dot(self.ptapsrs[pp].Mmat[:,ind], sparameters)
+
+                    # If necessary, transform these residuals to two-component basis
+                    if self.ptapsrs[pp].twoComponentNoise:
+                        Gr = np.dot(self.ptapsrs[pp].Hmat.T, self.ptapsrs[pp].detresiduals)
+                        self.ptapsrs[pp].AGr = np.dot(self.ptapsrs[pp].Amat.T, Gr)
+
 
 
 
