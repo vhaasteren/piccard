@@ -10,6 +10,8 @@ Requirements:
 - h5py:         macports, apt-get, http://h5py.googlecode.com/
 - matplotlib:   macports, apt-get
 - emcee:        pip install emcee (fallback option included)
+- libstempo:    pip install libstempo (optional, required for creating HDF5
+                files, and for non-linear timing model analysis
 - pyMultiNest:  (optional)
 - pytwalk:      (included)
 - pydnest:      (included)
@@ -40,6 +42,7 @@ import matplotlib.pyplot as plt
 import os as os
 import sys
 import json
+import tempfile
 
 from . import pytwalk                  # Internal module
 from . import pydnest                  # Internal module
@@ -289,12 +292,40 @@ class DataFile(object):
         relparfile = os.path.relpath(parfile, dirname)
         savedir = os.getcwd()
 
-        # Load pulsar data from the libstempo library
+        # Change directory to the base directory of the tim-file to deal with
+        # INCLUDE statements in the tim-file
         os.chdir(dirname)
+
+        # Load pulsar data from the libstempo library
         t2pulsar = t2.tempopulsar(relparfile, reltimfile)
+
+        # Load the entire par-file into memory, so that we can save it in the
+        # HDF5 file
+        with open(relparfile, 'r') as content_file:
+            parfile_content = content_file.read()
+
+        # Save the tim-file to a temporary file (so that we don't have to deal
+        # with 'include' statements in the tim-file), and load that tim-file in
+        # memory for HDF5 storage
+        tempint = 0
+        tempfile = './piccard-temptim-' + str(tempint) + '.tim'
+        while os.path.isfile(tempfile):
+            tempint += 1
+            tempfile = './piccard-temptim-' + str(tempint) + '.tim'
+        t2pulsar.savetim(tempfile)
+        with open(tempfile, 'r') as content_file:
+            timfile_content = content_file.read()
+        os.remove(tempfile)
+
+        # Change directory back to where we were
         os.chdir(savedir)
 
+        # Get the pulsar group
         psrGroup = self.getPulsarGroup(t2pulsar.name, delete=deletepsr)
+
+        # Save the par-file and the tim-file to the HDF5 file
+        self.writeData(psrGroup, 'parfile', parfile_content, overwrite=overwrite)
+        self.writeData(psrGroup, 'timfile', timfile_content, overwrite=overwrite)
 
         # Iterate the fitting a few times if necessary
         if iterations > 1:
@@ -438,6 +469,10 @@ class DataFile(object):
     """
     def readPulsar(self, psr, psrname):
         psr.name = psrname
+
+        # Read the content of the par/tim files in a string
+        psr.parfile_content = str(self.getData(psrname, 'parfile'))
+        psr.timfile_content = str(self.getData(psrname, 'timfile'))
 
         # Read the timing model parameter descriptions
         psr.ptmdescription = map(str, self.getData(psrname, 'tmp_name'))
@@ -1365,6 +1400,10 @@ source, which models a single frequency-source with a variable frequency and
 amplitude
 """
 class ptaPulsar(object):
+    parfile_content = None      # The actual content of the original par-file
+    timfile_content = None      # The actual content of the original tim-file
+    t2df = None                 # A libstempo object, if libstempo is imported
+
     raj = 0
     decj = 0
     toas = None
@@ -1439,6 +1478,10 @@ class ptaPulsar(object):
     Qam = 0.0           # The pulse Jitter amplitude (if we use it)
 
     def __init__(self):
+        self.parfile_content = None
+        self.timfile_content = None
+        self.t2df = None
+
         self.raj = 0
         self.decj = 0
         self.toas = None
@@ -1587,6 +1630,38 @@ class ptaPulsar(object):
         self.flags = [self.psrname] * len(self.toas)
 
         self.ptmdescription = ['QSDpar'] * self.Mmat.shape[1]
+
+
+    """
+    Initialise the libstempo object for use in nonlinear timing model modelling.
+    No parameters are required, all content must already be in memory
+    """
+    def initLibsTempoObject(self):
+        # Check that the parfile_content and timfile_content are set
+        if self.parfile_content is None or self.timfile_content is None:
+            raise ValueError('No par/tim file present for pulsar {0}'.format(self.name))
+
+        # For non-linear timing models, libstempo must be imported
+        if t2 is None:
+            raise ImportError("libstempo")
+
+        # Write a temporary par-file and tim-file for libstempo to read. First
+        # obtain 
+        parfilename = tempfile.mktemp()
+        timfilename = tempfile.mktemp()
+        parfile = open(parfilename, 'w')
+        timfile = open(timfilename, 'w')
+        parfile.write(self.parfile_content)
+        timfile.write(self.timfile_content)
+        parfile.close()
+        timfile.close()
+
+        # Create the libstempo object
+        self.t2df = t2.tempopulsar(parfilename, timfilename)
+
+        # Delete the temporary files
+        os.remove(parfilename)
+        os.remove(timfilename)
 
     """
     Construct a modified design matrix, based on some options. Returns a list of
@@ -3216,8 +3291,13 @@ class ptaLikelihood(object):
             self.addSignalBWM(signal)
             self.haveDetSources = True
         elif signal['stype'] == 'lineartimingmodel':
-            # A Tempo2 timing model, except for (DM)QSD parameters
+            # A Tempo2 linear timing model, except for (DM)QSD parameters
             self.addSignalTimingModel(signal)
+            self.haveDetSources = True
+        elif signal['stype'] == 'nonlineartimingmodel':
+            # A Tempo2 timing model, except for (DM)QSD parameters
+            # Note: libstempo must be installed
+            self.addSignalTimingModel(signal, linear=False)
             self.haveDetSources = True
         else:
             # Some other unknown signal
@@ -3423,7 +3503,7 @@ class ptaLikelihood(object):
     @param parid:       The identifiers (as used in par-file) that identify
                         which parameters are included
     """
-    def addSignalTimingModel(self, signal):
+    def addSignalTimingModel(self, signal, linear=True):
         # Assert that all the correct keys are there...
         keys = ['pulsarind', 'stype', 'corr', 'bvary', 'parid', \
                 'pmin', 'pmax', 'pwidth', 'pstart', 'parindex']
@@ -3439,6 +3519,11 @@ class ptaLikelihood(object):
         for ii, parid in enumerate(signal['parid']):
             if not parid in self.ptapsrs[signal['pulsarind']].ptmdescription:
                 raise ValueError("ERROR: timingmodel signal contains non-valid parameter id")
+
+        # If this is a non-linear signal, make sure to initialise the libstempo
+        # object
+        if linear == False:
+            self.ptapsrs[signal['pulsarind']].initLibsTempoObject()
 
         self.ptasignals.append(signal.copy())
 
@@ -3631,7 +3716,8 @@ class ptaLikelihood(object):
             incGWB=False, gwbModel='powerlaw', \
             incDipole=False, dipoleModel='powerlaw', \
             incAniGWB=False, anigwbModel='powerlaw', lAniGWB=1, \
-            incBWM=False, incTimingModel=False, \
+            incBWM=False, \
+            incTimingModel=False, nonLinear=False, \
             varyEfac=True, incEquad=False, separateEfacs=False, \
             incCEquad=False, \
             incJitter=False, \
@@ -3842,19 +3928,32 @@ class ptaLikelihood(object):
                 signals.append(newsignal)
 
             if incTimingModel:
-                # Just do the timing-model fit ourselves here, in order to set
-                # the prior.
-                w = 1.0 / self.ptapsrs[ii].toaerrs**2
-                Sigi = np.dot(self.ptapsrs[ii].Mmat.T, (w * self.ptapsrs[ii].Mmat.T).T)
-                try:
-                    cf = sl.cho_factor(Sigi)
-                    Sigma = sl.cho_solve(cf, np.eye(Sigi.shape[0]))
-                except np.linalg.LinAlgError:
-                    U, s, Vh = sl.svd(Sigi)
-                    if not np.all(s > 0):
-                        raise ValueError("Sigi singular according to SVD")
-                    Sigma = np.dot(Vh.T, np.dot(np.diag(1.0/s), U.T))
-                tmperrs = np.sqrt(np.diag(Sigma))
+                if nonLinear:
+                    # Get the parameter errors from libstempo. Initialise the
+                    # libstempo object
+                    self.ptapsrs[ii].initLibsTempoObject()
+
+                    errs = []
+                    est = []
+                    for t2par in self.ptapsrs[ii].t2df.pars:
+                        errs += [self.ptapsrs[ii].t2df[t2par].err]
+                        est += [self.ptapsrs[ii].t2df[t2par].val]
+                    tmperrs = np.array([0.0] + errs)
+                    tmpest = np.array([0.0] + est)
+                else:
+                    # Just do the timing-model fit ourselves here, in order to set
+                    # the prior.
+                    w = 1.0 / self.ptapsrs[ii].toaerrs**2
+                    Sigi = np.dot(self.ptapsrs[ii].Mmat.T, (w * self.ptapsrs[ii].Mmat.T).T)
+                    try:
+                        cf = sl.cho_factor(Sigi)
+                        Sigma = sl.cho_solve(cf, np.eye(Sigi.shape[0]))
+                    except np.linalg.LinAlgError:
+                        U, s, Vh = sl.svd(Sigi)
+                        if not np.all(s > 0):
+                            raise ValueError("Sigi singular according to SVD")
+                        Sigma = np.dot(Vh.T, np.dot(np.diag(1.0/s), U.T))
+                    tmperrs = np.sqrt(np.diag(Sigma))
 
                 # Create a modified design matrix (one that we will analytically
                 # marginalise over).
@@ -3874,13 +3973,18 @@ class ptaLikelihood(object):
                     if not parid in newptmdescription:
                         parids += [parid]
                         bvary += [True]
-                        pmin += [-55.0 * tmperrs[jj]]
-                        pmax += [55.0 * tmperrs[jj]]
+                        pmin += [-55.0 * tmperrs[jj] + tmpest[jj]]
+                        pmax += [55.0 * tmperrs[jj] + tmpest[jj]]
                         pwidth += [(pmax[-1]-pmin[-1])/50.0]
-                        pstart += [0.0]
+                        pstart += [tmpest[jj]]
+
+                if nonLinear:
+                    stype = 'nonlineartimingmodel'
+                else:
+                    stype = 'lineartimingmodel'
 
                 newsignal = dict({
-                    "stype":'lineartimingmodel',
+                    "stype":stype,
                     "corr":"single",
                     "pulsarind":ii,
                     "bvary":bvary,
@@ -4380,8 +4484,9 @@ class ptaLikelihood(object):
                 elif sig['stype'] == 'bwm':
                     flagname = 'BurstWithMemory'
                     flagvalue = ['burst-arrival', 'amplitude', 'raj', 'decj', 'polarisation'][jj]
-                elif sig['stype'] == 'lineartimingmodel':
-                    flagname = 'linear-timingmodel'
+                elif sig['stype'] == 'lineartimingmodel' or \
+                        sig['stype'] == 'nonlineartimingmodel':
+                    flagname = sig['stype']
                     flagvalue = sig['parid'][jj]
                 else:
                     flagname = 'none'
@@ -4804,6 +4909,52 @@ class ptaLikelihood(object):
         if selection is None:
             selection = np.array([1]*len(self.ptasignals), dtype=np.bool)
 
+        # Set all the detresiduals equal to residuals
+        for pp, psr in enumerate(self.ptapsrs):
+            psr.detresiduals = psr.residuals.copy()
+
+        # In the case we have numerical timing model (linear/nonlinear)
+        for ss, m2signal in enumerate(self.ptasignals):
+            if selection[ss]:
+                # Create a parameters array for this particular signal
+                sparameters = m2signal['pstart'].copy()
+                sparameters[m2signal['bvary']] = \
+                        parameters[m2signal['parindex']:m2signal['parindex']+m2signal['npars']]
+                if m2signal['stype'] == 'lineartimingmodel':
+                    # This one only applies to one pulsar at a time
+                    ind = []
+                    pp = m2signal['pulsarind']
+                    newdes = m2signal['parid']
+
+                    # Create slicing vector (select parameters actually in signal)
+                    for jj, parid in enumerate(self.ptapsrs[pp].ptmdescription):
+                        if parid in newdes:
+                            ind += [True]
+                        else:
+                            ind += [False]
+                    ind = np.array(ind, dtype=np.bool)
+
+                    # residuals = M * pars
+                    self.ptapsrs[pp].detresiduals -= \
+                            np.dot(self.ptapsrs[pp].Mmat[:,ind], sparameters-m2signal['pstart'])
+
+                elif m2signal['stype'] == 'nonlineartimingmodel':
+                    # The t2df libstempo object has to be set. Assume it is.
+                    pp = m2signal['pulsarind']
+
+                    # For each varying parameter, update the libstempo object
+                    # parameter with the new value
+                    pindex = 0
+                    for jj in range(m2signal['ntotpars']):
+                        if m2signal['bvary'][jj]:
+                            # If this parameter varies, update the parameter
+                            self.ptapsrs[pp].t2df[m2signal['parid'][jj]].val = \
+                                    sparameters[pindex]
+                            pindex += 1
+
+                    # Generate the new residuals
+                    self.ptapsrs[pp].detresiduals = self.ptapsrs[pp].t2df.residuals()
+
         # Loop over all signals, and construct the deterministic signals
         for ss in range(len(self.ptasignals)):
             m2signal = self.ptasignals[ss]
@@ -4819,35 +4970,14 @@ class ptaLikelihood(object):
                                     self.ptapsrs[pp].raj, self.ptapsrs[pp].decj, \
                                     self.ptapsrs[pp].toas)
 
-                            self.ptapsrs[pp].detresiduals = self.ptapsrs[pp].residuals - bwmsig
-
-                            if self.ptapsrs[pp].twoComponentNoise:
-                                Gr = np.dot(self.ptapsrs[pp].Hmat.T, self.ptapsrs[pp].detresiduals)
-                                self.ptapsrs[pp].AGr = np.dot(self.ptapsrs[pp].Amat.T, Gr)
-                elif m2signal['stype'] == 'lineartimingmodel':
-                    # This one only applies to one pulsar at a time
-                    ind = []
-                    pp = m2signal['pulsarind']
-                    newdes = m2signal['parid']
-
-                    # Create slicing vector (select parameters actually in signal)
-                    for jj, parid in enumerate(self.ptapsrs[pp].ptmdescription):
-                        if parid in newdes:
-                            ind += [True]
-                        else:
-                            ind += [False]
-                    ind = np.array(ind, dtype=np.bool)
-
-                    # residuals = M * pars
-                    self.ptapsrs[pp].detresiduals = self.ptapsrs[pp].residuals - \
-                            np.dot(self.ptapsrs[pp].Mmat[:,ind], sparameters)
-
-                    # If necessary, transform these residuals to two-component basis
-                    if self.ptapsrs[pp].twoComponentNoise:
-                        Gr = np.dot(self.ptapsrs[pp].Hmat.T, self.ptapsrs[pp].detresiduals)
-                        self.ptapsrs[pp].AGr = np.dot(self.ptapsrs[pp].Amat.T, Gr)
+                            self.ptapsrs[pp].detresiduals -= - bwmsig
 
 
+        # If necessary, transform these residuals to two-component basis
+        for pp, psr in enumerate(self.ptapsrs):
+            if psr.twoComponentNoise:
+                Gr = np.dot(psr.Hmat.T, psr.detresiduals)
+                psr.AGr = np.dot(psr.Amat.T, Gr)
 
 
 
