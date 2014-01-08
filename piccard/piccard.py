@@ -307,15 +307,11 @@ class DataFile(object):
         # Save the tim-file to a temporary file (so that we don't have to deal
         # with 'include' statements in the tim-file), and load that tim-file in
         # memory for HDF5 storage
-        tempint = 0
-        tempfile = './piccard-temptim-' + str(tempint) + '.tim'
-        while os.path.isfile(tempfile):
-            tempint += 1
-            tempfile = './piccard-temptim-' + str(tempint) + '.tim'
-        t2pulsar.savetim(tempfile)
-        with open(tempfile, 'r') as content_file:
+        tempfilename = tempfile.mktemp()
+        t2pulsar.savetim(tempfilename)
+        with open(tempfilename, 'r') as content_file:
             timfile_content = content_file.read()
-        os.remove(tempfile)
+        os.remove(tempfilename)
 
         # Change directory back to where we were
         os.chdir(savedir)
