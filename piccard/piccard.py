@@ -1390,6 +1390,8 @@ class ptaPulsar(object):
     Homat = None            # The orthogonal-to compression matrix
     Hcmat = None            # The co-compression matrix
     Hocmat = None           # The orthogonal co-compression matrix
+    Umat = None
+    avetoas = None          
     SFdmmat = None         # Fdmmatrix for the dm frequency lines
     #FFdmmat = None         # Total of SFdmmatrix and Fdmmat
     Dmat = None
@@ -1462,6 +1464,8 @@ class ptaPulsar(object):
         self.Homat = None
         self.Hcmat = None
         self.Hocmat = None
+        self.Umat = None
+        self.avetoas = None
         self.Dmat = None
         self.DF = None
         self.Ffreqs = None
@@ -1792,14 +1796,14 @@ class ptaPulsar(object):
 
             # We will do a weighted fit
             w = 1.0/self.toaerrs**0
-
             # Create the weighted projection matrix (oblique projection)
             UWU = np.dot(self.Umat.T, (w * self.Umat.T).T)
             cf = sl.cho_factor(UWU)
             UWUi = sl.cho_solve(cf, np.eye(UWU.shape[0]))
             P = np.dot(self.Umat, np.dot(UWUi, self.Umat.T * w))
-            PuG = np.dot(P, self.Gmat)
-            GUUG = np.dot(PuG.T, PuG)
+            PuG = self.Gmat #np.dot(P, self.Gmat)
+            GU = np.dot(PuG.T, self.Umat)
+            GUUG = np.dot(GU, GU.T)
 
             """
             # Build a projection matrix for U
@@ -1816,6 +1820,11 @@ class ptaPulsar(object):
             #GU = np.dot(self.Gmat.T, self.Umat)
             #GUUG = np.dot(GU, GU.T)
             GUUG = np.dot(self.Gmat.T, np.dot(Pu, self.Gmat))
+            """
+
+            """
+            GU = np.dot(self.Gmat.T, self.Umat)
+            GUUG = np.dot(GU, GU.T)
             """
 
             # Construct an orthogonal basis, and singular values
@@ -1966,9 +1975,9 @@ class ptaPulsar(object):
             Vmat, s, Vh = sl.svd(Ho)
             self.Homat = Vmat[:, :Ho.shape[1]]
             self.Hocmat = Vmat[:, Ho.shape[1]:]
-        elif compression == 'numerical':
+        elif compression == 'qsd':
             # Only include (DM)QSD in the G-matrix. The other parameters can be
-            # handled numerically with 'timingmodel' signals
+            # handled numerically with 'lineartimingmodel' signals
             (newM, newG, newGc, newptmpars, newptmdescription) = \
                     self.getModifiedDesignMatrix(removeAll=True)
             self.Hmat = newG
@@ -2969,6 +2978,7 @@ class ptaLikelihood(object):
     npobs = None    # Number of observations per pulsar
     npgs = None     # Number of non-projected observations per pulsar (columns Hmat)
     npgos = None    # Number of orthogonal non-projected observations per pulsar (columns Homat)
+    npu = None      # Number of avetoas per pulsar
 
     # The Phi, Theta, and Sigma matrices
     Phi = None          # mark1, mark3, mark?, mark6
@@ -3205,7 +3215,7 @@ class ptaLikelihood(object):
             # A burst with memory
             self.addSignalBWM(signal)
             self.haveDetSources = True
-        elif signal['stype'] == 'timingmodel':
+        elif signal['stype'] == 'lineartimingmodel':
             # A Tempo2 timing model, except for (DM)QSD parameters
             self.addSignalTimingModel(signal)
             self.haveDetSources = True
@@ -3402,7 +3412,7 @@ class ptaLikelihood(object):
     Add a signal that represents a numerical tempo2 timing model
 
     Required keys in signal
-    @param stype:       Basically always 'timingmodel' (TODO: include nonlinear)
+    @param stype:       Basically always 'lineartimingmodel' (TODO: include nonlinear)
     @param psrind:      Index of the pulsar this signal applies to
     @param index:       Index of first parameter in total parameters array
     @param bvary:       List of indicators, specifying whether parameters can vary
@@ -3870,7 +3880,7 @@ class ptaLikelihood(object):
                         pstart += [0.0]
 
                 newsignal = dict({
-                    "stype":'timingmodel',
+                    "stype":'lineartimingmodel',
                     "corr":"single",
                     "pulsarind":ii,
                     "bvary":bvary,
@@ -4370,7 +4380,7 @@ class ptaLikelihood(object):
                 elif sig['stype'] == 'bwm':
                     flagname = 'BurstWithMemory'
                     flagvalue = ['burst-arrival', 'amplitude', 'raj', 'decj', 'polarisation'][jj]
-                elif sig['stype'] == 'timingmodel':
+                elif sig['stype'] == 'lineartimingmodel':
                     flagname = 'linear-timingmodel'
                     flagvalue = sig['parid'][jj]
                 else:
@@ -4814,7 +4824,7 @@ class ptaLikelihood(object):
                             if self.ptapsrs[pp].twoComponentNoise:
                                 Gr = np.dot(self.ptapsrs[pp].Hmat.T, self.ptapsrs[pp].detresiduals)
                                 self.ptapsrs[pp].AGr = np.dot(self.ptapsrs[pp].Amat.T, Gr)
-                elif m2signal['stype'] == 'timingmodel':
+                elif m2signal['stype'] == 'lineartimingmodel':
                     # This one only applies to one pulsar at a time
                     ind = []
                     pp = m2signal['pulsarind']
@@ -7025,6 +7035,8 @@ class ptaLikelihood(object):
 
     """
     Blah
+
+    TODO: check that the jitter stuff is set (make it mark4)
     """
     def gensigjit(self, parameters=None, filename=None, timedomain=False):
         if parameters == None:
@@ -7032,7 +7044,7 @@ class ptaLikelihood(object):
 
         npsrs = len(self.ptapsrs)
 
-        self.setPsrNoise(parameters)
+        self.setPsrNoise(parameters, incJitter=False)
 
         if self.haveStochSources:
             self.constructPhiAndTheta(parameters)
@@ -7043,6 +7055,7 @@ class ptaLikelihood(object):
         totDFmat = np.zeros((np.sum(self.npobs), np.sum(self.npf)))
         totDmat = np.zeros((np.sum(self.npobs), np.sum(self.npobs)))
         totG = np.zeros((np.sum(self.npobs), np.sum(self.npgs)))
+        totU = np.zeros((np.sum(self.npobs), np.sum(self.npu)))
         tottoas = np.zeros(np.sum(self.npobs))
         tottoaerrs = np.zeros(np.sum(self.npobs))
 
@@ -7051,11 +7064,13 @@ class ptaLikelihood(object):
             nindex = np.sum(self.npobs[:ii])
             findex = np.sum(self.npf[:ii])
             fdmindex = np.sum(self.npfdm[:ii])
+            uindex = np.sum(self.npu[:ii])
             gindex = np.sum(self.npgs[:ii])
             npobs = self.npobs[ii]
             nppf = self.npf[ii]
             nppfdm = self.npfdm[ii]
             npgs = self.npgs[ii]
+            npus = self.npu[ii]
             #if self.ptapsrs[ii].twoComponentNoise:
             #    pass
             #else:
@@ -7068,6 +7083,7 @@ class ptaLikelihood(object):
                 totDmat[nindex:nindex+npobs, nindex:nindex+npobs] = self.ptapsrs[ii].Dmat
 
             totG[nindex:nindex+npobs, gindex:gindex+npgs] = self.ptapsrs[ii].Hmat
+            totU[nindex:nindex+npobs, uindex:uindex+npus] = self.ptapsrs[ii].Umat
             tottoas[nindex:nindex+npobs] = self.ptapsrs[ii].toas
             tottoaerrs[nindex:nindex+npobs] = self.ptapsrs[ii].toaerrs
 
@@ -7114,6 +7130,12 @@ class ptaLikelihood(object):
             Cov += np.dot(totFmat, np.dot(self.Phi, totFmat.T))
             if self.Thetavec is not None and len(self.Thetavec) == totDFmat.shape[1]:
                 Cov += np.dot(totDFmat, np.dot(np.diag(self.Thetavec), totDFmat.T))
+
+            # Include jitter
+            qvec = np.array([])
+            for pp, psr in enumerate(self.ptapsrs):
+                qvec = np.append(qvec, [psr.Qamp]*len(psr.avetoas))
+            Cov += np.dot(totU, (qvec * totU).T)
 
         # Create the projected covariance matrix, and decompose it
         # WARNING: for now we are ignoring the G-matrix when generating data
