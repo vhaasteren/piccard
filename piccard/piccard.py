@@ -1582,13 +1582,35 @@ class ptaPulsar(object):
 
         self.ptmdescription = ['QSDpar'] * self.Mmat.shape[1]
 
-    # Modify the design matrix in some general way. Either add DM derivatives,
-    # or remove jumps, or ...
-    def getModifiedDesignMatrix(self, addDMQSD=False, removeJumps=False):
+    """
+    Construct a modified design matrix, based on some options. Returns a list of
+    new objects that represent the new timing model
+
+    @param addDMQSD:    Whether we should make sure that the DM quadratics are
+                        fit for. Should have 'DM', 'DM1', 'DM2'. If not present,
+                        add them
+    @param addQSD:      Same as addDMQSD, but now for pulsar spin frequency.
+    @param removeJumps: Remove the jumps from the timing model.
+    @param removeAll:   This removes all parameters from the timing model,
+                        except for the DM parameters, and the QSD parameters
+
+    @return (list):     Return the elements: (newM, newG, newGc,
+                        newptmpars, newptmdescription)
+                        in order: the new design matrix, the new G-matrix, the
+                        new co-Gmatrix (orthogonal complement), the new values
+                        of the timing model parameters, the new descriptions of
+                        the timing model parameters. Note that the timing model
+                        parameters are not really 'new', just re-selected
+
+    """
+    def getModifiedDesignMatrix(self, addDMQSD=False, addQSD=False, \
+            removeJumps=False, removeAll=False):
         # Which rows of Mmat to keep:
         indkeep = np.array([1]*self.Mmat.shape[1], dtype=np.bool)
         dmaddes = ['DM', 'DM1', 'DM2']
         dmadd = np.array([addDMQSD]*len(dmaddes), dtype=np.bool)
+        qsdaddes = ['Offset', 'F0', 'F1']
+        qsdadd = np.array([addQSD]*len(qsdaddes), dtype=np.bool)
         for ii in range(self.Mmat.shape[1]):
             # Check up on jumps.
             parlabel = self.ptmdescription[ii]
@@ -1597,12 +1619,22 @@ class ptaPulsar(object):
                 # This is a jump. Remove it
                 indkeep[ii] = False
 
+            # If set, remove all but (DM)QSD parameters
+            if removeAll and (not parlabel in dmaddes and not parlabel in qsdaddes):
+                # This is not a (DM)QSD parameter. Remove it
+                indkeep[ii] = False
+
             # Check up on DM parameters
             if parlabel in dmaddes:
                 # Parameter in the list, so mark as such
                 dmadd[dmaddes.index(parlabel)] = False
 
-        # Construct a new design matrix with/without the Jump parameters
+            # Check up on QSD parameters
+            if parlabel in qsdaddes:
+                # Parameter in the list, so mark as such
+                qsdadd[qsdaddes.index(parlabel)] = False
+
+        # Construct a new design matrix with only the required parameters
         tempM = self.Mmat[:, indkeep]
         tempptmpars = self.ptmpars[indkeep]
         tempptmdescription = []
@@ -1612,7 +1644,7 @@ class ptaPulsar(object):
 
         # Construct the design matrix elements for the DM QSD if required, and
         # add them to the new M matrix
-        if np.sum(dmadd) > 0:
+        if np.sum(dmadd) + np.sum(qsdadd) > 0:
             # Construct the DM QSD matrix
             dmqsdM = np.zeros((self.Mmat.shape[0], np.sum(dmadd)))
             dmqsddes = []
@@ -1630,9 +1662,21 @@ class ptaPulsar(object):
                     dmqsdpars[index] = 0.0
                     index += 1
 
-            newM = np.append(tempM, dmqsdM, axis=1)
-            newptmpars = np.append(tempptmpars, dmqsdpars)
-            newptmdescription = tempptmdescription + dmqsddes
+            qsdM = np.zeros((self.Mmat.shape[0], np.sum(qsdadd)))
+            qsddes = []
+            qsdpars = np.zeros(np.sum(qsdadd))
+            index = 0
+            for ii in range(len(qsdaddes)):
+                if qsdadd[ii]:
+                    qsdM[:, index] = (self.toas ** ii)
+                    description = qsdaddes[ii]
+                    qsddes.append(description)
+                    qsdpars[index] = 0.0
+                    index += 1
+
+            newM = np.append(np.append(tempM, qsdM, axis=1), dmqsdM, axis=1)
+            newptmpars = np.append(np.append(tempptmpars, qsdpars), dmqsdpars)
+            newptmdescription = tempptmdescription + qsddes + dmqsddes
         else:
             newM = tempM
             newptmpars = tempptmpars
