@@ -2217,12 +2217,12 @@ class ptaPulsar(object):
                 t2df.addData(self.name, 'pic_AoGF', self.AoGF)
 
         if likfunc == 'mark2' or write == 'all':
-            self.Gr = np.dot(self.Gmat.T, self.residuals)
-            self.GGr = np.dot(self.Gmat, self.Gr)
+            self.Gr = np.dot(self.Hmat.T, self.residuals)
+            self.GGr = np.dot(self.Hmat, self.Gr)
 
             # For two-component noise
             # Diagonalise GtEfG
-            GtNeG = np.dot(self.Gmat.T, ((self.toaerrs**2) * self.Gmat.T).T)
+            GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
             self.Wvec, self.Amat = sl.eigh(GtNeG)
             self.AGr = np.dot(self.Amat.T, self.Gr)
 
@@ -2231,7 +2231,8 @@ class ptaPulsar(object):
                 HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
                 self.Wovec, self.Aomat = sl.eigh(HotNeHo)
 
-                self.AoGr = np.dot(self.Aomat.T, self.Gr)
+                Hor = np.dot(self.Homat.T, self.residuals)
+                self.AoGr = np.dot(self.Aomat.T, Hor)
             else:
                 self.Wovec = np.zeros(0)
                 self.Aomat = np.zeros((self.Amat.shape[0], 0))
