@@ -15,6 +15,9 @@ data can include:
   * Dipolar: ephemeris errors
   * Quadrupolar: isotropic stochastic background GR correlations
   * Anisotropic: GR correlated, expanded in spherical harmonics
+* Timing models can be numerically included, either by:
+  * Using the design matrix (linear timing model)
+  * Calling libstempo for the full non-linear timing model
 
 Many types of samplers are included:
 * Metropolis-Hastings

@@ -4133,7 +4133,7 @@ class ptaLikelihood(object):
 
         # The list of signals
         modeldict = dict({
-            "file version":2013.12,
+            "file version":2014.01,
             "author":"piccard-makeModel",
             "numpulsars":len(self.ptapsrs),
             "pulsarnames":[self.ptapsrs[ii].name for ii in range(len(self.ptapsrs))],
