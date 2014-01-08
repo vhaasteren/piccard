@@ -4949,7 +4949,7 @@ class ptaLikelihood(object):
                             pindex += 1
 
                     # Generate the new residuals
-                    self.ptapsrs[pp].detresiduals = self.ptapsrs[pp].t2df.residuals()
+                    self.ptapsrs[pp].detresiduals = self.ptapsrs[pp].t2df.residuals(updatebats=False)
 
         # Loop over all signals, and construct the deterministic signals
         for ss in range(len(self.ptasignals)):
