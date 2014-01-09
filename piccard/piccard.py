@@ -7029,6 +7029,9 @@ class ptaLikelihood(object):
 
     NOTE: the G-matrix is ignored when generating data (so generating pre-fit
     data)
+
+    TODO: repeated calls of this function increasingly introduce errors.
+          Something is not initialised back to zero every call. Investigate
     """
     def gensig(self, parameters=None, filename=None, timedomain=False):
         if parameters == None:
