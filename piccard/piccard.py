@@ -1872,7 +1872,8 @@ class ptaPulsar(object):
             cf = sl.cho_factor(UWU)
             UWUi = sl.cho_solve(cf, np.eye(UWU.shape[0]))
             P = np.dot(self.Umat, np.dot(UWUi, self.Umat.T * w))
-            PuG = self.Gmat #np.dot(P, self.Gmat)
+            #PuG = self.Gmat
+            PuG = np.dot(P, self.Gmat)
             GU = np.dot(PuG.T, self.Umat)
             GUUG = np.dot(GU, GU.T)
 
@@ -3801,7 +3802,7 @@ class ptaLikelihood(object):
                     "flagvalue":m2psr.name,
                     "bvary":[True],
                     "pmin":[-10.0],
-                    "pmax":[-4.5],
+                    "pmax":[-4.0],
                     "pwidth":[0.1],
                     "pstart":[-8.0]
                     })
@@ -3816,7 +3817,7 @@ class ptaLikelihood(object):
                     "flagvalue":m2psr.name,
                     "bvary":[True],
                     "pmin":[-10.0],
-                    "pmax":[-5.0],
+                    "pmax":[-4.0],
                     "pwidth":[0.1],
                     "pstart":[-8.0]
                     })
@@ -3970,8 +3971,8 @@ class ptaLikelihood(object):
                     if not parid in newptmdescription:
                         parids += [parid]
                         bvary += [True]
-                        pmin += [-55.0 * tmperrs[jj] + tmpest[jj]]
-                        pmax += [55.0 * tmperrs[jj] + tmpest[jj]]
+                        pmin += [-155.0 * tmperrs[jj] + tmpest[jj]]
+                        pmax += [155.0 * tmperrs[jj] + tmpest[jj]]
                         pwidth += [(pmax[-1]-pmin[-1])/50.0]
                         pstart += [tmpest[jj]]
 
