@@ -174,8 +174,11 @@ class DataFile(object):
     @param field:       Field name of the data we are requestion
     @param subgroup:    If the data is in a subgroup, get it from there
     @param dontread:    If set to true, do not actually read anything
+    @param required:    If not required, do not throw an exception, but return
+                        'None'
     """
-    def getData(self, psrname, field, subgroup=None, dontread=False):
+    def getData(self, psrname, field, subgroup=None, \
+            dontread=False, required=True):
         # Dontread is useful for readability in the 'readPulsarAuxiliaries
         if dontread:
             return None
@@ -193,14 +196,17 @@ class DataFile(object):
                 datGroup = psrGroup[subgroup]
             else:
                 self.h5file.close()
-                raise IOError, "Field {0} not present for pulsar {1}/{2}".format(field, psrname, subgroup)
+                if required:
+                    raise IOError, "Field {0} not present for pulsar {1}/{2}".format(field, psrname, subgroup)
 
         if field in datGroup:
             data = np.array(datGroup[field])
             self.h5file.close()
         else:
             self.h5file.close()
-            raise IOError, "Field {0} not present for pulsar {1}".format(field, psrname)
+            if required:
+                raise IOError, "Field {0} not present for pulsar {1}".format(field, psrname)
+            else data = None
 
         return data
 
@@ -467,8 +473,8 @@ class DataFile(object):
         psr.name = psrname
 
         # Read the content of the par/tim files in a string
-        psr.parfile_content = str(self.getData(psrname, 'parfile'))
-        psr.timfile_content = str(self.getData(psrname, 'timfile'))
+        psr.parfile_content = str(self.getData(psrname, 'parfile', required=False))
+        psr.timfile_content = str(self.getData(psrname, 'timfile', required=False))
 
         # Read the timing model parameter descriptions
         psr.ptmdescription = map(str, self.getData(psrname, 'tmp_name'))
@@ -4407,6 +4413,8 @@ class ptaLikelihood(object):
     """
     Get a list of all the model parameters, the parameter indices, and the
     descriptions
+
+    TODO: insert these descriptions in the signal dictionaries
     """
     def getModelParameterList(self):
         pardes = []
