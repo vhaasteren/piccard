@@ -206,7 +206,8 @@ class DataFile(object):
             self.h5file.close()
             if required:
                 raise IOError, "Field {0} not present for pulsar {1}".format(field, psrname)
-            else data = None
+            else:
+                data = None
 
         return data
 
