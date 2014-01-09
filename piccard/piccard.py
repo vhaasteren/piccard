@@ -1405,7 +1405,7 @@ amplitude
 class ptaPulsar(object):
     parfile_content = None      # The actual content of the original par-file
     timfile_content = None      # The actual content of the original tim-file
-    t2df = None                 # A libstempo object, if libstempo is imported
+    t2psr = None                # A libstempo object, if libstempo is imported
 
     raj = 0
     decj = 0
@@ -1483,7 +1483,7 @@ class ptaPulsar(object):
     def __init__(self):
         self.parfile_content = None
         self.timfile_content = None
-        self.t2df = None
+        self.t2psr = None
 
         self.raj = 0
         self.decj = 0
@@ -1537,11 +1537,11 @@ class ptaPulsar(object):
     Read the pulsar data (TOAs, residuals, design matrix, etc..) from an HDF5
     file
 
-    @param t2df:        The DataFile object we are reading from
+    @param h5df:        The DataFile object we are reading from
     @param psrname:     Name of the Pulsar to be read from the HDF5 file
     """
-    def readFromH5(self, t2df, psrname):
-        t2df.readPulsar(self, psrname)
+    def readFromH5(self, h5df, psrname):
+        h5df.readPulsar(self, psrname)
 
     """
     Note: Deprecated
@@ -1660,7 +1660,10 @@ class ptaPulsar(object):
         timfile.close()
 
         # Create the libstempo object
-        self.t2df = t2.tempopulsar(parfilename, timfilename)
+        self.t2psr = t2.tempopulsar(parfilename, timfilename)
+
+        # Create the BATS?
+        # tempresiduals = self.t2psr.residuals(updatebats=True, formresiduals=False)
 
         # Delete the temporary files
         os.remove(parfilename)
@@ -2078,7 +2081,7 @@ class ptaPulsar(object):
     calculates these quantities, and optionally writes them to the HDF5 file for
     quick use later.
 
-    @param t2df:            The DataFile we will write things to
+    @param h5df:            The DataFile we will write things to
     @param Tmax:            The full duration of the experiment
     @param nfreqs:          The number of noise frequencies we require for this
                             pulsar
@@ -2094,7 +2097,7 @@ class ptaPulsar(object):
                             for all quantities
 
     """
-    def createPulsarAuxiliaries(self, t2df, Tmax, nfreqs, ndmfreqs, \
+    def createPulsarAuxiliaries(self, h5df, Tmax, nfreqs, ndmfreqs, \
             twoComponent=False, nSingleFreqs=0, nSingleDMFreqs=0, \
             compression='None', likfunc='mark3', write='likfunc'):
         # For creating the auxiliaries it does not really matter: we are now
@@ -2120,15 +2123,15 @@ class ptaPulsar(object):
             #       conservative should be done
             modelFrequencies = np.array([nf, ndmf, nsf, nsdmf])
             try:
-                file_modelFreqs = np.array(t2df.getData(self.name, 'pic_modelFrequencies'))
+                file_modelFreqs = np.array(h5df.getData(self.name, 'pic_modelFrequencies'))
                 if not np.all(modelFrequencies == file_modelFreqs):
-                    print "WARNING: model frequencies already present in {0} differ from the current".format(t2df.filename)
+                    print "WARNING: model frequencies already present in {0} differ from the current".format(h5df.filename)
                     print "         model. Overwriting..."
             except IOError:
                 pass
 
-            t2df.addData(self.name, 'pic_modelFrequencies', modelFrequencies)
-            t2df.addData(self.name, 'pic_Tmax', [Tmax])
+            h5df.addData(self.name, 'pic_modelFrequencies', modelFrequencies)
+            h5df.addData(self.name, 'pic_Tmax', [Tmax])
 
         # Create the Fourier design matrices for noise
         if nf > 0:
@@ -2154,15 +2157,15 @@ class ptaPulsar(object):
 
         # Write these quantities to disk
         if write != 'no':
-            t2df.addData(self.name, 'pic_Fmat', self.Fmat)
-            t2df.addData(self.name, 'pic_Ffreqs', self.Ffreqs)
-            t2df.addData(self.name, 'pic_Fdmmat', self.Fdmmat)
-            t2df.addData(self.name, 'pic_Fdmfreqs', self.Fdmfreqs)
-            t2df.addData(self.name, 'pic_Dmat', self.Dmat)
-            t2df.addData(self.name, 'pic_DF', self.DF)
+            h5df.addData(self.name, 'pic_Fmat', self.Fmat)
+            h5df.addData(self.name, 'pic_Ffreqs', self.Ffreqs)
+            h5df.addData(self.name, 'pic_Fdmmat', self.Fdmmat)
+            h5df.addData(self.name, 'pic_Fdmfreqs', self.Fdmfreqs)
+            h5df.addData(self.name, 'pic_Dmat', self.Dmat)
+            h5df.addData(self.name, 'pic_DF', self.DF)
 
-            t2df.addData(self.name, 'pic_avetoas', self.avetoas)
-            t2df.addData(self.name, 'pic_Umat', self.Umat)
+            h5df.addData(self.name, 'pic_avetoas', self.avetoas)
+            h5df.addData(self.name, 'pic_Umat', self.Umat)
 
         # Next we'll need the G-matrices, and the compression matrices.
         U, s, Vh = sl.svd(self.Mmat)
@@ -2171,12 +2174,12 @@ class ptaPulsar(object):
         self.constructCompressionMatrix(compression, nfmodes=2*nf,
                 ndmodes=2*ndmf, threshold=1.0)
         if write != 'no':
-            t2df.addData(self.name, 'pic_Gmat', self.Gmat)
-            t2df.addData(self.name, 'pic_Gcmat', self.Gcmat)
-            t2df.addData(self.name, 'pic_Hmat', self.Hmat)
-            t2df.addData(self.name, 'pic_Hcmat', self.Hcmat)
-            t2df.addData(self.name, 'pic_Homat', self.Homat)
-            t2df.addData(self.name, 'pic_Hocmat', self.Hocmat)
+            h5df.addData(self.name, 'pic_Gmat', self.Gmat)
+            h5df.addData(self.name, 'pic_Gcmat', self.Gcmat)
+            h5df.addData(self.name, 'pic_Hmat', self.Hmat)
+            h5df.addData(self.name, 'pic_Hcmat', self.Hcmat)
+            h5df.addData(self.name, 'pic_Homat', self.Homat)
+            h5df.addData(self.name, 'pic_Hocmat', self.Hocmat)
 
 
 
@@ -2211,18 +2214,18 @@ class ptaPulsar(object):
 
             if write != 'none':
                 # Write all these quantities to the HDF5 file
-                t2df.addData(self.name, 'pic_Gr', self.Gr)
-                t2df.addData(self.name, 'pic_GGr', self.GGr)
-                t2df.addData(self.name, 'pic_GtF', self.GtF)
-                t2df.addData(self.name, 'pic_GtD', self.GtD)
-                t2df.addData(self.name, 'pic_Wvec', self.Wvec)
-                t2df.addData(self.name, 'pic_Amat', self.Amat)
-                t2df.addData(self.name, 'pic_AGr', self.AGr)
-                t2df.addData(self.name, 'pic_AGF', self.AGF)
-                t2df.addData(self.name, 'pic_Wovec', self.Wovec)
-                t2df.addData(self.name, 'pic_Aomat', self.Aomat)
-                t2df.addData(self.name, 'pic_AoGr', self.AoGr)
-                t2df.addData(self.name, 'pic_AoGF', self.AoGF)
+                h5df.addData(self.name, 'pic_Gr', self.Gr)
+                h5df.addData(self.name, 'pic_GGr', self.GGr)
+                h5df.addData(self.name, 'pic_GtF', self.GtF)
+                h5df.addData(self.name, 'pic_GtD', self.GtD)
+                h5df.addData(self.name, 'pic_Wvec', self.Wvec)
+                h5df.addData(self.name, 'pic_Amat', self.Amat)
+                h5df.addData(self.name, 'pic_AGr', self.AGr)
+                h5df.addData(self.name, 'pic_AGF', self.AGF)
+                h5df.addData(self.name, 'pic_Wovec', self.Wovec)
+                h5df.addData(self.name, 'pic_Aomat', self.Aomat)
+                h5df.addData(self.name, 'pic_AoGr', self.AoGr)
+                h5df.addData(self.name, 'pic_AoGF', self.AoGF)
 
         if likfunc == 'mark2' or write == 'all':
             self.Gr = np.dot(self.Hmat.T, self.residuals)
@@ -2248,14 +2251,14 @@ class ptaPulsar(object):
 
             if write != 'none':
                 # Write all these quantities to the HDF5 file
-                t2df.addData(self.name, 'pic_Gr', self.Gr)
-                t2df.addData(self.name, 'pic_GGr', self.GGr)
-                t2df.addData(self.name, 'pic_Wvec', self.Wvec)
-                t2df.addData(self.name, 'pic_Amat', self.Amat)
-                t2df.addData(self.name, 'pic_AGr', self.AGr)
-                t2df.addData(self.name, 'pic_Wovec', self.Wovec)
-                t2df.addData(self.name, 'pic_Aomat', self.Aomat)
-                t2df.addData(self.name, 'pic_AoGr', self.AoGr)
+                h5df.addData(self.name, 'pic_Gr', self.Gr)
+                h5df.addData(self.name, 'pic_GGr', self.GGr)
+                h5df.addData(self.name, 'pic_Wvec', self.Wvec)
+                h5df.addData(self.name, 'pic_Amat', self.Amat)
+                h5df.addData(self.name, 'pic_AGr', self.AGr)
+                h5df.addData(self.name, 'pic_Wovec', self.Wovec)
+                h5df.addData(self.name, 'pic_Aomat', self.Aomat)
+                h5df.addData(self.name, 'pic_AoGr', self.AoGr)
 
         if likfunc == 'mark3' or likfunc == 'mark3fa' or write == 'all':
             self.Gr = np.dot(self.Hmat.T, self.residuals)
@@ -2287,17 +2290,17 @@ class ptaPulsar(object):
 
             if write != 'none':
                 # Write all these quantities to the HDF5 file
-                t2df.addData(self.name, 'pic_Gr', self.Gr)
-                t2df.addData(self.name, 'pic_GGr', self.GGr)
-                t2df.addData(self.name, 'pic_GtF', self.GtF)
-                t2df.addData(self.name, 'pic_Wvec', self.Wvec)
-                t2df.addData(self.name, 'pic_Amat', self.Amat)
-                t2df.addData(self.name, 'pic_AGr', self.AGr)
-                t2df.addData(self.name, 'pic_AGF', self.AGF)
-                t2df.addData(self.name, 'pic_Wovec', self.Wovec)
-                t2df.addData(self.name, 'pic_Aomat', self.Aomat)
-                t2df.addData(self.name, 'pic_AoGr', self.AoGr)
-                t2df.addData(self.name, 'pic_AoGF', self.AoGF)
+                h5df.addData(self.name, 'pic_Gr', self.Gr)
+                h5df.addData(self.name, 'pic_GGr', self.GGr)
+                h5df.addData(self.name, 'pic_GtF', self.GtF)
+                h5df.addData(self.name, 'pic_Wvec', self.Wvec)
+                h5df.addData(self.name, 'pic_Amat', self.Amat)
+                h5df.addData(self.name, 'pic_AGr', self.AGr)
+                h5df.addData(self.name, 'pic_AGF', self.AGF)
+                h5df.addData(self.name, 'pic_Wovec', self.Wovec)
+                h5df.addData(self.name, 'pic_Aomat', self.Aomat)
+                h5df.addData(self.name, 'pic_AoGr', self.AoGr)
+                h5df.addData(self.name, 'pic_AoGF', self.AoGF)
 
         if likfunc == 'mark4' or write == 'all':
             self.Gr = np.dot(self.Hmat.T, self.residuals)
@@ -2332,18 +2335,18 @@ class ptaPulsar(object):
 
             if write != 'none':
                 # Write all these quantities to the HDF5 file
-                t2df.addData(self.name, 'pic_Gr', self.Gr)
-                t2df.addData(self.name, 'pic_GGr', self.GGr)
-                t2df.addData(self.name, 'pic_GtF', self.GtF)
-                t2df.addData(self.name, 'pic_UtF', self.UtF)
-                t2df.addData(self.name, 'pic_Wvec', self.Wvec)
-                t2df.addData(self.name, 'pic_Amat', self.Amat)
-                t2df.addData(self.name, 'pic_AGr', self.AGr)
-                t2df.addData(self.name, 'pic_AGU', self.AGU)
-                t2df.addData(self.name, 'pic_Wovec', self.Wovec)
-                t2df.addData(self.name, 'pic_Aomat', self.Aomat)
-                t2df.addData(self.name, 'pic_AoGr', self.AoGr)
-                t2df.addData(self.name, 'pic_AoGU', self.AoGU)
+                h5df.addData(self.name, 'pic_Gr', self.Gr)
+                h5df.addData(self.name, 'pic_GGr', self.GGr)
+                h5df.addData(self.name, 'pic_GtF', self.GtF)
+                h5df.addData(self.name, 'pic_UtF', self.UtF)
+                h5df.addData(self.name, 'pic_Wvec', self.Wvec)
+                h5df.addData(self.name, 'pic_Amat', self.Amat)
+                h5df.addData(self.name, 'pic_AGr', self.AGr)
+                h5df.addData(self.name, 'pic_AGU', self.AGU)
+                h5df.addData(self.name, 'pic_Wovec', self.Wovec)
+                h5df.addData(self.name, 'pic_Aomat', self.Aomat)
+                h5df.addData(self.name, 'pic_AoGr', self.AoGr)
+                h5df.addData(self.name, 'pic_AoGU', self.AoGU)
 
 
         if likfunc == 'mark4ln' or write == 'all':
@@ -2389,22 +2392,22 @@ class ptaPulsar(object):
 
             if write != 'none':
                 # Write all these quantities to the HDF5 file
-                t2df.addData(self.name, 'pic_Gr', self.Gr)
-                t2df.addData(self.name, 'pic_GGr', self.GGr)
-                t2df.addData(self.name, 'pic_GtF', self.GtF)
-                t2df.addData(self.name, 'pic_UtF', self.UtF)
-                t2df.addData(self.name, 'pic_SFmat', self.SFmat)
-                t2df.addData(self.name, 'pic_FFmat', self.FFmat)
-                t2df.addData(self.name, 'pic_SFfreqs', self.SFfreqs)
-                t2df.addData(self.name, 'pic_UtFF', self.UtFF)
-                t2df.addData(self.name, 'pic_Wvec', self.Wvec)
-                t2df.addData(self.name, 'pic_Amat', self.Amat)
-                t2df.addData(self.name, 'pic_AGr', self.AGr)
-                t2df.addData(self.name, 'pic_AGU', self.AGU)
-                t2df.addData(self.name, 'pic_Wovec', self.Wovec)
-                t2df.addData(self.name, 'pic_Aomat', self.Aomat)
-                t2df.addData(self.name, 'pic_AoGr', self.AoGr)
-                t2df.addData(self.name, 'pic_AoGU', self.AoGU)
+                h5df.addData(self.name, 'pic_Gr', self.Gr)
+                h5df.addData(self.name, 'pic_GGr', self.GGr)
+                h5df.addData(self.name, 'pic_GtF', self.GtF)
+                h5df.addData(self.name, 'pic_UtF', self.UtF)
+                h5df.addData(self.name, 'pic_SFmat', self.SFmat)
+                h5df.addData(self.name, 'pic_FFmat', self.FFmat)
+                h5df.addData(self.name, 'pic_SFfreqs', self.SFfreqs)
+                h5df.addData(self.name, 'pic_UtFF', self.UtFF)
+                h5df.addData(self.name, 'pic_Wvec', self.Wvec)
+                h5df.addData(self.name, 'pic_Amat', self.Amat)
+                h5df.addData(self.name, 'pic_AGr', self.AGr)
+                h5df.addData(self.name, 'pic_AGU', self.AGU)
+                h5df.addData(self.name, 'pic_Wovec', self.Wovec)
+                h5df.addData(self.name, 'pic_Aomat', self.Aomat)
+                h5df.addData(self.name, 'pic_AoGr', self.AoGr)
+                h5df.addData(self.name, 'pic_AoGU', self.AoGU)
 
         if likfunc == 'mark6' or likfunc == 'mark6fa' or write == 'all':
             # Red noise
@@ -2455,24 +2458,24 @@ class ptaPulsar(object):
 
             if write != 'none':
                 # Write all these quantities to the HDF5 file
-                t2df.addData(self.name, 'pic_Gr', self.Gr)
-                t2df.addData(self.name, 'pic_GGr', self.GGr)
-                t2df.addData(self.name, 'pic_GtF', self.GtF)
-                t2df.addData(self.name, 'pic_GGtD', self.GGtD)
-                t2df.addData(self.name, 'pic_Emat', self.Emat)
-                t2df.addData(self.name, 'pic_GGtE', self.GGtE)
-                t2df.addData(self.name, 'pic_Wvec', self.Wvec)
-                t2df.addData(self.name, 'pic_Amat', self.Amat)
-                t2df.addData(self.name, 'pic_AGr', self.AGr)
-                t2df.addData(self.name, 'pic_AGF', self.AGF)
-                t2df.addData(self.name, 'pic_AGD', self.AGD)
-                t2df.addData(self.name, 'pic_AGE', self.AGE)
-                t2df.addData(self.name, 'pic_Wovec', self.Wovec)
-                t2df.addData(self.name, 'pic_Aomat', self.Aomat)
-                t2df.addData(self.name, 'pic_AoGr', self.AoGr)
-                t2df.addData(self.name, 'pic_AoGF', self.AoGF)
-                t2df.addData(self.name, 'pic_AoGD', self.AoGD)
-                t2df.addData(self.name, 'pic_AoGE', self.AoGE)
+                h5df.addData(self.name, 'pic_Gr', self.Gr)
+                h5df.addData(self.name, 'pic_GGr', self.GGr)
+                h5df.addData(self.name, 'pic_GtF', self.GtF)
+                h5df.addData(self.name, 'pic_GGtD', self.GGtD)
+                h5df.addData(self.name, 'pic_Emat', self.Emat)
+                h5df.addData(self.name, 'pic_GGtE', self.GGtE)
+                h5df.addData(self.name, 'pic_Wvec', self.Wvec)
+                h5df.addData(self.name, 'pic_Amat', self.Amat)
+                h5df.addData(self.name, 'pic_AGr', self.AGr)
+                h5df.addData(self.name, 'pic_AGF', self.AGF)
+                h5df.addData(self.name, 'pic_AGD', self.AGD)
+                h5df.addData(self.name, 'pic_AGE', self.AGE)
+                h5df.addData(self.name, 'pic_Wovec', self.Wovec)
+                h5df.addData(self.name, 'pic_Aomat', self.Aomat)
+                h5df.addData(self.name, 'pic_AoGr', self.AoGr)
+                h5df.addData(self.name, 'pic_AoGF', self.AoGF)
+                h5df.addData(self.name, 'pic_AoGD', self.AoGD)
+                h5df.addData(self.name, 'pic_AoGE', self.AoGE)
 
         if likfunc == 'mark7' or write == 'all':
             self.Gr = np.dot(self.Hmat.T, self.residuals)
@@ -2504,17 +2507,17 @@ class ptaPulsar(object):
 
             if write != 'none':
                 # Write all these quantities to the HDF5 file
-                t2df.addData(self.name, 'pic_Gr', self.Gr)
-                t2df.addData(self.name, 'pic_GGr', self.GGr)
-                t2df.addData(self.name, 'pic_GtF', self.GtF)
-                t2df.addData(self.name, 'pic_Wvec', self.Wvec)
-                t2df.addData(self.name, 'pic_Amat', self.Amat)
-                t2df.addData(self.name, 'pic_AGr', self.AGr)
-                t2df.addData(self.name, 'pic_AGF', self.AGF)
-                t2df.addData(self.name, 'pic_Wovec', self.Wovec)
-                t2df.addData(self.name, 'pic_Aomat', self.Aomat)
-                t2df.addData(self.name, 'pic_AoGr', self.AoGr)
-                t2df.addData(self.name, 'pic_AoGF', self.AoGF)
+                h5df.addData(self.name, 'pic_Gr', self.Gr)
+                h5df.addData(self.name, 'pic_GGr', self.GGr)
+                h5df.addData(self.name, 'pic_GtF', self.GtF)
+                h5df.addData(self.name, 'pic_Wvec', self.Wvec)
+                h5df.addData(self.name, 'pic_Amat', self.Amat)
+                h5df.addData(self.name, 'pic_AGr', self.AGr)
+                h5df.addData(self.name, 'pic_AGF', self.AGF)
+                h5df.addData(self.name, 'pic_Wovec', self.Wovec)
+                h5df.addData(self.name, 'pic_Aomat', self.Aomat)
+                h5df.addData(self.name, 'pic_AoGr', self.AoGr)
+                h5df.addData(self.name, 'pic_AoGF', self.AoGF)
 
         if likfunc == 'mark8' or write == 'all':
             self.Gr = np.dot(self.Hmat.T, self.residuals)
@@ -2563,24 +2566,24 @@ class ptaPulsar(object):
 
             if write != 'none':
                 # Write all these quantities to the HDF5 file
-                t2df.addData(self.name, 'pic_Gr', self.Gr)
-                t2df.addData(self.name, 'pic_GGr', self.GGr)
-                t2df.addData(self.name, 'pic_GtF', self.GtF)
-                t2df.addData(self.name, 'pic_GGtD', self.GGtD)
-                t2df.addData(self.name, 'pic_Emat', self.Emat)
-                t2df.addData(self.name, 'pic_GGtE', self.GGtE)
-                t2df.addData(self.name, 'pic_Wvec', self.Wvec)
-                t2df.addData(self.name, 'pic_Amat', self.Amat)
-                t2df.addData(self.name, 'pic_AGr', self.AGr)
-                t2df.addData(self.name, 'pic_AGF', self.AGF)
-                t2df.addData(self.name, 'pic_AGD', self.AGD)
-                t2df.addData(self.name, 'pic_AGE', self.AGE)
-                t2df.addData(self.name, 'pic_Wovec', self.Wovec)
-                t2df.addData(self.name, 'pic_Aomat', self.Aomat)
-                t2df.addData(self.name, 'pic_AoGr', self.AoGr)
-                t2df.addData(self.name, 'pic_AoGF', self.AoGF)
-                t2df.addData(self.name, 'pic_AoGD', self.AoGD)
-                t2df.addData(self.name, 'pic_AoGE', self.AoGE)
+                h5df.addData(self.name, 'pic_Gr', self.Gr)
+                h5df.addData(self.name, 'pic_GGr', self.GGr)
+                h5df.addData(self.name, 'pic_GtF', self.GtF)
+                h5df.addData(self.name, 'pic_GGtD', self.GGtD)
+                h5df.addData(self.name, 'pic_Emat', self.Emat)
+                h5df.addData(self.name, 'pic_GGtE', self.GGtE)
+                h5df.addData(self.name, 'pic_Wvec', self.Wvec)
+                h5df.addData(self.name, 'pic_Amat', self.Amat)
+                h5df.addData(self.name, 'pic_AGr', self.AGr)
+                h5df.addData(self.name, 'pic_AGF', self.AGF)
+                h5df.addData(self.name, 'pic_AGD', self.AGD)
+                h5df.addData(self.name, 'pic_AGE', self.AGE)
+                h5df.addData(self.name, 'pic_Wovec', self.Wovec)
+                h5df.addData(self.name, 'pic_Aomat', self.Aomat)
+                h5df.addData(self.name, 'pic_AoGr', self.AoGr)
+                h5df.addData(self.name, 'pic_AoGF', self.AoGF)
+                h5df.addData(self.name, 'pic_AoGD', self.AoGD)
+                h5df.addData(self.name, 'pic_AoGE', self.AoGE)
 
         if likfunc == 'mark9' or write == 'all':
             self.Gr = np.dot(self.Hmat.T, self.residuals)
@@ -2625,22 +2628,22 @@ class ptaPulsar(object):
 
             if write != 'none':
                 # Write all these quantities to the HDF5 file
-                t2df.addData(self.name, 'pic_Gr', self.Gr)
-                t2df.addData(self.name, 'pic_GGr', self.GGr)
-                t2df.addData(self.name, 'pic_GtF', self.GtF)
-                t2df.addData(self.name, 'pic_SFmat', self.SFmat)
-                t2df.addData(self.name, 'pic_FFmat', self.FFmat)
-                t2df.addData(self.name, 'pic_SFfreqs', self.SFfreqs)
-                t2df.addData(self.name, 'pic_Wvec', self.Wvec)
-                t2df.addData(self.name, 'pic_Amat', self.Amat)
-                t2df.addData(self.name, 'pic_AGr', self.AGr)
-                t2df.addData(self.name, 'pic_AGF', self.AGF)
-                t2df.addData(self.name, 'pic_AGFF', self.AGFF)
-                t2df.addData(self.name, 'pic_Wovec', self.Wovec)
-                t2df.addData(self.name, 'pic_Aomat', self.Aomat)
-                t2df.addData(self.name, 'pic_AoGr', self.AoGr)
-                t2df.addData(self.name, 'pic_AoGF', self.AoGF)
-                t2df.addData(self.name, 'pic_AoGFF', self.AoGFF)
+                h5df.addData(self.name, 'pic_Gr', self.Gr)
+                h5df.addData(self.name, 'pic_GGr', self.GGr)
+                h5df.addData(self.name, 'pic_GtF', self.GtF)
+                h5df.addData(self.name, 'pic_SFmat', self.SFmat)
+                h5df.addData(self.name, 'pic_FFmat', self.FFmat)
+                h5df.addData(self.name, 'pic_SFfreqs', self.SFfreqs)
+                h5df.addData(self.name, 'pic_Wvec', self.Wvec)
+                h5df.addData(self.name, 'pic_Amat', self.Amat)
+                h5df.addData(self.name, 'pic_AGr', self.AGr)
+                h5df.addData(self.name, 'pic_AGF', self.AGF)
+                h5df.addData(self.name, 'pic_AGFF', self.AGFF)
+                h5df.addData(self.name, 'pic_Wovec', self.Wovec)
+                h5df.addData(self.name, 'pic_Aomat', self.Aomat)
+                h5df.addData(self.name, 'pic_AoGr', self.AoGr)
+                h5df.addData(self.name, 'pic_AoGF', self.AoGF)
+                h5df.addData(self.name, 'pic_AoGFF', self.AoGFF)
 
         if likfunc == 'mark10' or write == 'all':
             self.Gr = np.dot(self.Hmat.T, self.residuals)
@@ -2719,36 +2722,36 @@ class ptaPulsar(object):
 
             if write != 'none':
                 # Write all these quantities to the HDF5 file
-                t2df.addData(self.name, 'pic_Gr', self.Gr)
-                t2df.addData(self.name, 'pic_GGr', self.GGr)
-                t2df.addData(self.name, 'pic_GtF', self.GtF)
-                t2df.addData(self.name, 'pic_GGtD', self.GGtD)
-                t2df.addData(self.name, 'pic_Emat', self.Emat)
-                t2df.addData(self.name, 'pic_GGtE', self.GGtE)
-                t2df.addData(self.name, 'pic_SFmat', self.SFmat)
-                t2df.addData(self.name, 'pic_SFdmmat', self.SFdmmat)
-                t2df.addData(self.name, 'pic_FFmat', self.FFmat)
-                t2df.addData(self.name, 'pic_SFfreqs', self.SFfreqs)
-                t2df.addData(self.name, 'pic_DSF', self.DSF)
-                t2df.addData(self.name, 'pic_DFF', self.DFF)
-                t2df.addData(self.name, 'pic_EEmat', self.EEmat)
-                t2df.addData(self.name, 'pic_GGtEE', self.GGtEE)
-                t2df.addData(self.name, 'pic_Wvec', self.Wvec)
-                t2df.addData(self.name, 'pic_Amat', self.Amat)
-                t2df.addData(self.name, 'pic_AGr', self.AGr)
-                t2df.addData(self.name, 'pic_AGF', self.AGF)
-                t2df.addData(self.name, 'pic_AGFF', self.AGFF)
-                t2df.addData(self.name, 'pic_AGD', self.AGD)
-                t2df.addData(self.name, 'pic_AGE', self.AGE)
-                t2df.addData(self.name, 'pic_AGEE', self.AGEE)
-                t2df.addData(self.name, 'pic_Wovec', self.Wovec)
-                t2df.addData(self.name, 'pic_Aomat', self.Aomat)
-                t2df.addData(self.name, 'pic_AoGr', self.AoGr)
-                t2df.addData(self.name, 'pic_AoGF', self.AoGF)
-                t2df.addData(self.name, 'pic_AoGFF', self.AoGFF)
-                t2df.addData(self.name, 'pic_AoGD', self.AoGD)
-                t2df.addData(self.name, 'pic_AoGE', self.AoGE)
-                t2df.addData(self.name, 'pic_AoGEE', self.AoGEE)
+                h5df.addData(self.name, 'pic_Gr', self.Gr)
+                h5df.addData(self.name, 'pic_GGr', self.GGr)
+                h5df.addData(self.name, 'pic_GtF', self.GtF)
+                h5df.addData(self.name, 'pic_GGtD', self.GGtD)
+                h5df.addData(self.name, 'pic_Emat', self.Emat)
+                h5df.addData(self.name, 'pic_GGtE', self.GGtE)
+                h5df.addData(self.name, 'pic_SFmat', self.SFmat)
+                h5df.addData(self.name, 'pic_SFdmmat', self.SFdmmat)
+                h5df.addData(self.name, 'pic_FFmat', self.FFmat)
+                h5df.addData(self.name, 'pic_SFfreqs', self.SFfreqs)
+                h5df.addData(self.name, 'pic_DSF', self.DSF)
+                h5df.addData(self.name, 'pic_DFF', self.DFF)
+                h5df.addData(self.name, 'pic_EEmat', self.EEmat)
+                h5df.addData(self.name, 'pic_GGtEE', self.GGtEE)
+                h5df.addData(self.name, 'pic_Wvec', self.Wvec)
+                h5df.addData(self.name, 'pic_Amat', self.Amat)
+                h5df.addData(self.name, 'pic_AGr', self.AGr)
+                h5df.addData(self.name, 'pic_AGF', self.AGF)
+                h5df.addData(self.name, 'pic_AGFF', self.AGFF)
+                h5df.addData(self.name, 'pic_AGD', self.AGD)
+                h5df.addData(self.name, 'pic_AGE', self.AGE)
+                h5df.addData(self.name, 'pic_AGEE', self.AGEE)
+                h5df.addData(self.name, 'pic_Wovec', self.Wovec)
+                h5df.addData(self.name, 'pic_Aomat', self.Aomat)
+                h5df.addData(self.name, 'pic_AoGr', self.AoGr)
+                h5df.addData(self.name, 'pic_AoGF', self.AoGF)
+                h5df.addData(self.name, 'pic_AoGFF', self.AoGFF)
+                h5df.addData(self.name, 'pic_AoGD', self.AoGD)
+                h5df.addData(self.name, 'pic_AoGE', self.AoGE)
+                h5df.addData(self.name, 'pic_AoGEE', self.AoGEE)
 
 
 
@@ -2758,7 +2761,7 @@ class ptaPulsar(object):
     tries to read these quantities from the HDF5 file, so that we do not have to
     do many unnecessary calculations during runtime.
 
-    @param t2df:            The DataFile we will write things to
+    @param h5df:            The DataFile we will write things to
     @param Tmax:            The full duration of the experiment
     @param nfreqs:          The number of noise frequencies we require for this
                             pulsar
@@ -2772,7 +2775,7 @@ class ptaPulsar(object):
     @param memsave:         Whether to save memory
 
     """
-    def readPulsarAuxiliaries(self, t2df, Tmax, nfreqs, ndmfreqs, \
+    def readPulsarAuxiliaries(self, h5df, Tmax, nfreqs, ndmfreqs, \
             twoComponent=False, nSingleFreqs=0, nSingleDMFreqs=0, \
             compression='None', likfunc='mark3', memsave=True):
         # TODO: set this parameter in another place?
@@ -2789,8 +2792,8 @@ class ptaPulsar(object):
             ndmf = ndmfreqs
 
         # Read in the file frequencies and Tmax
-        file_Tmax = t2df.getData(self.name, 'pic_Tmax')
-        file_freqs = t2df.getData(self.name, 'pic_modelFrequencies')
+        file_Tmax = h5df.getData(self.name, 'pic_Tmax')
+        file_freqs = h5df.getData(self.name, 'pic_modelFrequencies')
 
         if file_Tmax != Tmax or not np.all(np.array(file_freqs) == \
                 np.array([nf, ndmf, nsf, nsdmf])):
@@ -2798,159 +2801,159 @@ class ptaPulsar(object):
         # Ok, this model seems good to go. Let's start
 
         # G/H compression matrices
-        self.Gmat = np.array(t2df.getData(self.name, 'pic_Gmat', dontread=memsave))
-        self.Gcmat = np.array(t2df.getData(self.name, 'pic_Gcmat', dontread=memsave))
-        self.Hmat = np.array(t2df.getData(self.name, 'pic_Hmat'))
-        self.Hcmat = np.array(t2df.getData(self.name, 'pic_Hcmat'))
-        self.Homat = np.array(t2df.getData(self.name, 'pic_Homat'))
-        self.Hocmat = np.array(t2df.getData(self.name, 'pic_Hocmat'))
-        self.Gr = np.array(t2df.getData(self.name, 'pic_Gr', dontread=memsave))
-        self.GGr = np.array(t2df.getData(self.name, 'pic_GGr', dontread=memsave))
-        self.Wvec = np.array(t2df.getData(self.name, 'pic_Wvec'))
-        self.Wovec = np.array(t2df.getData(self.name, 'pic_Wovec'))
-        self.Amat = np.array(t2df.getData(self.name, 'pic_Amat', dontread=memsave))
-        self.Aomat = np.array(t2df.getData(self.name, 'pic_Aomat', dontread=memsave))
-        self.AoGr = np.array(t2df.getData(self.name, 'pic_AoGr'))
-        self.Ffreqs = np.array(t2df.getData(self.name, 'pic_Ffreqs'))
-        self.Fdmfreqs = np.array(t2df.getData(self.name, 'pic_Fdmfreqs'))
+        self.Gmat = np.array(h5df.getData(self.name, 'pic_Gmat', dontread=memsave))
+        self.Gcmat = np.array(h5df.getData(self.name, 'pic_Gcmat', dontread=memsave))
+        self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat'))
+        self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat'))
+        self.Homat = np.array(h5df.getData(self.name, 'pic_Homat'))
+        self.Hocmat = np.array(h5df.getData(self.name, 'pic_Hocmat'))
+        self.Gr = np.array(h5df.getData(self.name, 'pic_Gr', dontread=memsave))
+        self.GGr = np.array(h5df.getData(self.name, 'pic_GGr', dontread=memsave))
+        self.Wvec = np.array(h5df.getData(self.name, 'pic_Wvec'))
+        self.Wovec = np.array(h5df.getData(self.name, 'pic_Wovec'))
+        self.Amat = np.array(h5df.getData(self.name, 'pic_Amat', dontread=memsave))
+        self.Aomat = np.array(h5df.getData(self.name, 'pic_Aomat', dontread=memsave))
+        self.AoGr = np.array(h5df.getData(self.name, 'pic_AoGr'))
+        self.Ffreqs = np.array(h5df.getData(self.name, 'pic_Ffreqs'))
+        self.Fdmfreqs = np.array(h5df.getData(self.name, 'pic_Fdmfreqs'))
 
         # If compression is not done, but Hmat represents a compression matrix,
         # we need to re-evaluate the lot. Raise an error
         if (compression == 'None' or compression is None) and \
-                t2df.getShape(self.name, 'pic_Gmat')[1] != \
-                t2df.getShape(self.name, 'pic_Hmat')[1]:
+                h5df.getShape(self.name, 'pic_Gmat')[1] != \
+                h5df.getShape(self.name, 'pic_Hmat')[1]:
             raise ValueError("Compressed file detected. Re-calculating all quantities.")
         elif (compression != 'None' and compression != None) and \
-                t2df.getShape(self.name, 'pic_Gmat')[1] == \
-                t2df.getShape(self.name, 'pic_Hmat')[1]:
+                h5df.getShape(self.name, 'pic_Gmat')[1] == \
+                h5df.getShape(self.name, 'pic_Hmat')[1]:
             raise ValueError("Uncompressed file detected. Re-calculating all quantities.")
 
         if likfunc == 'mark1':
-            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF'))
-            self.GtD = np.array(t2df.getData(self.name, 'pic_GtD'))
-            self.AGr = np.array(t2df.getData(self.name, 'pic_AGr', dontread=memsave))
-            self.AGF = np.array(t2df.getData(self.name, 'pic_AGF', dontread=memsave))
-            self.AoGF = np.array(t2df.getData(self.name, 'pic_AoGF', dontread=memsave))
-            self.Fdmmat = np.array(t2df.getData(self.name, 'pic_Fdmmat', dontread=memsave))
-            self.Dmat = np.array(t2df.getData(self.name, 'pic_Dmat', dontread=memsave))
-            self.DF = np.array(t2df.getData(self.name, 'pic_DF', dontread=memsave))
-            self.Fmat = np.array(t2df.getData(self.name, 'pic_Fmat', dontread=memsave))
+            self.GtF = np.array(h5df.getData(self.name, 'pic_GtF'))
+            self.GtD = np.array(h5df.getData(self.name, 'pic_GtD'))
+            self.AGr = np.array(h5df.getData(self.name, 'pic_AGr', dontread=memsave))
+            self.AGF = np.array(h5df.getData(self.name, 'pic_AGF', dontread=memsave))
+            self.AoGF = np.array(h5df.getData(self.name, 'pic_AoGF', dontread=memsave))
+            self.Fdmmat = np.array(h5df.getData(self.name, 'pic_Fdmmat', dontread=memsave))
+            self.Dmat = np.array(h5df.getData(self.name, 'pic_Dmat', dontread=memsave))
+            self.DF = np.array(h5df.getData(self.name, 'pic_DF', dontread=memsave))
+            self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat', dontread=memsave))
 
         if likfunc == 'mark2':
-            self.AGr = np.array(t2df.getData(self.name, 'pic_AGr'))
+            self.AGr = np.array(h5df.getData(self.name, 'pic_AGr'))
 
         if likfunc == 'mark3' or likfunc == 'mark3fa':
-            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF', dontread=memsave))
-            self.AGr = np.array(t2df.getData(self.name, 'pic_AGr'))
-            self.AGF = np.array(t2df.getData(self.name, 'pic_AGF'))
-            self.AoGF = np.array(t2df.getData(self.name, 'pic_AoGF', dontread=memsave))
-            self.Fmat = np.array(t2df.getData(self.name, 'pic_Fmat'))
+            self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
+            self.AGr = np.array(h5df.getData(self.name, 'pic_AGr'))
+            self.AGF = np.array(h5df.getData(self.name, 'pic_AGF'))
+            self.AoGF = np.array(h5df.getData(self.name, 'pic_AoGF', dontread=memsave))
+            self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat'))
 
         if likfunc == 'mark4':
-            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF', dontread=memsave))
-            self.UtF = np.array(t2df.getData(self.name, 'pic_UtF'))
-            self.AGr = np.array(t2df.getData(self.name, 'pic_AGr'))
-            self.AGU = np.array(t2df.getData(self.name, 'pic_AGU'))
-            self.AoGU = np.array(t2df.getData(self.name, 'pic_AoGU', dontread=memsave))
-            self.avetoas = np.array(t2df.getData(self.name, 'pic_avetoas'))
-            self.Umat = np.array(t2df.getData(self.name, 'pic_Umat'))
-            self.Fmat = np.array(t2df.getData(self.name, 'pic_Fmat', dontread=memsave))
+            self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
+            self.UtF = np.array(h5df.getData(self.name, 'pic_UtF'))
+            self.AGr = np.array(h5df.getData(self.name, 'pic_AGr'))
+            self.AGU = np.array(h5df.getData(self.name, 'pic_AGU'))
+            self.AoGU = np.array(h5df.getData(self.name, 'pic_AoGU', dontread=memsave))
+            self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
+            self.Umat = np.array(h5df.getData(self.name, 'pic_Umat'))
+            self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat', dontread=memsave))
 
         if likfunc == 'mark4ln':
-            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF', dontread=memsave))
-            self.UtF = np.array(t2df.getData(self.name, 'pic_UtF', dontread=memsave))
-            self.SFmat = np.array(t2df.getData(self.name, 'pic_SFmat', dontread=memsave))
-            self.FFmat = np.array(t2df.getData(self.name, 'pic_FFmat', dontread=memsave))
-            self.SFfreqs = np.array(t2df.getData(self.name, 'pic_SFfreqs'))
-            self.UtFF = np.array(t2df.getData(self.name, 'pic_UtFF', dontread=memsave))
-            self.AGr = np.array(t2df.getData(self.name, 'pic_AGr'))
-            self.AGU = np.array(t2df.getData(self.name, 'pic_AGU'))
-            self.AoGU = np.array(t2df.getData(self.name, 'pic_AoGU', dontread=memsave))
-            self.avetoas = np.array(t2df.getData(self.name, 'pic_avetoas'))
-            self.Umat = np.array(t2df.getData(self.name, 'pic_Umat'))
-            self.Fmat = np.array(t2df.getData(self.name, 'pic_Fmat', dontread=memsave))
+            self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
+            self.UtF = np.array(h5df.getData(self.name, 'pic_UtF', dontread=memsave))
+            self.SFmat = np.array(h5df.getData(self.name, 'pic_SFmat', dontread=memsave))
+            self.FFmat = np.array(h5df.getData(self.name, 'pic_FFmat', dontread=memsave))
+            self.SFfreqs = np.array(h5df.getData(self.name, 'pic_SFfreqs'))
+            self.UtFF = np.array(h5df.getData(self.name, 'pic_UtFF', dontread=memsave))
+            self.AGr = np.array(h5df.getData(self.name, 'pic_AGr'))
+            self.AGU = np.array(h5df.getData(self.name, 'pic_AGU'))
+            self.AoGU = np.array(h5df.getData(self.name, 'pic_AoGU', dontread=memsave))
+            self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
+            self.Umat = np.array(h5df.getData(self.name, 'pic_Umat'))
+            self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat', dontread=memsave))
 
         if likfunc == 'mark6' or likfunc == 'mark6fa':
-            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF', dontread=memsave))
-            self.GGtD = np.array(t2df.getData(self.name, 'pic_GGtD', dontread=memsave))
-            self.Emat = np.array(t2df.getData(self.name, 'pic_Emat'))
-            self.GGtE = np.array(t2df.getData(self.name, 'pic_GGtE', dontread=memsave))
-            self.AGr = np.array(t2df.getData(self.name, 'pic_AGr'))
-            self.AGF = np.array(t2df.getData(self.name, 'pic_AGF', dontread=memsave))
-            self.AGD = np.array(t2df.getData(self.name, 'pic_AGD', dontread=memsave))
-            self.AGE = np.array(t2df.getData(self.name, 'pic_AGE'))
-            self.AoGF = np.array(t2df.getData(self.name, 'pic_AoGF', dontread=memsave))
-            self.AoGD = np.array(t2df.getData(self.name, 'pic_AoGD', dontread=memsave))
-            self.AoGE = np.array(t2df.getData(self.name, 'pic_AoGE', dontread=memsave))
-            self.Fdmmat = np.array(t2df.getData(self.name, 'pic_Fdmmat', dontread=memsave))
-            self.Dmat = np.array(t2df.getData(self.name, 'pic_Dmat', dontread=memsave))
-            self.DF = np.array(t2df.getData(self.name, 'pic_DF', dontread=memsave))
-            self.Fmat = np.array(t2df.getData(self.name, 'pic_Fmat', dontread=memsave))
+            self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
+            self.GGtD = np.array(h5df.getData(self.name, 'pic_GGtD', dontread=memsave))
+            self.Emat = np.array(h5df.getData(self.name, 'pic_Emat'))
+            self.GGtE = np.array(h5df.getData(self.name, 'pic_GGtE', dontread=memsave))
+            self.AGr = np.array(h5df.getData(self.name, 'pic_AGr'))
+            self.AGF = np.array(h5df.getData(self.name, 'pic_AGF', dontread=memsave))
+            self.AGD = np.array(h5df.getData(self.name, 'pic_AGD', dontread=memsave))
+            self.AGE = np.array(h5df.getData(self.name, 'pic_AGE'))
+            self.AoGF = np.array(h5df.getData(self.name, 'pic_AoGF', dontread=memsave))
+            self.AoGD = np.array(h5df.getData(self.name, 'pic_AoGD', dontread=memsave))
+            self.AoGE = np.array(h5df.getData(self.name, 'pic_AoGE', dontread=memsave))
+            self.Fdmmat = np.array(h5df.getData(self.name, 'pic_Fdmmat', dontread=memsave))
+            self.Dmat = np.array(h5df.getData(self.name, 'pic_Dmat', dontread=memsave))
+            self.DF = np.array(h5df.getData(self.name, 'pic_DF', dontread=memsave))
+            self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat', dontread=memsave))
 
         if likfunc == 'mark7':
-            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF', dontread=memsave))
-            self.AGr = np.array(t2df.getData(self.name, 'pic_AGr'))
-            self.AGF = np.array(t2df.getData(self.name, 'pic_AGF', dontread=memsave))
-            self.AoGF = np.array(t2df.getData(self.name, 'pic_AoGF', dontread=memsave))
-            self.Fmat = np.array(t2df.getData(self.name, 'pic_Fmat'))
+            self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
+            self.AGr = np.array(h5df.getData(self.name, 'pic_AGr'))
+            self.AGF = np.array(h5df.getData(self.name, 'pic_AGF', dontread=memsave))
+            self.AoGF = np.array(h5df.getData(self.name, 'pic_AoGF', dontread=memsave))
+            self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat'))
 
         if likfunc == 'mark8':
-            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF', dontread=memsave))
-            self.GGtD = np.array(t2df.getData(self.name, 'pic_GGtD', dontread=memsave))
-            self.Emat = np.array(t2df.getData(self.name, 'pic_Emat', dontread=memsave))
-            self.GGtE = np.array(t2df.getData(self.name, 'pic_GGtE', dontread=memsave))
-            self.AGr = np.array(t2df.getData(self.name, 'pic_AGr'))
-            self.AGF = np.array(t2df.getData(self.name, 'pic_AGF', dontread=memsave))
-            self.AGD = np.array(t2df.getData(self.name, 'pic_AGD', dontread=memsave))
-            self.AGE = np.array(t2df.getData(self.name, 'pic_AGE', dontread=memsave))
-            self.AoGF = np.array(t2df.getData(self.name, 'pic_AoGF', dontread=memsave))
-            self.AoGD = np.array(t2df.getData(self.name, 'pic_AoGD', dontread=memsave))
-            self.AoGE = np.array(t2df.getData(self.name, 'pic_AoGE', dontread=memsave))
-            self.Fdmmat = np.array(t2df.getData(self.name, 'pic_Fdmmat', dontread=memsave))
-            self.Dmat = np.array(t2df.getData(self.name, 'pic_Dmat'))
-            self.DF = np.array(t2df.getData(self.name, 'pic_DF'))
-            self.Fmat = np.array(t2df.getData(self.name, 'pic_Fmat'))
+            self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
+            self.GGtD = np.array(h5df.getData(self.name, 'pic_GGtD', dontread=memsave))
+            self.Emat = np.array(h5df.getData(self.name, 'pic_Emat', dontread=memsave))
+            self.GGtE = np.array(h5df.getData(self.name, 'pic_GGtE', dontread=memsave))
+            self.AGr = np.array(h5df.getData(self.name, 'pic_AGr'))
+            self.AGF = np.array(h5df.getData(self.name, 'pic_AGF', dontread=memsave))
+            self.AGD = np.array(h5df.getData(self.name, 'pic_AGD', dontread=memsave))
+            self.AGE = np.array(h5df.getData(self.name, 'pic_AGE', dontread=memsave))
+            self.AoGF = np.array(h5df.getData(self.name, 'pic_AoGF', dontread=memsave))
+            self.AoGD = np.array(h5df.getData(self.name, 'pic_AoGD', dontread=memsave))
+            self.AoGE = np.array(h5df.getData(self.name, 'pic_AoGE', dontread=memsave))
+            self.Fdmmat = np.array(h5df.getData(self.name, 'pic_Fdmmat', dontread=memsave))
+            self.Dmat = np.array(h5df.getData(self.name, 'pic_Dmat'))
+            self.DF = np.array(h5df.getData(self.name, 'pic_DF'))
+            self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat'))
 
         if likfunc == 'mark9':
-            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF', dontread=memsave))
-            self.SFmat = np.array(t2df.getData(self.name, 'pic_SFmat', dontread=memsave))
-            self.FFmat = np.array(t2df.getData(self.name, 'pic_FFmat', dontread=memsave))
-            self.SFfreqs = np.array(t2df.getData(self.name, 'pic_SFfreqs'))
-            self.AGr = np.array(t2df.getData(self.name, 'pic_AGr'))
-            self.AGF = np.array(t2df.getData(self.name, 'pic_AGF', dontread=memsave))
-            self.AGFF = np.array(t2df.getData(self.name, 'pic_AGFF'))
-            self.AoGF = np.array(t2df.getData(self.name, 'pic_AoGF', dontread=memsave))
-            self.AoGFF = np.array(t2df.getData(self.name, 'pic_AoGFF', dontread=memsave))
-            self.Fmat = np.array(t2df.getData(self.name, 'pic_Fmat'))
+            self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
+            self.SFmat = np.array(h5df.getData(self.name, 'pic_SFmat', dontread=memsave))
+            self.FFmat = np.array(h5df.getData(self.name, 'pic_FFmat', dontread=memsave))
+            self.SFfreqs = np.array(h5df.getData(self.name, 'pic_SFfreqs'))
+            self.AGr = np.array(h5df.getData(self.name, 'pic_AGr'))
+            self.AGF = np.array(h5df.getData(self.name, 'pic_AGF', dontread=memsave))
+            self.AGFF = np.array(h5df.getData(self.name, 'pic_AGFF'))
+            self.AoGF = np.array(h5df.getData(self.name, 'pic_AoGF', dontread=memsave))
+            self.AoGFF = np.array(h5df.getData(self.name, 'pic_AoGFF', dontread=memsave))
+            self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat'))
 
         if likfunc == 'mark10':
-            self.GtF = np.array(t2df.getData(self.name, 'pic_GtF', dontread=memsave))
-            self.GGtD = np.array(t2df.getData(self.name, 'pic_GGtD', dontread=memsave))
-            self.Emat = np.array(t2df.getData(self.name, 'pic_Emat'))
-            self.GGtE = np.array(t2df.getData(self.name, 'pic_GGtE', dontread=memsave))
-            self.SFmat = np.array(t2df.getData(self.name, 'pic_SFmat', dontread=memsave))
-            self.SFdmmat = np.array(t2df.getData(self.name, 'pic_SFdmmat', dontread=memsave))
-            self.FFmat = np.array(t2df.getData(self.name, 'pic_FFmat', dontread=memsave))
-            self.SFfreqs = np.array(t2df.getData(self.name, 'pic_SFfreqs'))
-            self.DSF = np.array(t2df.getData(self.name, 'pic_DSF', dontread=memsave))
-            self.DFF = np.array(t2df.getData(self.name, 'pic_DFF'))
-            self.EEmat = np.array(t2df.getData(self.name, 'pic_EEmat'))
-            self.GGtEE = np.array(t2df.getData(self.name, 'pic_GGtEE'))
-            self.AGr = np.array(t2df.getData(self.name, 'pic_AGr'))
-            self.AGF = np.array(t2df.getData(self.name, 'pic_AGF', dontread=memsave))
-            self.AGFF = np.array(t2df.getData(self.name, 'pic_AGFF'))
-            self.AGD = np.array(t2df.getData(self.name, 'pic_AGD', dontread=memsave))
-            self.AGE = np.array(t2df.getData(self.name, 'pic_AGE'))
-            self.AGEE = np.array(t2df.getData(self.name, 'pic_AGEE'))
-            self.AoGF = np.array(t2df.getData(self.name, 'pic_AoGF', dontread=memsave))
-            self.AoGFF = np.array(t2df.getData(self.name, 'pic_AoGFF', dontread=memsave))
-            self.AoGD = np.array(t2df.getData(self.name, 'pic_AoGD', dontread=memsave))
-            self.AoGE = np.array(t2df.getData(self.name, 'pic_AoGE', dontread=memsave))
-            self.AoGEE = np.array(t2df.getData(self.name, 'pic_AoGEE', dontread=memsave))
-            self.Fdmmat = np.array(t2df.getData(self.name, 'pic_Fdmmat', dontread=memsave))
-            self.Dmat = np.array(t2df.getData(self.name, 'pic_Dmat'))
-            self.DF = np.array(t2df.getData(self.name, 'pic_DF'))
-            self.Fmat = np.array(t2df.getData(self.name, 'pic_Fmat'))
+            self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
+            self.GGtD = np.array(h5df.getData(self.name, 'pic_GGtD', dontread=memsave))
+            self.Emat = np.array(h5df.getData(self.name, 'pic_Emat'))
+            self.GGtE = np.array(h5df.getData(self.name, 'pic_GGtE', dontread=memsave))
+            self.SFmat = np.array(h5df.getData(self.name, 'pic_SFmat', dontread=memsave))
+            self.SFdmmat = np.array(h5df.getData(self.name, 'pic_SFdmmat', dontread=memsave))
+            self.FFmat = np.array(h5df.getData(self.name, 'pic_FFmat', dontread=memsave))
+            self.SFfreqs = np.array(h5df.getData(self.name, 'pic_SFfreqs'))
+            self.DSF = np.array(h5df.getData(self.name, 'pic_DSF', dontread=memsave))
+            self.DFF = np.array(h5df.getData(self.name, 'pic_DFF'))
+            self.EEmat = np.array(h5df.getData(self.name, 'pic_EEmat'))
+            self.GGtEE = np.array(h5df.getData(self.name, 'pic_GGtEE'))
+            self.AGr = np.array(h5df.getData(self.name, 'pic_AGr'))
+            self.AGF = np.array(h5df.getData(self.name, 'pic_AGF', dontread=memsave))
+            self.AGFF = np.array(h5df.getData(self.name, 'pic_AGFF'))
+            self.AGD = np.array(h5df.getData(self.name, 'pic_AGD', dontread=memsave))
+            self.AGE = np.array(h5df.getData(self.name, 'pic_AGE'))
+            self.AGEE = np.array(h5df.getData(self.name, 'pic_AGEE'))
+            self.AoGF = np.array(h5df.getData(self.name, 'pic_AoGF', dontread=memsave))
+            self.AoGFF = np.array(h5df.getData(self.name, 'pic_AoGFF', dontread=memsave))
+            self.AoGD = np.array(h5df.getData(self.name, 'pic_AoGD', dontread=memsave))
+            self.AoGE = np.array(h5df.getData(self.name, 'pic_AoGE', dontread=memsave))
+            self.AoGEE = np.array(h5df.getData(self.name, 'pic_AoGEE', dontread=memsave))
+            self.Fdmmat = np.array(h5df.getData(self.name, 'pic_Fdmmat', dontread=memsave))
+            self.Dmat = np.array(h5df.getData(self.name, 'pic_Dmat'))
+            self.DF = np.array(h5df.getData(self.name, 'pic_DF'))
+            self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat'))
 
 
 
@@ -3020,7 +3023,7 @@ class ptaPulsar(object):
 
 class ptaLikelihood(object):
     # The DataFile object
-    t2df = None
+    h5df = None
 
     # The ptaPulsar objects
     ptapsrs = []
@@ -3105,7 +3108,7 @@ class ptaLikelihood(object):
     """
     # TODO: Do we need to delete all with 'del'?
     def clear(self):
-        self.t2df = None
+        self.h5df = None
         self.ptapsrs = []
         self.ptasignals = []
 
@@ -3134,8 +3137,8 @@ class ptaLikelihood(object):
     """
     def initFromFile(self, filename, pulsars='all', append=False):
         # Retrieve the pulsar list
-        self.t2df = DataFile(filename)
-        psrnames = self.t2df.getPulsarList()
+        self.h5df = DataFile(filename)
+        psrnames = self.h5df.getPulsarList()
 
         # Determine which pulsars we are reading in
         readpsrs = []
@@ -3158,7 +3161,7 @@ class ptaLikelihood(object):
         # Initialise all pulsars
         for psrname in readpsrs:
             newpsr = ptaPulsar()
-            newpsr.readFromH5(self.t2df, psrname)
+            newpsr.readFromH5(self.h5df, psrname)
             self.ptapsrs.append(newpsr)
 
 
@@ -3940,9 +3943,9 @@ class ptaLikelihood(object):
 
                     errs = []
                     est = []
-                    for t2par in self.ptapsrs[ii].t2df.pars:
-                        errs += [self.ptapsrs[ii].t2df[t2par].err]
-                        est += [self.ptapsrs[ii].t2df[t2par].val]
+                    for t2par in self.ptapsrs[ii].t2psr.pars:
+                        errs += [self.ptapsrs[ii].t2psr[t2par].err]
+                        est += [self.ptapsrs[ii].t2psr[t2par].val]
                     tmperrs = np.array([0.0] + errs)
                     tmpest = np.array([0.0] + est)
                 else:
@@ -3959,6 +3962,7 @@ class ptaLikelihood(object):
                             raise ValueError("Sigi singular according to SVD")
                         Sigma = np.dot(Vh.T, np.dot(np.diag(1.0/s), U.T))
                     tmperrs = np.sqrt(np.diag(Sigma))
+                    tmpest = np.zeros(len(tmperrs))
 
                 # Create a modified design matrix (one that we will analytically
                 # marginalise over).
@@ -3978,8 +3982,8 @@ class ptaLikelihood(object):
                     if not parid in newptmdescription:
                         parids += [parid]
                         bvary += [True]
-                        pmin += [-155.0 * tmperrs[jj] + tmpest[jj]]
-                        pmax += [155.0 * tmperrs[jj] + tmpest[jj]]
+                        pmin += [-50.0 * tmperrs[jj] + tmpest[jj]]
+                        pmax += [50.0 * tmperrs[jj] + tmpest[jj]]
                         pwidth += [(pmax[-1]-pmin[-1])/50.0]
                         pstart += [tmpest[jj]]
 
@@ -4370,7 +4374,7 @@ class ptaLikelihood(object):
                 # Read Auxiliaries
                 if verbose:
                     print "Reading Auxiliaries for {0}".format(m2psr.name)
-                m2psr.readPulsarAuxiliaries(self.t2df, Tmax, \
+                m2psr.readPulsarAuxiliaries(self.h5df, Tmax, \
                         numNoiseFreqs[pindex], \
                         numDMFreqs[pindex], not separateEfacs[pindex], \
                         nSingleFreqs=numSingleFreqs[pindex], \
@@ -4385,7 +4389,7 @@ class ptaLikelihood(object):
                 if verbose:
                     print str(err)
                     print "Creating Auxiliaries for {0}".format(m2psr.name)
-                m2psr.createPulsarAuxiliaries(self.t2df, Tmax, numNoiseFreqs[pindex], \
+                m2psr.createPulsarAuxiliaries(self.h5df, Tmax, numNoiseFreqs[pindex], \
                         numDMFreqs[pindex], not separateEfacs[pindex], \
                                 nSingleFreqs=numSingleFreqs[pindex], \
                                 nSingleDMFreqs=numSingleDMFreqs[pindex], \
@@ -4946,7 +4950,7 @@ class ptaLikelihood(object):
                             np.dot(self.ptapsrs[pp].Mmat[:,ind], sparameters-m2signal['pstart'])
 
                 elif m2signal['stype'] == 'nonlineartimingmodel':
-                    # The t2df libstempo object has to be set. Assume it is.
+                    # The t2psr libstempo object has to be set. Assume it is.
                     pp = m2signal['pulsarind']
 
                     # For each varying parameter, update the libstempo object
@@ -4955,12 +4959,13 @@ class ptaLikelihood(object):
                     for jj in range(m2signal['ntotpars']):
                         if m2signal['bvary'][jj]:
                             # If this parameter varies, update the parameter
-                            self.ptapsrs[pp].t2df[m2signal['parid'][jj]].val = \
+                            self.ptapsrs[pp].t2psr[m2signal['parid'][jj]].val = \
                                     sparameters[pindex]
                             pindex += 1
 
                     # Generate the new residuals
-                    self.ptapsrs[pp].detresiduals = self.ptapsrs[pp].t2df.residuals(updatebats=False)
+                    # QUESTION: why do I have to update the BATs for good results?
+                    self.ptapsrs[pp].detresiduals = np.array(self.ptapsrs[pp].t2psr.residuals(updatebats=True), dtype=np.double)
 
         # Loop over all signals, and construct the deterministic signals
         for ss in range(len(self.ptasignals)):
@@ -7149,6 +7154,13 @@ class ptaLikelihood(object):
             for psr in self.ptapsrs:
                 psr.residuals = 2 * psr.residuals + psr.detresiduals
 
+        # If libstempo is installed, also update libstempo objects
+        if t2 is not None:
+            for psr in self.ptapsrs:
+                psr.initLibsTempoObject()
+        else:
+            print "WARNING: libstempo not imported. Par/tim files will not be updated"
+
         """
         # Display the data
         #plt.errorbar(tottoas, ygen, yerr=tottoaerrs, fmt='.', c='blue')
@@ -7162,11 +7174,35 @@ class ptaLikelihood(object):
 
         # If required, write all this to HDF5 file
         if filename != None:
-            t2df = DataFile(filename)
+            h5df = DataFile(filename)
 
             for ii, psr in enumerate(self.ptapsrs):
-                t2df.addData(psr.name, 'prefitRes', psr.residuals, overwrite=True)
-                t2df.addData(psr.name, 'postfitRes', psr.residuals, overwrite=True)
+                h5df.addData(psr.name, 'prefitRes', psr.residuals, overwrite=True)
+                h5df.addData(psr.name, 'postfitRes', psr.residuals, overwrite=True)
+
+                # If libstempo is installed, update the objects, and write the
+                # par/tim files
+                if t2 is not None:
+                    # Create ideal toas (subtract old residuals, add new ones)
+                    psr.t2psr.stoas[:] -= psr.t2psr.residuals() / pic_spd
+                    psr.t2psr.stoas[:] += psr.residuals / pic_spd
+                    psr.t2psr.fit()
+
+                    # Write temporary par/tim files, and read in memory
+                    parfilename = tempfile.mktemp()
+                    timfilename = tempfile.mktemp()
+                    psr.t2psr.savepar(parfilename)
+                    psr.t2psr.savetim(timfilename)
+                    with open(parfilename, 'r') as content_file:
+                        psr.parfile_content = content_file.read()
+                    with open(timfilename, 'r') as content_file:
+                        psr.timfile_content = content_file.read()
+                    os.remove(parfilename)
+                    os.remove(timfilename)
+
+                    # Write the par/tim files to the HDF5 file
+                    h5df.addData(psr.name, 'parfile', psr.parfile_content, overwrite=True)
+                    h5df.addData(psr.name, 'postfitRes', psr.timfile_content, overwrite=True)
 
 
 
@@ -7322,11 +7358,11 @@ class ptaLikelihood(object):
 
         # If required, write all this to HDF5 file
         if filename != None:
-            t2df = DataFile(filename)
+            h5df = DataFile(filename)
 
             for ii, psr in enumerate(self.ptapsrs):
-                t2df.addData(psr.name, 'prefitRes', psr.residuals, overwrite=True)
-                t2df.addData(psr.name, 'postfitRes', psr.residuals, overwrite=True)
+                h5df.addData(psr.name, 'prefitRes', psr.residuals, overwrite=True)
+                h5df.addData(psr.name, 'postfitRes', psr.residuals, overwrite=True)
 
 
 
@@ -7713,10 +7749,10 @@ def simulateFullSet(parlist, timlist, simlist, parameters, h5file, **kwargs):
     if len(parlist) != len(timlist) or len(parlist) != len(simlist):
         raise IOError("ERROR: list of par/tim/sim files should be of equal size")
 
-    # Create the hdf5-file from the par/tim files
-    t2df = DataFile(h5file)
+    # 5reate the hdf5-file from the par/tim files
+    h5df = DataFile(h5file)
     for ii in range(len(parlist)):
-        t2df.addTempoPulsar(parlist[ii], timlist[ii])
+        h5df.addTempoPulsar(parlist[ii], timlist[ii])
 
     # Apply the model, and generate a realisation of data
     likob = ptaLikelihood(h5file)
@@ -7727,9 +7763,9 @@ def simulateFullSet(parlist, timlist, simlist, parameters, h5file, **kwargs):
     # Write the sim-files to disk
     for ii in range(len(parlist)):
         psr = t2.tempopulsar(parlist[ii], timlist[ii])
-        psr.stoas[:] -= psr.residuals() / 86400.0
+        psr.stoas[:] -= psr.residuals() / pic_spd
 
-        psr.stoas[:] += likob.ptapsrs[ii].residuals / 86400.0
+        psr.stoas[:] += likob.ptapsrs[ii].residuals / pic_spd
         psr.savetim(simlist[ii])
 
         print "Writing mock TOAs of ", parlist[ii], "/", likob.ptapsrs[ii].name, \
@@ -9064,15 +9100,16 @@ Obtain the MCMC chain as a numpy array, and a list of parameter indices
 @return: logposterior (1D), loglikelihood (1D), parameter-chain (2D), parameter-labels(1D)
 """
 def ReadMCMCFile(chainfile, parametersfile=None, sampler='auto', nolabels=False):
+    parametersfile = chainfile+'.parameters.txt'
+    mnparametersfile = chainfile+'.mnparameters.txt'
+    mnparametersfile2 = chainfile+'post_equal_weights.dat.mnparameters.txt'
+    ptparametersfile = chainfile+'/ptparameters.txt'
+
     if sampler.lower() == 'auto':
-        mnparametersfile2 = chainfile+'post_equal_weights.dat.mnparameters.txt'
         # Auto-detect the sampler
         if os.path.exists(mnparametersfile2):
             chainfile = chainfile + 'post_equal_weights.dat'
-
-        parametersfile = chainfile+'.parameters.txt'
-        mnparametersfile = chainfile+'.mnparameters.txt'
-        ptparametersfile = chainfile+'/ptparameters.txt'
+            mnparametersfile = mnparametersfile2
 
         # Determine the type of sampler we've been using through the parameters
         # file
@@ -9109,7 +9146,11 @@ def ReadMCMCFile(chainfile, parametersfile=None, sampler='auto', nolabels=False)
                 figurefileeps = chainfile+'.fig.eps'
                 figurefilepng = chainfile+'.fig.png'
                 sampler = 'emcee'
-    elif sampler.lower() == 'MultiNest':
+    elif sampler.lower() == 'multinest':
+        if os.path.exists(mnparametersfile2):
+            chainfile = chainfile + 'post_equal_weights.dat'
+            mnparametersfile = mnparametersfile2
+
         parametersfile = mnparametersfile
         figurefileeps = chainfile+'.fig.eps'
         figurefilepng = chainfile+'.fig.png'
