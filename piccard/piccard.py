@@ -3982,8 +3982,8 @@ class ptaLikelihood(object):
                     if not parid in newptmdescription:
                         parids += [parid]
                         bvary += [True]
-                        pmin += [-50.0 * tmperrs[jj] + tmpest[jj]]
-                        pmax += [50.0 * tmperrs[jj] + tmpest[jj]]
+                        pmin += [-150.0 * tmperrs[jj] + tmpest[jj]]
+                        pmax += [150.0 * tmperrs[jj] + tmpest[jj]]
                         pwidth += [(pmax[-1]-pmin[-1])/50.0]
                         pstart += [tmpest[jj]]
 
@@ -7029,6 +7029,9 @@ class ptaLikelihood(object):
 
     NOTE: the G-matrix is ignored when generating data (so generating pre-fit
     data)
+
+    TODO: repeated calls of this function increasingly introduce errors.
+          Something is not initialised back to zero every call. Investigate
     """
     def gensig(self, parameters=None, filename=None, timedomain=False):
         if parameters == None:
@@ -7202,7 +7205,7 @@ class ptaLikelihood(object):
 
                     # Write the par/tim files to the HDF5 file
                     h5df.addData(psr.name, 'parfile', psr.parfile_content, overwrite=True)
-                    h5df.addData(psr.name, 'postfitRes', psr.timfile_content, overwrite=True)
+                    h5df.addData(psr.name, 'timfile', psr.timfile_content, overwrite=True)
 
 
 
