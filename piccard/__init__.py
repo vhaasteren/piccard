@@ -1,5 +1,6 @@
 from __future__ import print_function
 from .piccard import *
+from .piccard_samplers import *
 
 __version__ = 2014.01
 
