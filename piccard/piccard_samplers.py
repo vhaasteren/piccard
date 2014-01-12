@@ -10,6 +10,7 @@ import sys
 import json
 import tempfile
 
+from .piccard import *
 from . import pytwalk                  # Internal module
 from . import pydnest                  # Internal module
 from . import rjmcmchammer as rjemcee  # Internal module
