@@ -1646,6 +1646,81 @@ class ptaPulsar(object):
         os.remove(timfilename)
 
     """
+    Constructs a new modified design matrix by adding some columns to it. Returns
+    a list of new objects that represent the new timing model
+
+    @param newpars:     Names of the parameters/columns that need to be added
+                        For now, can only be [Offset, F0, F1, DM, DM0, DM1]
+                        (or higher derivatives of F/DM)
+
+    @return (list):     Return the elements: (newM, newG, newGc,
+                        newptmpars, newptmdescription)
+                        in order: the new design matrix, the new G-matrix, the
+                        new co-Gmatrix (orthogonal complement), the new values
+                        of the timing model parameters, the new descriptions of
+                        the timing model parameters. Note that the timing model
+                        parameters are not really 'new', just re-selected
+    """
+    def addToDesignMatrix(self, addpars):
+        # First make sure that the parameters we are adding are not already in
+        # the design matrix
+        indok = np.array([1]*len(addpars), dtype=np.bool)
+        addpars = np.array(addpars)
+        for ii, parlabel in enumerate(self.ptmdescription):
+            if parlabel in addpars:
+                indok[ii] = False
+
+        if sum(indok) != len(indok):
+            print "WARNING: cannot add parameters to the design matrix that are already present"
+            print "         refusing to add:", map(str, addpars[indok == False])
+
+        # Only add the parameters with indok == True
+        if sum(indok) > 0:
+            # We have some parameters to add
+            addM = np.zeros((self.Mmat.shape[0], np.sum(indok)))
+            adddes = []
+            addpars = map(str, addpars[indok])
+
+            Dmatdiag = pic_DMk / (self.freqs**2)
+            for ii, par in enumerate(addpars[indok]):
+                addpars.append(0.0)
+                if par == 'DM':
+                    addM[:, ii] = Dmatdiag.copy()
+                elif par[:2] == 'DM':
+                    power = int(par[2:])
+                    addM[:, ii] = Dmatdiag * (self.toas ** power)
+                elif par == 'Offset':
+                    addM[:, ii] = 1.0
+                elif par[0] == 'F':
+                    try:
+                        power = int(par[1:])
+                        addM[:, ii] = (self.toas ** power)
+                    except ValueError:
+                        raise ValueError("ERROR: parameter {0} not implemented in 'addToDesignMatrix'".format(par))
+                else:
+                    raise ValueError("ERROR: parameter {0} not implemented in 'addToDesignMatrix'".format(par))
+
+            newM = np.append(self.Mmat, addM, axis=1)
+            newptmdescription = np.append(self.ptmdescription, adddes)
+            newptmpars = np.append(self.ptmpars, addpars)
+
+            # Construct the G-matrices
+            U, s, Vh = sl.svd(newM)
+            newG = U[:, (newM.shape[1]):].copy()
+            newGc = U[:, :(newM.shape[1])].copy()
+        else:
+            newM = self.Mmat.copy()
+            newptmdescription = self.ptmdescription.copy()
+            newptmpars = self.ptmpars.copy()
+            newG = self.Gmat.copy()
+            newGc = self.Gcmat.copy()
+
+        return newM, newG, newGc, newptmpars, newptmdescription
+
+
+
+
+    """
     Construct a modified design matrix, based on some options. Returns a list of
     new objects that represent the new timing model
 
