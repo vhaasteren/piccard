@@ -8,6 +8,7 @@ qtip: Qt interactive interface for PTA data analysis tools
 
 
 from __future__ import print_function
+from __future__ import division
 import os, sys
 
 # Importing all the stuff for the IPython console widget
@@ -25,6 +26,7 @@ from matplotlib.figure import Figure
 
 # Numpy etc.
 import numpy as np
+import time
 
 # Import libstempo and Piccard
 try:
@@ -36,45 +38,41 @@ try:
 except ImportError:
     t2 = None
 
+# The startup banner
+QtipBanner = """Qtip python console, by Rutger van Haasteren
+Console powered by IPython
+Type "copyright", "credits" or "license" for more information.
 
-# This is just to test...
-def print_process_id():
-    print('Process ID is:', os.getpid())
+?         -> Introduction and overview of IPython's features.
+%quickref -> Quick reference.
+help      -> Python's own help system.
+object?   -> Details about 'object', use 'object??' for extra details.
+%guiref   -> A brief reference about the graphical user interface.
+
+import numpy as np, matplotlib.pyplot as plt, libstempo as t2
+"""
+
 
 """
-Main Qtip window
-
-Note, is the main window now, but the content will later be moved to a libstempo
-tab, as part of the Piccard suite
+The plk-emulator window.
 """
-class QtipWindow(QtGui.QMainWindow):
-    
-    def __init__(self):
-        super(QtipWindow, self).__init__()
-        self.setWindowTitle('QtIpython interface to Piccard/libstempo')
-        
-        #self.initUI()
-        self.createPlkWidget()
-        self.createIPythonWidget()
+class PlkWidget(QtGui.QWidget):
+
+    def __init__(self, parent=None, **kwargs):
+        super(PlkWidget, self).__init__(parent)
+
+        self.initPlk()
         self.setPlkLayout()
 
-        self.onDraw()
-        self.show()
+        self.psr = None
+        self.parent = parent
 
-    def onAbout(self):
-        msg = """ A demo of using PyQt with matplotlib:
-        
-         * Use the matplotlib navigation bar
-         * Add values to the text box and press Enter (or click "Draw")
-         * Show or hide the grid
-         * Drag the slider to modify the width of the bars
-         * Save the plot to a file using the File menu
-         * Click on a bar to receive an informative message
-        """
-        QMessageBox.about(self, "About the demo", msg.strip())
+    def initPlk(self):
+        self.setMinimumSize(650, 500)
 
-    def createPlkWidget(self):
-        self.plkWidget = QtGui.QWidget()
+        self.plkbox = QtGui.QVBoxLayout()   # VBox contains the plk widget
+        self.fcboxes = []                   # All the checkbox layouts (7 per line)
+        self.fitboxPerLine = 9
 
         # Create the mpl Figure and FigCanvas objects. 
         # 5x4 inches, 100 dots-per-inch
@@ -82,7 +80,7 @@ class QtipWindow(QtGui.QMainWindow):
         self.plkDpi = 100
         self.plkFig = Figure((5.0, 4.0), dpi=self.plkDpi)
         self.plkCanvas = FigureCanvas(self.plkFig)
-        self.plkCanvas.setParent(self.plkWidget)
+        self.plkCanvas.setParent(self)
 
         # Since we have only one plot, we can use add_axes 
         # instead of add_subplot, but then the subplot
@@ -99,111 +97,212 @@ class QtipWindow(QtGui.QMainWindow):
         #
         #self.mpl_toolbar = NavigationToolbar(self.canvas, self.main_frame)
 
-    def onDraw(self):
+
+        # Draw an empty graph
+        self.drawSomething()
+
+    def deleteFitCheckBoxes(self):
+        for fcbox in self.fcboxes:
+            while fcbox.count():
+                item = fcbox.takeAt(0)
+                item.widget().deleteLater()
+
+        for fcbox in self.fcboxes:
+            self.plkbox.removeItem(fcbox)
+
+        self.fcboxes = []
+
+    def addFitCheckBoxes(self, psr):
+        for pp, par in enumerate(psr.pars):
+            if pp % self.fitboxPerLine == 0:
+                self.fcboxes.append(QtGui.QHBoxLayout())
+
+            cb = QtGui.QCheckBox(par, self)
+            cb.stateChanged.connect(self.changedFitCheckBox)
+
+            fcbox = self.fcboxes[-1]
+            fcbox.addWidget(cb)
+
+        for fcbox in self.fcboxes:
+            #fcbox.addStretch(1)
+            self.plkbox.addLayout(fcbox)
+
+    def changedFitCheckBox(self):
+        # Check who sent the signal
+        sender = self.sender()
+        parchanged = sender.text()
+
+        # Whatevs, we can just as well re-scan all the CheckButtons, and re-do
+        # the fit
+        # TODO: not implemented
+        print("Checkbox", parchanged, "changed")
+
+
+    def drawSomething(self):
         self.plkAxes.clear()
         self.plkAxes.grid(True)
-        self.plkAxes.plot(np.arange(0, 10, 0.1), np.sin(np.arange(0, 10, 0.1)), 'b-')
         self.plkCanvas.draw()
 
-    def createIPythonWidget(self):
-        #app = guisupport.get_app_qt4()
+    def setPulsar(self, psr):
+        # Update the fitting checkboxes
+        self.deleteFitCheckBoxes()
+        self.addFitCheckBoxes(psr)
 
+        # Draw the residuals
+        self.drawResiduals(psr.toas(), psr.residuals(), psr.toaerrs*1.0e-6, psr.name)
+        self.psr = psr
+        self.show()
+
+    def drawResiduals(self, x, y, yerr, title=""):
+        self.plkAxes.clear()
+        self.plkAxes.grid(True)
+        self.plkAxes.errorbar(x, y*1.0e6, yerr=yerr*1.0e6, fmt='.', color='green')
+        self.plkAxes.set_xlabel(r'MJD')
+        self.plkAxes.set_ylabel(r'Residual ($\mu$s)')
+        self.plkAxes.set_title(title)
+        self.plkCanvas.draw()
+
+    def setPlkLayout(self):
+        # Initialise the plk box
+        self.plkbox.addWidget(self.plkCanvas)
+
+        # Just in case, set all the fit-checkboxes. These are not supposed to be
+        # there, by the way
+        for fcbox in self.fcboxes:
+            self.plkbox.addLayout(fcbox)
+        self.setLayout(self.plkbox)
+
+    def keyPressEvent(self, e):
+        if e.key() == QtCore.Qt.Key_Escape:
+            if self.parent is None:
+                self.close()
+            else:
+                self.parent.close()
+
+"""
+Main Qtip window
+
+Note, is the main window now, but the content will later be moved to a libstempo
+tab, as part of the Piccard suite
+"""
+class QtipWindow(QtGui.QMainWindow):
+    
+    def __init__(self, parent=None):
+        super(QtipWindow, self).__init__(parent)
+        self.setWindowTitle('QtIpython interface to Piccard/libstempo')
+        
+        self.initUI()
+        self.createPlkWidget()
+        self.createIPythonWidget()
+        self.setQtipLayout()
+
+        self.show()
+
+    def __del__(self):
+        pass
+
+    def onAbout(self):
+        msg = """ A demo of using PyQt with matplotlib, libstempo, and IPython:
+        """
+        QtGui.QMessageBox.about(self, "About the demo", msg.strip())
+
+    def initUI(self):
+        # The main screen. Do we need this?
+        self.mainFrame = QtGui.QWidget()
+        self.hbox = QtGui.QHBoxLayout()     # HBox contains both IPython and plk
+
+        self.openParTimAction = QtGui.QAction('&Open', self)        
+        self.openParTimAction.setShortcut('Ctrl+O')
+        self.openParTimAction.setStatusTip('Open par/tim')
+        self.openParTimAction.triggered.connect(self.openParTim)
+
+        self.exitAction = QtGui.QAction(QtGui.QIcon('exit.png'), '&Exit', self)        
+        self.exitAction.setShortcut('Ctrl+Q')
+        self.exitAction.setStatusTip('Exit application')
+        self.exitAction.triggered.connect(self.close)
+
+        self.aboutAction = QtGui.QAction('&About', self)        
+        self.aboutAction.setShortcut('Ctrl+A')
+        self.aboutAction.setStatusTip('About Qtip')
+        self.aboutAction.triggered.connect(self.onAbout)
+
+        self.statusBar()
+
+        
+        if sys.platform == 'darwin':
+            # On OSX, the menubar is usually on the top of the screen, not in
+            # the window. To make it in the window:
+            QtGui.qt_mac_set_native_menubar(False) 
+
+            # Otherwise, if we'd like to get the system menubar at the top, then
+            # we need another menubar object, not self.menuBar as below. In that
+            # case, use:
+            # self.menubar = QtGui.QMenuBar()
+            # TODO: Somehow this does not work. Per-window one does though
+
+        self.menubar = self.menuBar()
+        self.fileMenu = self.menubar.addMenu('&File')
+        self.fileMenu.addAction(self.openParTimAction)
+        self.fileMenu.addAction(self.exitAction)
+        self.helpMenu = self.menubar.addMenu('&Help')
+        self.helpMenu.addAction(self.aboutAction)
+
+    def createPlkWidget(self):
+        self.plkWidget = PlkWidget(parent=self.mainFrame)
+
+    def createIPythonWidget(self):
         # Create an in-process kernel
-        # >>> print_process_id()
-        # will print the same process ID as the main process
         self.kernelManager = QtInProcessKernelManager()
         self.kernelManager.start_kernel()
         self.kernel = self.kernelManager.kernel
-        self.kernel.gui = 'qt4'
-        self.kernel.shell.push({'foo': 43, 'print_process_id': print_process_id})
 
         self.kernelClient = self.kernelManager.client()
         self.kernelClient.start_channels()
 
-        #def stop():
-        #    kernel_client.stop_channels()
-        #    kernel_manager.shutdown_kernel()
-        #    app.exit()
-
         self.consoleWidget = RichIPythonWidget()
+        self.consoleWidget.setMinimumSize(600, 500)
+        self.consoleWidget.banner = QtipBanner
         self.consoleWidget.kernel_manager = self.kernelManager
         self.consoleWidget.kernel_client = self.kernelClient
-        #control.exit_requested.connect(stop)
+        self.consoleWidget.exit_requested.connect(self.close)
         self.consoleWidget.set_default_style(colors='linux')
-        #self.consoleWidget.show()
 
-        #guisupport.start_event_loop_qt4(app)
+        self.kernel.shell.enable_matplotlib(gui='inline')
 
-    def setPlkLayout(self):
-        self.hbox = QtGui.QHBoxLayout()
+        # Load the necessary packages in the embedded kernel
+        cell = "import numpy as np, matplotlib.pyplot as plt, libstempo as t2"
+        self.kernel.shell.run_cell(cell)
+
+    def setQtipLayout(self):
         self.hbox.addWidget(self.plkWidget)
         self.hbox.addStretch(1)
         self.hbox.addWidget(self.consoleWidget)
-        self.setLayout(self.hbox)
 
+        self.mainFrame.setLayout(self.hbox)
+        self.setCentralWidget(self.mainFrame)
 
-def main1():
-    # Print the ID of the main process
-    print_process_id()
+    def openParTim(self):
+        # Ask the user for a par and tim file, and open these with libstempo
+        parfilename = QtGui.QFileDialog.getOpenFileName(self, 'Open par-file', '~/')
+        timfilename = QtGui.QFileDialog.getOpenFileName(self, 'Open tim-file', '~/')
 
-    app = guisupport.get_app_qt4()
+        # Load the pulsar
+        cell = "psr = t2.tempopulsar('"+parfilename+"', '"+timfilename+"')"
+        self.kernel.shell.run_cell(cell)
+        psr = self.kernel.shell.ns_table['user_local']['psr']
 
-    # Create an in-process kernel
-    # >>> print_process_id()
-    # will print the same process ID as the main process
-    kernel_manager = QtInProcessKernelManager()
-    kernel_manager.start_kernel()
-    kernel = kernel_manager.kernel
-    kernel.gui = 'qt4'
-    kernel.shell.push({'foo': 43, 'print_process_id': print_process_id})
+        # Update the plk widget
+        self.plkWidget.setPulsar(psr)
 
-    kernel_client = kernel_manager.client()
-    kernel_client.start_channels()
+        # Communicating with the kernel goes as follows
+        # self.kernel.shell.push({'foo': 43, 'print_process_id': print_process_id}, interactive=True)
+        # print("Embedded, we have:", self.kernel.shell.ns_table['user_local']['foo'])
 
-    def stop():
-        kernel_client.stop_channels()
-        kernel_manager.shutdown_kernel()
-        app.exit()
-
-    control = RichIPythonWidget()
-    control.kernel_manager = kernel_manager
-    control.kernel_client = kernel_client
-    control.exit_requested.connect(stop)
-    control.set_default_style(colors='linux')
-    control.show()
-
-    guisupport.start_event_loop_qt4(app)
-
-
-
-class Example(QtGui.QWidget):
-    
-    def __init__(self):
-        super(Example, self).__init__()
-        
-        self.initUI()
-        
-    def initUI(self):
-        
-        QtGui.QToolTip.setFont(QtGui.QFont('SansSerif', 10))
-        
-        self.setToolTip('This is a <b>QWidget</b> widget')
-        
-        btn = QtGui.QPushButton('Button', self)
-        btn.setToolTip('This is a <b>QPushButton</b> widget')
-        btn.resize(btn.sizeHint())
-        btn.move(50, 50)       
-        
-        self.setGeometry(300, 300, 250, 150)
-        self.setWindowTitle('Tooltips')    
-        self.show()
         
 def main():
     app = QtGui.QApplication(sys.argv)
     qtipwin = QtipWindow()
     sys.exit(app.exec_())
-    #qtipwin.start_event_loop_qt4(app)
 
 if __name__ == '__main__':
     main()
-
