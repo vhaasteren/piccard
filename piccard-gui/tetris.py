@@ -175,13 +175,15 @@ class Board(QtGui.QFrame):
         elif key == QtCore.Qt.Key_Right:
             self.tryMove(self.curPiece, self.curX + 1, self.curY)
             
-        elif key == QtCore.Qt.Key_Down:
+        #elif key == QtCore.Qt.Key_Down:
+        elif key == QtCore.Qt.Key_Space:
             self.tryMove(self.curPiece.rotateRight(), self.curX, self.curY)
             
         elif key == QtCore.Qt.Key_Up:
             self.tryMove(self.curPiece.rotateLeft(), self.curX, self.curY)
             
-        elif key == QtCore.Qt.Key_Space:
+        #elif key == QtCore.Qt.Key_Space:
+        elif key == QtCore.Qt.Key_Down:
             self.dropDown()
             
         elif key == QtCore.Qt.Key_D:
