@@ -1653,6 +1653,18 @@ class ptaPulsar(object):
                         For now, can only be [Offset, F0, F1, DM, DM0, DM1]
                         (or higher derivatives of F/DM)
 
+    @param oldMat:      The old design matrix. If None, use current one
+
+    @param oldGmat:     The old G-matrix. ''
+
+    @param oldGcmat:    The old co-G-matrix ''
+
+    @param oldptmpars:  The old timing model parameter values
+
+    @param oldptmdescription:   The old timing model parameter labels
+
+    @param noWarning:   If True, do not warn for duplicate parameters
+
     @return (list):     Return the elements: (newM, newG, newGc,
                         newptmpars, newptmdescription)
                         in order: the new design matrix, the new G-matrix, the
@@ -1663,7 +1675,8 @@ class ptaPulsar(object):
     """
     def addToDesignMatrix(self, addpars, \
             oldMmat=None, oldGmat=None, oldGcmat=None, \
-            oldptmpars=None, oldptmdescription=None):
+            oldptmpars=None, oldptmdescription=None, \
+            noWarning=False):
         if oldMmat is None:
             oldMmat = self.Mmat
         if oldptmdescription is None:
@@ -1684,7 +1697,7 @@ class ptaPulsar(object):
             if parlabel in oldptmdescription:
                 indok[ii] = False
 
-        if sum(indok) != len(indok):
+        if sum(indok) != len(indok) and not noWarning:
             print "WARNING: cannot add parameters to the design matrix that are already present"
             print "         refusing to add:", map(str, addpars[indok == False])
 
@@ -1841,7 +1854,7 @@ class ptaPulsar(object):
         if len(addpar) > 0:
             (newM, newG, newGc, newptmpars, newptmdescription) = \
                     self.addToDesignMatrix(addpar, newM, newG, newGc, \
-                    newptmpars, newptmdescription)
+                    newptmpars, newptmdescription, noWarning=True)
 
         # See whether some parameters need to be deleted
         delpar = []
@@ -2050,9 +2063,44 @@ class ptaPulsar(object):
     Figure out what the list of timing model parameters is that needs to be
     deleted from the design matrix in order to do nonlinear timing model
     parameter analysis, given 
+
+    @param tmpars:  A list of suggested parameters to keep in the design
+                    matrix. Only parameters not present in this list and present
+                    in the design matrix will be returned.
+    @param keep:    If True, return the parameters that we keep in the design
+                    matrix. If False, return the parameters that we will delete
+                    from the design matrix
+
+    @return:        List of parameters to be deleted
     """
-    def getDeleteTimingModelParameterList(self, ):
-        pass
+    def getNewTimingModelParameterList(self, keep=True, \
+            tmpars = None):
+        # Remove from the timing model parameter list of the design matrix,
+        # all parameters not in the list 'tmpars'. The parameters not in
+        # tmpars are numerically included
+        if tmpars is None:
+            tmpars = ['Offset', 'F0', 'F1', 'RAJ', 'DECJ', 'PMRA', 'PMDEC', \
+                    'PX', 'DM', 'DM1', 'DM2']
+
+        tmparkeep = []
+        tmpardel = []
+        for tmpar in self.ptmdescription:
+            if tmpar in tmpars:
+                # This parameter stays in the compression matrix (so is
+                # marginalised over
+                tmparkeep += [tmpar]
+            elif tmpar == 'Offset':
+                print "WARNING: Offset needs to be included in the design matrix. Including it anyway..."
+                tmparkeep += [tmpar]
+            else:
+                tmpardel += [tmpar]
+
+        if keep:
+            returnpars = tmparkeep
+        else:
+            returnpars = tmpardel
+
+        return returnpars
 
 
 
@@ -2078,7 +2126,7 @@ class ptaPulsar(object):
     """
     def constructCompressionMatrix(self, compression='None', \
             nfmodes=-1, ndmodes=-1, likfunc='mark4', threshold=1.0, \
-            tmpars = ['Offset', 'F0', 'F1', 'RAJ', 'DECJ', 'PMRA', 'PMDEC', 'PX']]):
+            tmpars = None):
         if compression == 'average':
             # To be sure, just construct the averages again. But is already done
             # in 'createPulsarAuxiliaries'
@@ -2277,21 +2325,7 @@ class ptaPulsar(object):
             self.Homat = np.zeros((self.Hmat.shape[0], 0))      # There is no complement
             self.Hocmat = np.zeros((self.Hmat.shape[0], 0))
         elif compression == 'timingmodel':
-            # Remove from the timing model parameter list of the design matrix,
-            # all parameters not in the list 'tmpars'. The parameters not in
-            # tmpars are numerically included
-            tmparkeep = []
-            tmpardel = []
-            for tmpar in self.ptmdescription:
-                if tmpar in tmpars:
-                    # This parameter stays in the compression matrix (so is
-                    # marginalised over
-                    tmparkeep += [tmpar]
-                elif tmpar == 'Offset':
-                    print "WARNING: Offset needs to be included in the design matrix. Including it anyway..."
-                    tmparkeep += [tmpar]
-                else:
-                    tmpardel += [tmpar]
+            tmpardel = self.getNewTimingModelParameterList(keep=False, tmpars=tmpars)
 
             (newM, newG, newGc, newptmpars, newptmdescription) = \
                     self.delFromDesignMatrix(tmpardel)
@@ -4172,20 +4206,20 @@ class ptaLikelihood(object):
                 if nonLinear:
                     # Get the parameter errors from libstempo. Initialise the
                     # libstempo object
-                    self.ptapsrs[ii].initLibsTempoObject()
+                    m2psr.initLibsTempoObject()
 
                     errs = []
                     est = []
-                    for t2par in self.ptapsrs[ii].t2psr.pars:
-                        errs += [self.ptapsrs[ii].t2psr[t2par].err]
-                        est += [self.ptapsrs[ii].t2psr[t2par].val]
+                    for t2par in m2psr.t2psr.pars:
+                        errs += [m2psr.t2psr[t2par].err]
+                        est += [m2psr.t2psr[t2par].val]
                     tmperrs = np.array([0.0] + errs)
                     tmpest = np.array([0.0] + est)
                 else:
                     # Just do the timing-model fit ourselves here, in order to set
                     # the prior.
-                    w = 1.0 / self.ptapsrs[ii].toaerrs**2
-                    Sigi = np.dot(self.ptapsrs[ii].Mmat.T, (w * self.ptapsrs[ii].Mmat.T).T)
+                    w = 1.0 / m2psr.toaerrs**2
+                    Sigi = np.dot(m2psr.Mmat.T, (w * m2psr.Mmat.T).T)
                     try:
                         cf = sl.cho_factor(Sigi)
                         Sigma = sl.cho_solve(cf, np.eye(Sigi.shape[0]))
@@ -4197,10 +4231,14 @@ class ptaLikelihood(object):
                     tmperrs = np.sqrt(np.diag(Sigma))
                     tmpest = np.zeros(len(tmperrs))
 
+                # Figure out which parameters we'll keep in the design matrix
+                newptmdescription = m2psr.getNewTimingModelParameterList(keep=True, \
+                        tmpars=['Offset', 'F0', 'F1', 'RAJ', 'DECJ', 'PMRA', \
+                        'PMDEC', 'PX', 'DM', 'DM1', 'DM2'])
                 # Create a modified design matrix (one that we will analytically
                 # marginalise over).
-                (newM, newG, newGc, newptmpars, newptmdescription) = \
-                        self.ptapsrs[ii].getModifiedDesignMatrix(removeAll=True)
+                #(newM, newG, newGc, newptmpars, newptmdescription) = \
+                #        m2psr.getModifiedDesignMatrix(removeAll=True)
 
                 # Select the numerical parameters. These are the ones not
                 # present in the quantities that getModifiedDesignMatrix
@@ -4211,7 +4249,7 @@ class ptaLikelihood(object):
                 pmax = []
                 pwidth = []
                 pstart = []
-                for jj, parid in enumerate(self.ptapsrs[ii].ptmdescription):
+                for jj, parid in enumerate(m2psr.ptmdescription):
                     if not parid in newptmdescription:
                         parids += [parid]
                         bvary += [True]
