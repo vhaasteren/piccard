@@ -2047,6 +2047,16 @@ class ptaPulsar(object):
 
 
     """
+    Figure out what the list of timing model parameters is that needs to be
+    deleted from the design matrix in order to do nonlinear timing model
+    parameter analysis, given 
+    """
+    def getDeleteTimingModelParameterList(self, ):
+        pass
+
+
+
+    """
     Construct the compression matrix and it's orthogonal complement. This is
     always done, even if in practice there is no compression. That is just the
     fidelity = 1 case.
@@ -2058,11 +2068,17 @@ class ptaPulsar(object):
 
     @param compression: what kind of compression to use. Can be \
                         None/average/frequencies/avefrequencies
-    @param nfmodes: when using frequencies, use this number if not -1
-    @param ndmodes: when using dm frequencies, use this number if not -1
+    @param nfmodes:     when using frequencies, use this number if not -1
+    @param ndmodes:     when using dm frequencies, use this number if not -1
+    @param likfunc:     which likelihood function is being used. Only useful when it
+                        is mark4/not mark4. TODO: parameter can be removed?
+    @param threshold:   To which fidelity will we compress the basis functions [1.0]
+    @param tmpars:      When compressing to a list of timing model parameters,
+                        this list of parameters is used.
     """
     def constructCompressionMatrix(self, compression='None', \
-            nfmodes=-1, ndmodes=-1, likfunc='mark3', threshold=1.0):
+            nfmodes=-1, ndmodes=-1, likfunc='mark4', threshold=1.0, \
+            tmpars = ['Offset', 'F0', 'F1', 'RAJ', 'DECJ', 'PMRA', 'PMDEC', 'PX']]):
         if compression == 'average':
             # To be sure, just construct the averages again. But is already done
             # in 'createPulsarAuxiliaries'
@@ -2258,12 +2274,35 @@ class ptaPulsar(object):
                     self.getModifiedDesignMatrix(removeAll=True)
             self.Hmat = newG
             self.Hcmat = newGc
-            self.Homat = np.zeros((self.Hmat.shape[0], 0))
+            self.Homat = np.zeros((self.Hmat.shape[0], 0))      # There is no complement
+            self.Hocmat = np.zeros((self.Hmat.shape[0], 0))
+        elif compression == 'timingmodel':
+            # Remove from the timing model parameter list of the design matrix,
+            # all parameters not in the list 'tmpars'. The parameters not in
+            # tmpars are numerically included
+            tmparkeep = []
+            tmpardel = []
+            for tmpar in self.ptmdescription:
+                if tmpar in tmpars:
+                    # This parameter stays in the compression matrix (so is
+                    # marginalised over
+                    tmparkeep += [tmpar]
+                elif tmpar == 'Offset':
+                    print "WARNING: Offset needs to be included in the design matrix. Including it anyway..."
+                    tmparkeep += [tmpar]
+                else:
+                    tmpardel += [tmpar]
+
+            (newM, newG, newGc, newptmpars, newptmdescription) = \
+                    self.delFromDesignMatrix(tmpardel)
+            self.Hmat = newG
+            self.Hcmat = newGc
+            self.Homat = np.zeros((self.Hmat.shape[0], 0))      # There is no complement
             self.Hocmat = np.zeros((self.Hmat.shape[0], 0))
         elif compression == 'None' or compression is None:
             self.Hmat = self.Gmat
             self.Hcmat = self.Gcmat
-            self.Homat = np.zeros((self.Hmat.shape[0], 0))
+            self.Homat = np.zeros((self.Hmat.shape[0], 0))      # There is no complement
             self.Hocmat = np.zeros((self.Hmat.shape[0], 0))
         else:
             raise IOError, "Invalid compression argument"
