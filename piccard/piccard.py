@@ -1661,13 +1661,27 @@ class ptaPulsar(object):
                         the timing model parameters. Note that the timing model
                         parameters are not really 'new', just re-selected
     """
-    def addToDesignMatrix(self, addpars):
+    def addToDesignMatrix(self, addpars, \
+            oldMmat=None, oldGmat=None, oldGcmat=None, \
+            oldptmpars=None, oldptmdescription=None):
+        if oldMmat is None:
+            oldMmat = self.Mmat
+        if oldptmdescription is None:
+            oldptmdescription = self.ptmdescription
+        if oldptmpars is None:
+            oldptmpars = self.ptmpars
+        if oldGmat is None:
+            oldGmat = self.Gmat
+        if oldGcmat is None:
+            oldGcmat = self.Gcmat
+
         # First make sure that the parameters we are adding are not already in
         # the design matrix
         indok = np.array([1]*len(addpars), dtype=np.bool)
         addpars = np.array(addpars)
-        for ii, parlabel in enumerate(self.ptmdescription):
-            if parlabel in addpars:
+        #for ii, parlabel in enumerate(oldptmdescription):
+        for ii, parlabel in enumerate(addpars):
+            if parlabel in oldptmdescription:
                 indok[ii] = False
 
         if sum(indok) != len(indok):
@@ -1677,13 +1691,13 @@ class ptaPulsar(object):
         # Only add the parameters with indok == True
         if sum(indok) > 0:
             # We have some parameters to add
-            addM = np.zeros((self.Mmat.shape[0], np.sum(indok)))
-            adddes = []
-            addpars = map(str, addpars[indok])
+            addM = np.zeros((oldMmat.shape[0], np.sum(indok)))
+            adddes = map(str, addpars[indok])
+            addparvals = []
 
             Dmatdiag = pic_DMk / (self.freqs**2)
             for ii, par in enumerate(addpars[indok]):
-                addpars.append(0.0)
+                addparvals.append(0.0)
                 if par == 'DM':
                     addM[:, ii] = Dmatdiag.copy()
                 elif par[:2] == 'DM':
@@ -1700,20 +1714,148 @@ class ptaPulsar(object):
                 else:
                     raise ValueError("ERROR: parameter {0} not implemented in 'addToDesignMatrix'".format(par))
 
-            newM = np.append(self.Mmat, addM, axis=1)
-            newptmdescription = np.append(self.ptmdescription, adddes)
-            newptmpars = np.append(self.ptmpars, addpars)
+            newM = np.append(oldMmat, addM, axis=1)
+            newptmdescription = np.append(oldptmdescription, adddes)
+            newptmpars = np.append(oldptmpars, addparvals)
 
             # Construct the G-matrices
             U, s, Vh = sl.svd(newM)
             newG = U[:, (newM.shape[1]):].copy()
             newGc = U[:, :(newM.shape[1])].copy()
         else:
-            newM = self.Mmat.copy()
-            newptmdescription = self.ptmdescription.copy()
-            newptmpars = self.ptmpars.copy()
-            newG = self.Gmat.copy()
-            newGc = self.Gcmat.copy()
+            newM = oldMmat.copy()
+            newptmdescription = np.array(oldptmdescription)
+            newptmpars = oldptmpars.copy()
+            newG = oldGmat.copy()
+
+            newGc = oldGcmat.copy()
+
+        return newM, newG, newGc, newptmpars, map(str, newptmdescription)
+
+    """
+    Consgtructs a new modified design matrix by deleting some columns from it.
+    Returns a list of new objects that represent the new timing model
+
+    @param delpars:     Names of the parameters/columns that need to be deleted.
+    
+    @return (list):     Return the elements: (newM, newG, newGc,
+                        newptmpars, newptmdescription)
+                        in order: the new design matrix, the new G-matrix, the
+                        new co-Gmatrix (orthogonal complement), the new values
+                        of the timing model parameters, the new descriptions of
+                        the timing model parameters. Note that the timing model
+                        parameters are not really 'new', just re-selected
+    """
+    def delFromDesignMatrix(self, delpars, \
+            oldMmat=None, oldGmat=None, oldGcmat=None, \
+            oldptmpars=None, oldptmdescription=None):
+        if oldMmat is None:
+            oldMmat = self.Mmat
+        if oldptmdescription is None:
+            oldptmdescription = self.ptmdescription
+        if oldptmpars is None:
+            oldptmpars = self.ptmpars
+        if oldGmat is None:
+            oldGmat = self.Gmat
+        if oldGcmat is None:
+            oldGcmat = self.Gcmat
+
+        # First make sure that the parameters we are deleting are actually in
+        # the design matrix
+        inddel = np.array([1]*len(delpars), dtype=np.bool)
+        indkeep = np.array([1]*oldMmat.shape[1], dtype=np.bool)
+        delpars = np.array(delpars)
+        #for ii, parlabel in enumerate(oldptmdescription):
+        for ii, parlabel in enumerate(delpars):
+            if not parlabel in oldptmdescription:
+                inddel[ii] = False
+                print "WARNING: {0} not in design matrix. Not deleting".format(parlabel)
+            else:
+                index = np.flatnonzero(np.array(oldptmdescription) == parlabel)
+                indkeep[index] = False
+
+        if np.sum(indkeep) != len(indkeep):
+            # We have actually deleted some parameters
+            newM = oldMmat[:, indkeep]
+            newptmdescription = np.array(oldptmdescription)[indkeep]
+            newptmpars = oldptmpars[indkeep]
+
+            # Construct the G-matrices
+            U, s, Vh = sl.svd(newM)
+            newG = U[:, (newM.shape[1]):].copy()
+            newGc = U[:, :(newM.shape[1])].copy()
+        else:
+            newM = oldMmat.copy()
+            newptmdescription = np.array(oldptmdescription)
+            newptmpars = oldptmpars.copy()
+            newG = oldGmat.copy()
+            newGc = oldGcmat.copy()
+
+        return newM, newG, newGc, newptmpars, map(str, newptmdescription)
+
+
+    """
+    Construct a modified design matrix, based on some options. Returns a list of
+    new objects that represent the new timing model
+
+    @param addDMQSD:    Whether we should make sure that the DM quadratics are
+                        fit for. Should have 'DM', 'DM1', 'DM2'. If not present,
+                        add them
+    @param addQSD:      Same as addDMQSD, but now for pulsar spin frequency.
+    @param removeJumps: Remove the jumps from the timing model.
+    @param removeAll:   This removes all parameters from the timing model,
+                        except for the DM parameters, and the QSD parameters
+
+    @return (list):     Return the elements: (newM, newG, newGc,
+                        newptmpars, newptmdescription)
+                        in order: the new design matrix, the new G-matrix, the
+                        new co-Gmatrix (orthogonal complement), the new values
+                        of the timing model parameters, the new descriptions of
+                        the timing model parameters. Note that the timing model
+                        parameters are not really 'new', just re-selected
+
+    TODO: Split this function in two parts. One that receives a list of
+          names/identifiers of which parameters to include. The other that
+          constructs the list, and calls that function.
+    """
+    def getModifiedDesignMatrix(self, addDMQSD=False, addQSD=False, \
+            removeJumps=False, removeAll=False):
+        
+        (newM, newG, newGc, newptmpars, newptmdescription) = \
+                (self.Mmat, self.Gmat, self.Gcmat, self.ptmpars, self.ptmdescription)
+
+        # DM and QSD parameter names
+        dmaddes = ['DM', 'DM1', 'DM2']
+        qsdaddes = ['Offset', 'F0', 'F1']
+
+        # See which parameters need to be added
+        addpar = []
+        for parlabel in dmaddes:
+            if addDMQSD and not parlabel in self.ptmpars:
+                addpar += [parlabel]
+        for parlabel in qsdaddes:
+            if addQSD and not parlabel in self.ptmpars:
+                addpar += [parlabel]
+
+        # Add those parameters
+        if len(addpar) > 0:
+            (newM, newG, newGc, newptmpars, newptmdescription) = \
+                    self.addToDesignMatrix(addpar, newM, newG, newGc, \
+                    newptmpars, newptmdescription)
+
+        # See whether some parameters need to be deleted
+        delpar = []
+        for ii, parlabel in enumerate(self.ptmdescription):
+            if (removeJumps or removeAll) and parlabel[:4].upper() == 'JUMP':
+                delpar += [parlabel]
+            elif removeAll and (not parlabel in dmaddes and not parlabel in qsdaddes):
+                delpar += [parlabel]
+
+        # Delete those parameters
+        if len(delpar) > 0:
+            (newM, newG, newGc, newptmpars, newptmdescription) = \
+                    self.delFromDesignMatrix(delpar, newM, newG, newGc, \
+                    newptmpars, newptmdescription)
 
         return newM, newG, newGc, newptmpars, newptmdescription
 
@@ -1743,8 +1885,9 @@ class ptaPulsar(object):
     TODO: Split this function in two parts. One that receives a list of
           names/identifiers of which parameters to include. The other that
           constructs the list, and calls that function.
+    NOTE: TODO is done. This function is deprecated
     """
-    def getModifiedDesignMatrix(self, addDMQSD=False, addQSD=False, \
+    def getModifiedDesignMatrixOld(self, addDMQSD=False, addQSD=False, \
             removeJumps=False, removeAll=False):
         # Which rows of Mmat to keep:
         indkeep = np.array([1]*self.Mmat.shape[1], dtype=np.bool)
