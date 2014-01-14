@@ -16,7 +16,7 @@ from IPython.qt.console.rich_ipython_widget import RichIPythonWidget
 from IPython.qt.inprocess import QtInProcessKernelManager
 from IPython.lib import guisupport
 
-from PyQt4 import QtGui
+from PyQt4 import QtGui, QtCore
 
 # Importing all the stuff for the matplotlib widget
 import matplotlib
@@ -38,6 +38,8 @@ try:
 except ImportError:
     t2 = None
 
+from plk import *
+
 # The startup banner
 QtipBanner = """Qtip python console, by Rutger van Haasteren
 Console powered by IPython
@@ -54,130 +56,20 @@ import numpy as np, matplotlib.pyplot as plt, libstempo as t2
 
 
 """
-The plk-emulator window.
+The Piccard main window
 """
-class PlkWidget(QtGui.QWidget):
-
+class PiccardWidget(QtGui.QWidget):
     def __init__(self, parent=None, **kwargs):
-        super(PlkWidget, self).__init__(parent)
+        super(PiccardWidget, self).__init__(parent, **kwargs)
 
-        self.initPlk()
-        self.setPlkLayout()
-
-        self.psr = None
         self.parent = parent
 
-    def initPlk(self):
-        self.setMinimumSize(650, 500)
+        self.initPiccard()
 
-        self.plkbox = QtGui.QVBoxLayout()   # VBox contains the plk widget
-        self.fcboxes = []                   # All the checkbox layouts (7 per line)
-        self.fitboxPerLine = 9
-
-        # Create the mpl Figure and FigCanvas objects. 
-        # 5x4 inches, 100 dots-per-inch
-        #
-        self.plkDpi = 100
-        self.plkFig = Figure((5.0, 4.0), dpi=self.plkDpi)
-        self.plkCanvas = FigureCanvas(self.plkFig)
-        self.plkCanvas.setParent(self)
-
-        # Since we have only one plot, we can use add_axes 
-        # instead of add_subplot, but then the subplot
-        # configuration tool in the navigation toolbar wouldn't
-        # work.
-        #
-        self.plkAxes = self.plkFig.add_subplot(111)
-        
-        # Bind the 'pick' event for clicking on one of the bars
-        #
-        #self.canvas.mpl_connect('pick_event', self.on_pick)
-
-        # Create the navigation toolbar, tied to the canvas
-        #
-        #self.mpl_toolbar = NavigationToolbar(self.canvas, self.main_frame)
+    def initPiccard(self):
+        print("Init Piccard")
 
 
-        # Draw an empty graph
-        self.drawSomething()
-
-    def deleteFitCheckBoxes(self):
-        for fcbox in self.fcboxes:
-            while fcbox.count():
-                item = fcbox.takeAt(0)
-                item.widget().deleteLater()
-
-        for fcbox in self.fcboxes:
-            self.plkbox.removeItem(fcbox)
-
-        self.fcboxes = []
-
-    def addFitCheckBoxes(self, psr):
-        for pp, par in enumerate(psr.pars):
-            if pp % self.fitboxPerLine == 0:
-                self.fcboxes.append(QtGui.QHBoxLayout())
-
-            cb = QtGui.QCheckBox(par, self)
-            cb.stateChanged.connect(self.changedFitCheckBox)
-
-            fcbox = self.fcboxes[-1]
-            fcbox.addWidget(cb)
-
-        for fcbox in self.fcboxes:
-            #fcbox.addStretch(1)
-            self.plkbox.addLayout(fcbox)
-
-    def changedFitCheckBox(self):
-        # Check who sent the signal
-        sender = self.sender()
-        parchanged = sender.text()
-
-        # Whatevs, we can just as well re-scan all the CheckButtons, and re-do
-        # the fit
-        # TODO: not implemented
-        print("Checkbox", parchanged, "changed")
-
-
-    def drawSomething(self):
-        self.plkAxes.clear()
-        self.plkAxes.grid(True)
-        self.plkCanvas.draw()
-
-    def setPulsar(self, psr):
-        # Update the fitting checkboxes
-        self.deleteFitCheckBoxes()
-        self.addFitCheckBoxes(psr)
-
-        # Draw the residuals
-        self.drawResiduals(psr.toas(), psr.residuals(), psr.toaerrs*1.0e-6, psr.name)
-        self.psr = psr
-        self.show()
-
-    def drawResiduals(self, x, y, yerr, title=""):
-        self.plkAxes.clear()
-        self.plkAxes.grid(True)
-        self.plkAxes.errorbar(x, y*1.0e6, yerr=yerr*1.0e6, fmt='.', color='green')
-        self.plkAxes.set_xlabel(r'MJD')
-        self.plkAxes.set_ylabel(r'Residual ($\mu$s)')
-        self.plkAxes.set_title(title)
-        self.plkCanvas.draw()
-
-    def setPlkLayout(self):
-        # Initialise the plk box
-        self.plkbox.addWidget(self.plkCanvas)
-
-        # Just in case, set all the fit-checkboxes. These are not supposed to be
-        # there, by the way
-        for fcbox in self.fcboxes:
-            self.plkbox.addLayout(fcbox)
-        self.setLayout(self.plkbox)
-
-    def keyPressEvent(self, e):
-        if e.key() == QtCore.Qt.Key_Escape:
-            if self.parent is None:
-                self.close()
-            else:
-                self.parent.close()
 
 """
 Main Qtip window
@@ -275,11 +167,20 @@ class QtipWindow(QtGui.QMainWindow):
 
     def setQtipLayout(self):
         self.hbox.addWidget(self.plkWidget)
-        self.hbox.addStretch(1)
-        self.hbox.addWidget(self.consoleWidget)
+        #self.hbox.addStretch(1)
+        #self.hbox.addWidget(self.consoleWidget)
 
         self.mainFrame.setLayout(self.hbox)
         self.setCentralWidget(self.mainFrame)
+
+    def enableConsoleWidget(self, show=True):
+        if show:
+            # Add, if we don't have it yet
+            self.hbox.addStretch(1)
+            self.hbox.addWidget(self.consoleWidget)
+        else:
+            # Remove, if we do have it
+            pass
 
     def openParTim(self):
         # Ask the user for a par and tim file, and open these with libstempo
@@ -297,6 +198,19 @@ class QtipWindow(QtGui.QMainWindow):
         # Communicating with the kernel goes as follows
         # self.kernel.shell.push({'foo': 43, 'print_process_id': print_process_id}, interactive=True)
         # print("Embedded, we have:", self.kernel.shell.ns_table['user_local']['foo'])
+
+    def keyPressEvent(self, event):
+
+        key = event.key()
+
+        if key == QtCore.Qt.Key_Escape:
+            self.close()
+        elif key == QtCore.Qt.Key_Left:
+            print("Left pressed")
+            self.enableConsoleWidget(True)
+
+        else:
+            print("Other key")
 
         
 def main():
