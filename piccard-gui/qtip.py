@@ -220,6 +220,19 @@ class QtipWindow(QtGui.QMainWindow):
         cell = "import numpy as np, matplotlib.pyplot as plt, libstempo as t2"
         self.kernel.shell.run_cell(cell)
 
+    """
+    Create the IPython widget
+    """
+    def createIPythonWidget(self):
+        self.consoleWidget = RichIPythonWidget()
+        self.consoleWidget.setMinimumSize(600, 550)
+        self.consoleWidget.banner = QtipBanner
+        self.consoleWidget.kernel_manager = self.kernelManager
+        self.consoleWidget.kernel_client = self.kernelClient
+        self.consoleWidget.exit_requested.connect(self.toggleIPython)
+        #self.consoleWidget.set_default_style(colors='linux')
+        self.consoleWidget.hide()
+
 
     """
     Create the OpenSomething widget. Do not add it to the layout yet
@@ -241,19 +254,6 @@ class QtipWindow(QtGui.QMainWindow):
 
 
     """
-    Create the IPython widget
-    """
-    def createIPythonWidget(self):
-        self.consoleWidget = RichIPythonWidget()
-        self.consoleWidget.setMinimumSize(600, 500)
-        self.consoleWidget.banner = QtipBanner
-        self.consoleWidget.kernel_manager = self.kernelManager
-        self.consoleWidget.kernel_client = self.kernelClient
-        self.consoleWidget.exit_requested.connect(self.close)
-        self.consoleWidget.set_default_style(colors='linux')
-        self.consoleWidget.hide()
-
-    """
     Toggle the IPython widget on or off
     """
     def toggleIPython(self):
@@ -265,7 +265,7 @@ class QtipWindow(QtGui.QMainWindow):
     Initialise the Qtip layout
     """
     def initQtipLayout(self):
-        self.mainFrame.setMinimumSize(650, 500)
+        self.mainFrame.setMinimumSize(650, 550)
         self.hbox.addWidget(self.openSomethingWidget)
         self.hbox.addWidget(self.plkWidget)
         self.hbox.addStretch(1)
@@ -309,10 +309,15 @@ class QtipWindow(QtGui.QMainWindow):
             pass
 
         if self.showIPython:
-            self.mainFrame.setMinimumSize(1300, 500)
+            self.mainFrame.setMinimumSize(1300, 550)
             self.consoleWidget.show()
         else:
-            self.mainFrame.setMinimumSize(650, 500)
+            self.mainFrame.setMinimumSize(650, 550)
+
+        if self.whichWidget.lower() == 'plk' and not self.showIPython:
+            self.plkWidget.setFocus()
+        #elif self.showIPython:
+        #    self.consoleWidget.setFocus()
 
     """
     Given which widgets to show, display the right widgets and hide the rest
@@ -328,7 +333,7 @@ class QtipWindow(QtGui.QMainWindow):
 
         # After hiding the widgets, wait 25 miliseconds before showing them again
         self.hideAllWidgets()
-        QtCore.QTimer.singleShot(250, self.showVisibleWidgets)
+        QtCore.QTimer.singleShot(0, self.showVisibleWidgets)
 
         self.prevWhichWidget = self.whichWidget
         self.prevShowIPython = self.showIPython
@@ -337,14 +342,6 @@ class QtipWindow(QtGui.QMainWindow):
         #print("whichWidget = {0},  showIPython = {1}".format(self.whichWidget, self.showIPython))
         self.mainFrame.show()
 
-    def enableConsoleWidget(self, show=True):
-        if show:
-            # Add, if we don't have it yet
-            self.hbox.addStretch(1)
-            self.hbox.addWidget(self.consoleWidget)
-        else:
-            # Remove, if we do have it
-            pass
 
     """
     Request to open a file in the plk widget
@@ -391,6 +388,11 @@ class QtipWindow(QtGui.QMainWindow):
         # print("Embedded, we have:", self.kernel.shell.ns_table['user_local']['foo'])
 
 
+    """
+    Handle a key-press event
+
+    @param event:   event that is handled here
+    """
     def keyPressEvent(self, event):
 
         key = event.key()
@@ -399,8 +401,6 @@ class QtipWindow(QtGui.QMainWindow):
             self.close()
         elif key == QtCore.Qt.Key_Left:
             print("Left pressed")
-            #self.enableConsoleWidget(True)
-
         else:
             print("Other key")
 
@@ -408,6 +408,7 @@ class QtipWindow(QtGui.QMainWindow):
 def main():
     app = QtGui.QApplication(sys.argv)
     qtipwin = QtipWindow()
+    qtipwin.raise_()        # Required on OSX to move the app to the foreground
     sys.exit(app.exec_())
 
 if __name__ == '__main__':
