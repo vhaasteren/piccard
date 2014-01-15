@@ -217,15 +217,15 @@ class PlkXYPlotWidget(QtGui.QWidget):
             radio.toggled.connect(self.updateChoice)
             self.grid.addWidget(radio, 1+ii, labellength, 1, 1)
             self.xButtonGroup.addButton(radio)
-            #if choice.lower() == 'date':
-            #    radio.SetChecked(True)
+            if choice.lower() == 'date':
+                radio.setChecked(True)
 
             radio = QtGui.QRadioButton("")
             radio.toggled.connect(self.updateChoice)
             self.grid.addWidget(radio, 1+ii, 1+labellength, 1, 1)
             self.yButtonGroup.addButton(radio)
-            #if choice.lower() == 'post-fit':
-            #    radio.SetChecked(True)
+            if choice.lower() == 'post-fit':
+                radio.setChecked(True)
 
         self.setLayout(self.grid)
 
