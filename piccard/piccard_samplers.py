@@ -1314,41 +1314,20 @@ def RunDNest(likob, mcmcFile=None, numParticles=1, newLevelInterval=500,\
 """
 Run a generic PTMCMC algorithm.
 """
-def RunPTMCMC(likob, steps, chainsdir, initfile=None, resize=0.088, burnin=10000):
+def RunPTMCMC(likob, steps, chainsdir, covfile=None, burnin=10000):
     # Save the parameters to file
     likob.saveModelParameters(chainsdir + '/ptparameters.txt')
 
     ndim = likob.dimensions
     pwidth = likob.pwidth.copy()
 
-    if initfile is not None:
-        # Read the starting position of the random walkers from a file
-        print "Obtaining initial positions from '" + initfile + "'"
-        burnindata = np.loadtxt(initfile)
-        burnindata = burnindata[:,3:]
-        nsteps = burnindata.shape[0]
-        dim = burnindata.shape[1]
-        if(ndim != dim):
-            raise ValueError("ERROR: burnin file not same dimensions. Mismatch {0} {1}".format(ndim, dim))
-
-        # Get starting position
-        indices = np.random.randint(0, nsteps, 1)
-        p0 = burnindata[indices[0]]
-
-        # Estimate covariances as being the standarddeviation
-        pwidth = resize * np.std(burnindata, axis=0)
-
-        del burnindata
+    if not covfile is None:
+        cov = np.load(covfile)
+        p0 = likob.pstart #+ 0.001*likob.pwidth
     else:
-        # Set the starting position of the random walker (add a small perturbation to
-        # get away from a possible zero)
-        #    p0 = np.random.rand(ndim)*pwidth+pstart
-        p0 = likob.pstart + likob.pwidth
-        pwidth *= resize
+        cov = np.diag(pwidth**2)
+        p0 = likob.pstart #+ likob.pwidth
 
-
-    # Set the initial covariances
-    cov = np.diag(pwidth**2)
 
     sampler = ptmcmc.PTSampler(ndim, likob.loglikelihood, likob.logprior, cov=cov, \
             outDir=chainsdir, verbose=True)
