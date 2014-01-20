@@ -53,6 +53,12 @@ try:    # If without libstempo, can still read hdf5 files
 except ImportError:
     t2 = None
 
+# In order to keep the dictionary in order
+try:
+    from collections import OrderedDict
+except ImportError:
+    from ordereddict import OrderedDict
+
 
 # Some constants used in Piccard
 # For DM calculations, use this constant
@@ -1944,6 +1950,9 @@ class ptaPulsar(object):
     @param tmpars:      When compressing to a list of timing model parameters,
                         this list of parameters is used.
     """
+    # TODO: selection of timing-model parameters should apply to _all_ forms of
+    # compression. Still possible to do frequencies and include timing model
+    # parameters, as long as we include the complement function
     def constructCompressionMatrix(self, compression='None', \
             nfmodes=-1, ndmodes=-1, likfunc='mark4', threshold=1.0, \
             tmpars = None):
@@ -2938,9 +2947,11 @@ class ptaPulsar(object):
             self.Dmat = np.array(h5df.getData(self.name, 'pic_Dmat', dontread=memsave))
             self.DF = np.array(h5df.getData(self.name, 'pic_DF', dontread=memsave))
             self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat', dontread=memsave))
+            self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
 
         if likfunc == 'mark2':
             self.AGr = np.array(h5df.getData(self.name, 'pic_AGr'))
+            self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
 
         if likfunc == 'mark3' or likfunc == 'mark3fa':
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
@@ -2948,6 +2959,7 @@ class ptaPulsar(object):
             self.AGF = np.array(h5df.getData(self.name, 'pic_AGF'))
             self.AoGF = np.array(h5df.getData(self.name, 'pic_AoGF', dontread=memsave))
             self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat'))
+            self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
 
         if likfunc == 'mark4':
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
@@ -2989,6 +3001,7 @@ class ptaPulsar(object):
             self.Dmat = np.array(h5df.getData(self.name, 'pic_Dmat', dontread=memsave))
             self.DF = np.array(h5df.getData(self.name, 'pic_DF', dontread=memsave))
             self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat', dontread=memsave))
+            self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
 
         if likfunc == 'mark7':
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
@@ -2996,6 +3009,7 @@ class ptaPulsar(object):
             self.AGF = np.array(h5df.getData(self.name, 'pic_AGF', dontread=memsave))
             self.AoGF = np.array(h5df.getData(self.name, 'pic_AoGF', dontread=memsave))
             self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat'))
+            self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
 
         if likfunc == 'mark8':
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
@@ -3013,6 +3027,7 @@ class ptaPulsar(object):
             self.Dmat = np.array(h5df.getData(self.name, 'pic_Dmat'))
             self.DF = np.array(h5df.getData(self.name, 'pic_DF'))
             self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat'))
+            self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
 
         if likfunc == 'mark9':
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
@@ -3025,6 +3040,7 @@ class ptaPulsar(object):
             self.AoGF = np.array(h5df.getData(self.name, 'pic_AoGF', dontread=memsave))
             self.AoGFF = np.array(h5df.getData(self.name, 'pic_AoGFF', dontread=memsave))
             self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat'))
+            self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
 
         if likfunc == 'mark10':
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
@@ -3054,6 +3070,7 @@ class ptaPulsar(object):
             self.Dmat = np.array(h5df.getData(self.name, 'pic_Dmat'))
             self.DF = np.array(h5df.getData(self.name, 'pic_DF'))
             self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat'))
+            self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
 
 
 
@@ -3745,9 +3762,10 @@ class ptaLikelihood(object):
             self.ptapsrs[ii].Nwvec = np.zeros(self.ptapsrs[ii].Hmat.shape[1])
             self.ptapsrs[ii].Nwovec = np.zeros(self.ptapsrs[ii].Homat.shape[1])
 
+        self.Phi = np.zeros((np.sum(self.npf), np.sum(self.npf)))
+        self.Thetavec = np.zeros(np.sum(self.npfdm))
+
         if self.likfunc == 'mark1':
-            self.Phi = np.zeros((np.sum(self.npf), np.sum(self.npf)))
-            self.Thetavec = np.zeros(np.sum(self.npfdm))
             self.GNGldet = np.zeros(npsrs)
             self.rGr = np.zeros(npsrs)
 
@@ -3758,24 +3776,18 @@ class ptaLikelihood(object):
             self.rGr = np.zeros(npsrs)
         elif self.likfunc == 'mark3' or self.likfunc == 'mark7' \
                 or self.likfunc == 'mark3fa':
-            self.Phi = np.zeros((np.sum(self.npf), np.sum(self.npf)))
-            self.Thetavec = np.zeros(np.sum(self.npfdm))
             self.Sigma = np.zeros((np.sum(self.npf), np.sum(self.npf)))
             self.GNGldet = np.zeros(npsrs)
             self.rGr = np.zeros(npsrs)
             self.rGF = np.zeros(np.sum(self.npf))
             self.FGGNGGF = np.zeros((np.sum(self.npf), np.sum(self.npf)))
         elif self.likfunc == 'mark4':
-            self.Phi = np.zeros((np.sum(self.npf), np.sum(self.npf)))
-            self.Thetavec = np.zeros(np.sum(self.npfdm))
             self.Sigma = np.zeros((np.sum(self.npu), np.sum(self.npu)))
             self.GNGldet = np.zeros(npsrs)
             self.rGr = np.zeros(npsrs)
             self.rGU = np.zeros(np.sum(self.npu))
             self.UGGNGGU = np.zeros((np.sum(self.npu), np.sum(self.npu)))
         elif self.likfunc == 'mark4ln':
-            self.Phi = np.zeros((np.sum(self.npff), np.sum(self.npff)))
-            self.Thetavec = np.zeros(np.sum(self.npfdm))
             self.Sigma = np.zeros((np.sum(self.npu), np.sum(self.npu)))
             self.GNGldet = np.zeros(npsrs)
             self.rGr = np.zeros(npsrs)
@@ -3783,7 +3795,6 @@ class ptaLikelihood(object):
             self.UGGNGGU = np.zeros((np.sum(self.npu), np.sum(self.npu)))
         elif self.likfunc == 'mark6' or self.likfunc == 'mark8' \
                 or self.likfunc == 'mark6fa':
-            self.Phi = np.zeros((np.sum(self.npf), np.sum(self.npf)))
             self.Sigma = np.zeros((np.sum(self.npf)+np.sum(self.npfdm), \
                     np.sum(self.npf)+np.sum(self.npfdm)))
             self.Thetavec = np.zeros(np.sum(self.npfdm))
@@ -3792,18 +3803,14 @@ class ptaLikelihood(object):
             self.rGE = np.zeros(np.sum(self.npf)+np.sum(self.npfdm))
             self.EGGNGGE = np.zeros((np.sum(self.npf)+np.sum(self.npfdm), np.sum(self.npf)+np.sum(self.npfdm)))
         elif self.likfunc == 'mark9':
-            self.Phi = np.zeros((np.sum(self.npff), np.sum(self.npff)))
-            self.Thetavec = np.zeros(np.sum(self.npfdm))
             self.Sigma = np.zeros((np.sum(self.npff), np.sum(self.npff)))
             self.GNGldet = np.zeros(npsrs)
             self.rGr = np.zeros(npsrs)
             self.rGF = np.zeros(np.sum(self.npff))
             self.FGGNGGF = np.zeros((np.sum(self.npff), np.sum(self.npff)))
         elif self.likfunc == 'mark10':
-            self.Phi = np.zeros((np.sum(self.npff), np.sum(self.npff)))
             self.Sigma = np.zeros((np.sum(self.npff)+np.sum(self.npffdm), \
                     np.sum(self.npff)+np.sum(self.npffdm)))
-            self.Thetavec = np.zeros(np.sum(self.npffdm))
             self.GNGldet = np.zeros(npsrs)
             self.rGr = np.zeros(npsrs)
             self.rGE = np.zeros(np.sum(self.npff)+np.sum(self.npffdm))
@@ -3878,7 +3885,7 @@ class ptaLikelihood(object):
             if separateEfacs:
                 uflagvals = list(set(m2psr.flags))  # Unique flags
                 for flagval in uflagvals:
-                    newsignal = dict({
+                    newsignal = OrderedDict({
                         "stype":"efac",
                         "corr":"single",
                         "pulsarind":ii,
@@ -3892,7 +3899,7 @@ class ptaLikelihood(object):
                         })
                     signals.append(newsignal)
             else:
-                newsignal = dict({
+                newsignal = OrderedDict({
                     "stype":"efac",
                     "corr":"single",
                     "pulsarind":ii,
@@ -3907,7 +3914,7 @@ class ptaLikelihood(object):
                 signals.append(newsignal)
 
             if incEquad:
-                newsignal = dict({
+                newsignal = OrderedDict({
                     "stype":"equad",
                     "corr":"single",
                     "pulsarind":ii,
@@ -3922,7 +3929,7 @@ class ptaLikelihood(object):
                 signals.append(newsignal)
 
             if incCEquad or incJitter:
-                newsignal = dict({
+                newsignal = OrderedDict({
                     "stype":"jitter",
                     "corr":"single",
                     "pulsarind":ii,
@@ -3963,7 +3970,7 @@ class ptaLikelihood(object):
                     pstart = [-22.0, 2.0, -1.0]
                     pwidth = [-0.2, 0.1, 0.1]
 
-                newsignal = dict({
+                newsignal = OrderedDict({
                     "stype":noiseModel,
                     "corr":"single",
                     "pulsarind":ii,
@@ -3994,7 +4001,7 @@ class ptaLikelihood(object):
                     pwidth = [0.1, 0.1, 5.0e-11]
                     dmModel = 'dmpowerlaw'
 
-                newsignal = dict({
+                newsignal = OrderedDict({
                     "stype":dmModel,
                     "corr":"single",
                     "pulsarind":ii,
@@ -4009,7 +4016,7 @@ class ptaLikelihood(object):
                 signals.append(newsignal)
 
             for jj in range(numSingleFreqs[ii]):
-                newsignal = dict({
+                newsignal = OrderedDict({
                     "stype":'frequencyline',
                     "corr":"single",
                     "pulsarind":ii,
@@ -4024,7 +4031,7 @@ class ptaLikelihood(object):
                 signals.append(newsignal)
 
             for jj in range(numSingleDMFreqs[ii]):
-                newsignal = dict({
+                newsignal = OrderedDict({
                     "stype":'dmfrequencyline',
                     "corr":"single",
                     "pulsarind":ii,
@@ -4121,7 +4128,7 @@ class ptaLikelihood(object):
                 else:
                     stype = 'lineartimingmodel'
 
-                newsignal = dict({
+                newsignal = OrderedDict({
                     "stype":stype,
                     "corr":"single",
                     "pulsarind":ii,
@@ -4150,7 +4157,7 @@ class ptaLikelihood(object):
                 pstart = [-15.0, 2.01, 1.0e-10]
                 pwidth = [0.1, 0.1, 5.0e-11]
 
-            newsignal = dict({
+            newsignal = OrderedDict({
                 "stype":gwbModel,
                 "corr":"gr",
                 "pulsarind":-1,
@@ -4177,7 +4184,7 @@ class ptaLikelihood(object):
                 pstart = [-15.0, 2.01, 1.0e-10]
                 pwidth = [0.1, 0.1, 5.0e-11]
 
-            newsignal = dict({
+            newsignal = OrderedDict({
                 "stype":clockModel,
                 "corr":"uniform",
                 "pulsarind":-1,
@@ -4204,7 +4211,7 @@ class ptaLikelihood(object):
                 pstart = [-15.0, 2.01, 1.0e-10]
                 pwidth = [0.1, 0.1, 5.0e-11]
 
-            newsignal = dict({
+            newsignal = OrderedDict({
                 "stype":dipoleModel,
                 "corr":"dipole",
                 "pulsarind":-1,
@@ -4237,7 +4244,7 @@ class ptaLikelihood(object):
                 pstart = [-15.0, 2.01, 1.0e-10] + clmstart
                 pwidth = [0.1, 0.1, 5.0e-11] + clmwidth
 
-            newsignal = dict({
+            newsignal = OrderedDict({
                 "stype":anigwbModel,
                 "corr":"anisotropicgwb",
                 "pulsarind":-1,
@@ -4258,7 +4265,7 @@ class ptaLikelihood(object):
                     toamax = np.max(psr.toas)
                 if toamin > np.min(psr.toas):
                     toamin = np.min(psr.toas)
-            newsignal = dict({
+            newsignal = OrderedDict({
                 "stype":'bwm',
                 "corr":"gr",
                 "pulsarind":-1,
@@ -4271,7 +4278,7 @@ class ptaLikelihood(object):
             signals.append(newsignal)
 
         # The list of signals
-        modeldict = dict({
+        modeldict = OrderedDict({
             "file version":2014.01,
             "author":"piccard-makeModel",
             "numpulsars":len(self.ptapsrs),
@@ -4321,7 +4328,7 @@ class ptaLikelihood(object):
             if 'unitconversion' in signals[-1]:
                 signals[-1]['unitconversion'] = map(float, signals[-1]['unitconversion'])
 
-        modeldict = dict({
+        modeldict = OrderedDict({
             "file version":2013.12,
             "author":"piccard-makeModel",
             "numpulsars":len(self.ptapsrs),
@@ -4345,7 +4352,7 @@ class ptaLikelihood(object):
     """
     def initModelFromFile(self, filename, auxFromFile=True):
         with open(filename) as data_file:
-            model = json.load(data_file)
+            model = OrderedDict(json.load(data_file))
         self.initModel(model, fromFile=auxFromFile)
 
     """
@@ -5492,9 +5499,7 @@ class ptaLikelihood(object):
     """
     mark1 loglikelihood of the pta model/likelihood implementation
 
-    This is the full likelihood, without any Woodbury expansions. Seems to be
-    slower than the woodbury one, even with equal dimensionality and compression
-
+    This is the full likelihood, without any Woodbury expansions.
     """
     def mark1loglikelihood(self, parameters):
         npsrs = len(self.ptapsrs)
@@ -7196,35 +7201,42 @@ class ptaLikelihood(object):
         totDFmat = np.zeros((np.sum(self.npobs), np.sum(self.npf)))
         totDmat = np.zeros((np.sum(self.npobs), np.sum(self.npobs)))
         totG = np.zeros((np.sum(self.npobs), np.sum(self.npgs)))
+        totU = np.zeros((np.sum(self.npobs), np.sum(self.npu)))
         tottoas = np.zeros(np.sum(self.npobs))
         tottoaerrs = np.zeros(np.sum(self.npobs))
 
         # Fill the auxiliary matrices
-        for ii in range(npsrs):
+        for ii, psr in enumerate(self.ptapsrs):
             nindex = np.sum(self.npobs[:ii])
             findex = np.sum(self.npf[:ii])
             fdmindex = np.sum(self.npfdm[:ii])
+            uindex = np.sum(self.npu[:ii])
             gindex = np.sum(self.npgs[:ii])
             npobs = self.npobs[ii]
             nppf = self.npf[ii]
             nppfdm = self.npfdm[ii]
             npgs = self.npgs[ii]
-            #if self.ptapsrs[ii].twoComponentNoise:
-            #    pass
-            #else:
-            #    pass
-            Cov[nindex:nindex+npobs, nindex:nindex+npobs] = np.diag(self.ptapsrs[ii].Nvec)
-            totFmat[nindex:nindex+npobs, findex:findex+nppf] = self.ptapsrs[ii].Fmat
+            npus = self.npu[ii]
 
-            if self.ptapsrs[ii].DF is not None:
-                totDFmat[nindex:nindex+npobs, fdmindex:fdmindex+nppfdm] = self.ptapsrs[ii].DF
-                totDmat[nindex:nindex+npobs, nindex:nindex+npobs] = self.ptapsrs[ii].Dmat
+            # Start creating the covariance matrix with noise
+            Cov[nindex:nindex+npobs, nindex:nindex+npobs] = np.diag(psr.Nvec)
+
+            if psr.Fmat.shape[1] == nppf:
+                totFmat[nindex:nindex+npobs, findex:findex+nppf] = psr.Fmat
+
+            if psr.DF.shape[1] == nppfdm:
+                totDFmat[nindex:nindex+npobs, fdmindex:fdmindex+nppfdm] = psr.DF
+                totDmat[nindex:nindex+npobs, nindex:nindex+npobs] = psr.Dmat
+
+            if not psr.Umat is None and psr.Umat.shape[1] == npus:
+                totU[nindex:nindex+npobs, uindex:uindex+npus] = psr.Umat
 
             totG[nindex:nindex+npobs, gindex:gindex+npgs] = self.ptapsrs[ii].Hmat
             tottoas[nindex:nindex+npobs] = self.ptapsrs[ii].toas
             tottoaerrs[nindex:nindex+npobs] = self.ptapsrs[ii].toaerrs
 
 
+        # TODO: time-domain piece is very outdated. Update!
         if timedomain:
             # The time-domain matrices for red noise and DM variations
             Cr = np.zeros((np.sum(self.npobs), np.sum(self.npobs)))     # Time domain red signals
@@ -7259,18 +7271,27 @@ class ptaLikelihood(object):
                             alpha=0.5*(3-Si),\
                             fL=1.0/100) * (Amp**2)
 
-
             Cov += Cr
             Cov += np.dot(totDmat, np.dot(Cdm, totDmat))
         else:
             # Construct them from Phi/Theta
-            Cov += np.dot(totFmat, np.dot(self.Phi, totFmat.T))
+            if not self.Phi is None:
+                Cov += np.dot(totFmat, np.dot(self.Phi, totFmat.T))
+
             if self.Thetavec is not None and len(self.Thetavec) == totDFmat.shape[1]:
                 Cov += np.dot(totDFmat, np.dot(np.diag(self.Thetavec), totDFmat.T))
 
+            # Include jitter
+            qvec = np.array([])
+            for pp, psr in enumerate(self.ptapsrs):
+                qvec = np.append(qvec, [psr.Qamp]*len(psr.avetoas))
+
+            #if totU.shape[1] == len(qvec):
+            #    Cov += np.dot(totU, (qvec * totU).T)
+
         # Create the projected covariance matrix, and decompose it
         # WARNING: for now we are ignoring the G-matrix when generating data
-        if True:
+        if False:
             totG = np.eye(Cov.shape[0])
             GCG = Cov
         else:
@@ -7599,9 +7620,6 @@ class ptaLikelihood(object):
             nlsigind = self.getSignalNumbersFromDict(signals,
                     stype='nonlineartimingmodel', psrind=pp)
 
-            if len(linsigind) + len(nlsigind) < 1:
-                raise ValueError("Model for pulsar {0} should contain at least one timing model signal for compression 'timingmodel'".format(m2psr.name))
-
             tmsigpars = []    # All the timing model parameters of this pulsar
             for ss in np.append(linsigind, nlsigind):
                 tmsigpars += signals[ss]['parid']
@@ -7660,9 +7678,6 @@ class ptaLikelihood(object):
                     stype='lineartimingmodel', psrind=pp)
             nlsigind = self.getSignalNumbersFromDict(signals,
                     stype='nonlineartimingmodel', psrind=pp)
-
-            if len(linsigind) + len(nlsigind) < 1:
-                raise ValueError("Model for pulsar {0} should contain at least one timing model signal for compression 'timingmodel'".format(m2psr.name))
 
             tmsigpars = []    # All the timing model parameters of this pulsar
             for ss in np.append(linsigind, nlsigind):

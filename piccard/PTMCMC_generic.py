@@ -388,9 +388,9 @@ class PTSampler(object):
         self._chainfile = open(fname, 'a+')
         for jj in range((iter-isave), iter, thin):
             ind = int(jj/thin)
-            self._chainfile.write('%e\t %e\t %e\t'%(self._lnprob[ind], self._lnlike[ind],\
+            self._chainfile.write('%.17e\t %.17e\t %.17e\t'%(self._lnprob[ind], self._lnlike[ind],\
                                                   self.naccepted/iter))
-            self._chainfile.write('\t'.join([str(self._chain[ind,kk]) \
+            self._chainfile.write('\t'.join(["%.17e"%(self._chain[ind,kk]) \
                                             for kk in range(self.ndim)]))
             self._chainfile.write('\n')
         self._chainfile.close()
