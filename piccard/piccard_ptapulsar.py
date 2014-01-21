@@ -26,6 +26,12 @@ class ptaPulsar(object):
     a pulsar dataset. It contains many auxiliary quantities that are necessary
     for teh evaluation of the various likelihood functions.
 
+    All the attributes will be written as properties. Initially the ptaPulsar
+    object will be initialised from an HDF5/othertype datafile, which may
+    contain the auxiliary quantities pre-computed. The attributes will then,
+    when the quantity is not pre-loaded first check the HDF5 file if it exists.
+    If it does exist, it will be loaded. If it doesn't, it will be computed.
+
     """
     parfile_content = None      # The actual content of the original par-file
     timfile_content = None      # The actual content of the original tim-file
