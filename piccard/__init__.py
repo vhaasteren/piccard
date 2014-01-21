@@ -1,8 +1,12 @@
 from __future__ import print_function
 from .piccard import *
 from .piccard_samplers import *
+from .piccard_datafile import *
 
-__version__ = 2014.01
+# How on gods green earth do I import subpackages?
+#from .samplers.rutger import printme
+
+__version__ = 2014.02
 
 def test():
     # Run some tests here
