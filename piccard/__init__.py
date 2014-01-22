@@ -3,7 +3,7 @@ from .piccard import *
 from .piccard_samplers import *
 from .piccard_datafile import *
 
-# How on gods green earth do I import subpackages?
+# How do I import subpackages?
 #from .samplers.rutger import printme
 
 __version__ = 2014.02
