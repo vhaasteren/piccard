@@ -5119,7 +5119,6 @@ class ptaLikelihood(object):
                             pindex += 1
 
                     # Generate the new residuals
-                    # QUESTION: why do I have to update the BATs for good results?
                     self.ptapsrs[pp].detresiduals = np.array(self.ptapsrs[pp].t2psr.residuals(updatebats=True), dtype=np.double)
 
         # Loop over all signals, and construct the deterministic signals
@@ -5137,7 +5136,7 @@ class ptaLikelihood(object):
                                     self.ptapsrs[pp].raj, self.ptapsrs[pp].decj, \
                                     self.ptapsrs[pp].toas)
 
-                            self.ptapsrs[pp].detresiduals -= - bwmsig
+                            self.ptapsrs[pp].detresiduals -= bwmsig
 
 
         # If necessary, transform these residuals to two-component basis
