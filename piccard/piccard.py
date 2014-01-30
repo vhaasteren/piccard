@@ -1670,9 +1670,15 @@ class ptaPulsar(object):
             newptmdescription = np.array(oldptmdescription)
             newunitconversion = np.array(oldunitconversion)
             newptmpars = oldptmpars.copy()
-            newG = oldGmat.copy()
 
-            newGc = oldGcmat.copy()
+            if oldGmat is not None:
+                newG = oldGmat.copy()
+                newGc = oldGcmat.copy()
+            else:
+                U, s, Vh = sl.svd(newM)
+                newG = U[:, (newM.shape[1]):].copy()
+                newGc = U[:, :(newM.shape[1])].copy()
+
 
         return newM, newG, newGc, newptmpars, map(str, newptmdescription), newunitconversion
 
@@ -2920,8 +2926,10 @@ class ptaPulsar(object):
         self.GGr = np.array(h5df.getData(self.name, 'pic_GGr', dontread=memsave))
         self.Wvec = np.array(h5df.getData(self.name, 'pic_Wvec'))
         self.Wovec = np.array(h5df.getData(self.name, 'pic_Wovec'))
-        self.Amat = np.array(h5df.getData(self.name, 'pic_Amat', dontread=memsave))
-        self.Aomat = np.array(h5df.getData(self.name, 'pic_Aomat', dontread=memsave))
+        self.Amat = np.array(h5df.getData(self.name, 'pic_Amat',
+            dontread=(memsave and not self.twoComponentNoise)))
+        self.Aomat = np.array(h5df.getData(self.name, 'pic_Aomat',
+            dontread=(memsave and not self.twoComponentNoise)))
         self.AoGr = np.array(h5df.getData(self.name, 'pic_AoGr'))
         self.Ffreqs = np.array(h5df.getData(self.name, 'pic_Ffreqs'))
         self.Fdmfreqs = np.array(h5df.getData(self.name, 'pic_Fdmfreqs'))
@@ -4117,8 +4125,8 @@ class ptaLikelihood(object):
                             pmax += [1.0]
                             pwidth += [0.1]
                         else:
-                            pmin += [-20.0 * tmperrs[jj] + tmpest[jj]]
-                            pmax += [20.0 * tmperrs[jj] + tmpest[jj]]
+                            pmin += [-150.0 * tmperrs[jj] + tmpest[jj]]
+                            pmax += [150.0 * tmperrs[jj] + tmpest[jj]]
                             pwidth += [(pmax[-1]-pmin[-1])/20.0]
                         pstart += [tmpest[jj]]
                         unitconversion += [m2psr.unitconversion[jj]]
