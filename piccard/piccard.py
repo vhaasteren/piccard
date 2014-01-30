@@ -1968,7 +1968,10 @@ class ptaPulsar(object):
             if likfunc[:5] != 'mark4':
                 (self.avetoas, self.Umat) = dailyaveragequantities(self.toas)
 
-            # We will do a weighted fit
+            # There is a lot of stuff here that was used for debugging. Remove
+            # in a few commits
+            """
+            # We will do an weighted fit
             w = 1.0/self.toaerrs**0
             # Create the weighted projection matrix (oblique projection)
             UWU = np.dot(self.Umat.T, (w * self.Umat.T).T)
@@ -1979,6 +1982,7 @@ class ptaPulsar(object):
             PuG = np.dot(P, self.Gmat)
             GU = np.dot(PuG.T, self.Umat)
             GUUG = np.dot(GU, GU.T)
+            """
 
             """
             # Build a projection matrix for U
@@ -1997,10 +2001,8 @@ class ptaPulsar(object):
             GUUG = np.dot(self.Gmat.T, np.dot(Pu, self.Gmat))
             """
 
-            """
             GU = np.dot(self.Gmat.T, self.Umat)
             GUUG = np.dot(GU, GU.T)
-            """
 
             # Construct an orthogonal basis, and singular values
             #svech, Vmath = sl.eigh(GUUG)
@@ -5966,7 +5968,8 @@ class ptaLikelihood(object):
             Phi = UPhiU + self.ptapsrs[0].Qamp * np.eye(len(self.ptapsrs[0].avetoas))
 
             if len(self.Thetavec) > 0:
-                UThetaU = np.dot(self.ptapsrs[0].UtD, (self.Thetavec * self.ptapsrs[0].UtD).T)
+                #UThetaU = np.dot(self.ptapsrs[0].UtD, (self.Thetavec * self.ptapsrs[0].UtD).T)
+                UThetaU = np.dot(self.ptapsrs[0].UtD, np.dot(np.diag(self.Thetavec), self.ptapsrs[0].UtD.T))
                 Phi += UThetaU
 
             #PhiLD = np.sum(np.log(np.diag(Phi)))
