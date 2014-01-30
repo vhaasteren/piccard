@@ -2424,6 +2424,7 @@ class ptaPulsar(object):
             GtU = np.dot(self.Hmat.T, self.Umat)
 
             self.UtF = np.dot(self.Umat.T, self.Fmat)
+            self.UtD = np.dot(self.Umat.T, self.DF)
 
             # For two-component noise
             # Diagonalise GtEfG
@@ -5958,8 +5959,15 @@ class ptaLikelihood(object):
             # Quick and dirty:
             #PhiU = ( * self.ptapsrs[ii].AGU.T).T
 
+            ThetaLD = np.sum(np.log(self.Thetavec))
+
+
             UPhiU = np.dot(self.ptapsrs[0].UtF, np.dot(self.Phi, self.ptapsrs[0].UtF.T))
             Phi = UPhiU + self.ptapsrs[0].Qamp * np.eye(len(self.ptapsrs[0].avetoas))
+
+            if len(self.Thetavec) > 0:
+                UThetaU = np.dot(self.ptapsrs[0].UtD, (self.Thetavec * self.ptapsrs[0].UtD).T)
+                Phi += UThetaU
 
             #PhiLD = np.sum(np.log(np.diag(Phi)))
             #Phiinv = np.diag(1.0 / np.diag(Phi))
