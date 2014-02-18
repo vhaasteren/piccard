@@ -1442,6 +1442,7 @@ class ptaPulsar(object):
     GGr = None
     GtF = None
     GtD = None
+    GtU = None
     GGtD = None
     AGr = None      # Replaces GGr in 2-component noise model
     AoGr = None     #   Same but for orthogonal basis (when compressing)
@@ -1970,7 +1971,7 @@ class ptaPulsar(object):
 
             # There is a lot of stuff here that was used for debugging. Remove
             # in a few commits
-            """
+            #"""
             # We will do an weighted fit
             w = 1.0/self.toaerrs**0
             # Create the weighted projection matrix (oblique projection)
@@ -1982,7 +1983,7 @@ class ptaPulsar(object):
             PuG = np.dot(P, self.Gmat)
             GU = np.dot(PuG.T, self.Umat)
             GUUG = np.dot(GU, GU.T)
-            """
+            #"""
 
             """
             # Build a projection matrix for U
@@ -2001,8 +2002,10 @@ class ptaPulsar(object):
             GUUG = np.dot(self.Gmat.T, np.dot(Pu, self.Gmat))
             """
 
+            """
             GU = np.dot(self.Gmat.T, self.Umat)
             GUUG = np.dot(GU, GU.T)
+            """
 
             # Construct an orthogonal basis, and singular values
             #svech, Vmath = sl.eigh(GUUG)
@@ -2306,6 +2309,8 @@ class ptaPulsar(object):
             self.GGr = np.dot(self.Hmat, self.Gr)
             self.GtF = np.dot(self.Hmat.T, self.Fmat)
             self.GtD = np.dot(self.Hmat.T, self.DF)
+            (self.avetoas, self.Umat) = dailyaveragequantities(self.toas)
+            self.GtU = np.dot(self.Hmat.T, self.Umat)
 
             # For two-component noise
             # Diagonalise GtEfG (HtEfH)
@@ -3956,7 +3961,7 @@ class ptaLikelihood(object):
 
                 # If compression 
                 if compression != 'average' and compression != 'avefrequencies' \
-                        and likfunc[:5] != 'mark4':
+                        and likfunc[:5] != 'mark4' and likfunc[:5] != 'mark1':
                     print "WARNING: Jitter included, but likelihood function will deal with it as an equad."
                     print "         Use an adequate compression level, or a 'mark4' likelihood"
 
@@ -3980,6 +3985,9 @@ class ptaLikelihood(object):
                     pmax = [-14.0, 12.0, 2.0]
                     pstart = [-22.0, 2.0, -1.0]
                     pwidth = [-0.2, 0.1, 0.1]
+                else:
+                    raise ValueError("ERROR: option {0} not known".
+                            format(noiseModel))
 
                 newsignal = OrderedDict({
                     "stype":noiseModel,
@@ -3996,21 +4004,24 @@ class ptaLikelihood(object):
                 signals.append(newsignal)
 
             if incDM:
-                if dmModel=='spectrum':
+                if dmModel=='dmspectrum':
                     nfreqs = numDMFreqs[ii]
                     bvary = [True]*nfreqs
                     pmin = [-14.0]*nfreqs
                     pmax = [-3.0]*nfreqs
                     pstart = [-7.0]*nfreqs
                     pwidth = [0.1]*nfreqs
-                    dmModel = 'dmspectrum'
-                elif dmModel=='powerlaw':
+                    #dmModel = 'dmspectrum'
+                elif dmModel=='dmpowerlaw':
                     bvary = [True, True, False]
                     pmin = [-14.0, 0.02, 1.0e-11]
                     pmax = [-6.5, 6.98, 3.0e-9]
                     pstart = [-13.0, 2.01, 1.0e-10]
                     pwidth = [0.1, 0.1, 5.0e-11]
-                    dmModel = 'dmpowerlaw'
+                    #dmModel = 'dmpowerlaw'
+                else:
+                    raise ValueError("ERROR: option {0} not known".
+                            format(dmModel))
 
                 newsignal = OrderedDict({
                     "stype":dmModel,
@@ -4167,6 +4178,9 @@ class ptaLikelihood(object):
                 pmax = [-10.0, 6.98, 3.0e-9]
                 pstart = [-15.0, 2.01, 1.0e-10]
                 pwidth = [0.1, 0.1, 5.0e-11]
+            else:
+                raise ValueError("ERROR: option {0} not known".
+                        format(gwbModel))
 
             newsignal = OrderedDict({
                 "stype":gwbModel,
@@ -4194,6 +4208,9 @@ class ptaLikelihood(object):
                 pmax = [-10.0, 6.98, 3.0e-9]
                 pstart = [-15.0, 2.01, 1.0e-10]
                 pwidth = [0.1, 0.1, 5.0e-11]
+            else:
+                raise ValueError("ERROR: option {0} not known".
+                        format(clockModel))
 
             newsignal = OrderedDict({
                 "stype":clockModel,
@@ -4221,6 +4238,9 @@ class ptaLikelihood(object):
                 pmax = [-10.0, 6.98, 3.0e-9]
                 pstart = [-15.0, 2.01, 1.0e-10]
                 pwidth = [0.1, 0.1, 5.0e-11]
+            else:
+                raise ValueError("ERROR: option {0} not known".
+                        format(dipoleModel))
 
             newsignal = OrderedDict({
                 "stype":dipoleModel,
@@ -4254,6 +4274,9 @@ class ptaLikelihood(object):
                 pmax = [-10.0, 6.98, 3.0e-9] + clmmax
                 pstart = [-15.0, 2.01, 1.0e-10] + clmstart
                 pwidth = [0.1, 0.1, 5.0e-11] + clmwidth
+            else:
+                raise ValueError("ERROR: option {0} not known".
+                        format(anigwbModel))
 
             newsignal = OrderedDict({
                 "stype":anigwbModel,
@@ -5500,6 +5523,8 @@ class ptaLikelihood(object):
                 self.rGr[ii] = 0
                 self.GNGldet[ii] = 0
 
+        #print np.sum(self.npgos), -0.5*np.sum(self.rGr), -0.5*np.sum(self.GNGldet)
+
         # Now we are ready to return the log-likelihood
         return -0.5*np.sum(self.npgos)*np.log(2*np.pi) \
                 -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet)
@@ -5514,7 +5539,7 @@ class ptaLikelihood(object):
     def mark1loglikelihood(self, parameters):
         npsrs = len(self.ptapsrs)
 
-        self.setPsrNoise(parameters)
+        self.setPsrNoise(parameters, incJitter=False)
 
         self.constructPhiAndTheta(parameters)
 
@@ -5527,8 +5552,10 @@ class ptaLikelihood(object):
         # auxiliaries for all pulsars
         GtFtot = []
         GtDtot = []
+        GtUtot = []
+        uvec = np.array([])
         self.GCG[:] = 0
-        for ii in range(npsrs):
+        for ii, psr in enumerate(self.ptapsrs):
             gindex = np.sum(self.npgs[:ii])
             ng = self.npgs[ii]
 
@@ -5537,8 +5564,10 @@ class ptaLikelihood(object):
                     np.dot(self.ptapsrs[ii].Hmat.T, (self.ptapsrs[ii].Nvec * self.ptapsrs[ii].Hmat.T).T)
 
             # Create the total GtF and GtD lists for addition of Red(DM) noise
-            GtFtot.append(self.ptapsrs[ii].GtF)
-            GtDtot.append(self.ptapsrs[ii].GtD)
+            GtFtot.append(psr.GtF)
+            GtDtot.append(psr.GtD)
+            GtUtot.append(psr.GtU)
+            uvec = np.append(uvec, np.ones(len(psr.avetoas))*psr.Qamp)
 
             self.Gr[gindex:gindex+ng] = np.dot(self.ptapsrs[ii].Hmat.T, self.ptapsrs[ii].detresiduals)
 
@@ -5562,8 +5591,10 @@ class ptaLikelihood(object):
 
         # Do not directly multiply. Use block multiplication.
         # TODO: For even more speed, these two could be combined
-        #self.GCG += np.dot(GtD, (self.Thetavec * GtD).T)
         self.GCG += blockmul(np.diag(self.Thetavec), GtD.T, self.npfdm, self.npgs)
+
+        GtU = block_diag(*GtUtot)
+        self.GCG += blockmul(np.diag(uvec), GtU.T, self.npu, self.npgs)
 
         # MARK F
 
@@ -5756,7 +5787,9 @@ class ptaLikelihood(object):
                 raise ValueError("ERROR: Sigma singular according to SVD")
             SigmaLD = np.sum(np.log(s))
             rGSigmaGr = np.dot(self.rGF, np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, self.rGF))))
+
         # Mark F
+        #print np.sum(self.npgs), -0.5*np.sum(self.rGr), -0.5*np.sum(self.GNGldet)
 
         # Now we are ready to return the log-likelihood
         return -0.5*np.sum(self.npgs)*np.log(2*np.pi) \
@@ -6022,8 +6055,8 @@ class ptaLikelihood(object):
         # Mark F
 
         # Now we are ready to return the log-likelihood
-        #print rGSigmaGr, PhiLD, SigmaLD, np.trace(self.UGGNGGU), \
-        #        np.trace(Phiinv), np.trace(self.Phi)
+        # print np.sum(self.npgs), -0.5*np.sum(self.rGr), -0.5*np.sum(self.GNGldet)
+             
         #print self.Phi
 
         return -0.5*np.sum(self.npgs)*np.log(2*np.pi) \
