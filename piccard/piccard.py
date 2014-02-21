@@ -1423,6 +1423,7 @@ class ptaPulsar(object):
     Hcmat = None            # The co-compression matrix
     Hocmat = None           # The orthogonal co-compression matrix
     Umat = None
+    Uimat = None
     avetoas = None          
     SFdmmat = None         # Fdmmatrix for the dm frequency lines
     #FFdmmat = None         # Total of SFdmmatrix and Fdmmat
@@ -1503,6 +1504,7 @@ class ptaPulsar(object):
         self.Hcmat = None
         self.Hocmat = None
         self.Umat = None
+        self.Uimat = None
         self.avetoas = None
         self.Dmat = None
         self.DF = None
@@ -2264,7 +2266,8 @@ class ptaPulsar(object):
             self.DF = np.zeros((len(self.freqs), 0))
 
         # Create the dailay averaged residuals
-        (self.avetoas, self.Umat) = dailyaveragequantities(self.toas)
+        (self.avetoas, self.Umat, self.Uimat) = \
+                dailyaveragequantities(self.toas, calcInverse=True)
 
         # Write these quantities to disk
         if write != 'no':
@@ -2277,6 +2280,7 @@ class ptaPulsar(object):
 
             h5df.addData(self.name, 'pic_avetoas', self.avetoas)
             h5df.addData(self.name, 'pic_Umat', self.Umat)
+            h5df.addData(self.name, 'pic_Uimat', self.Uimat)
 
         # Next we'll need the G-matrices, and the compression matrices.
         U, s, Vh = sl.svd(self.Mmat)
@@ -2309,7 +2313,7 @@ class ptaPulsar(object):
             self.GGr = np.dot(self.Hmat, self.Gr)
             self.GtF = np.dot(self.Hmat.T, self.Fmat)
             self.GtD = np.dot(self.Hmat.T, self.DF)
-            (self.avetoas, self.Umat) = dailyaveragequantities(self.toas)
+            #(self.avetoas, self.Umat) = dailyaveragequantities(self.toas)
             self.GtU = np.dot(self.Hmat.T, self.Umat)
 
             # For two-component noise
@@ -2430,8 +2434,8 @@ class ptaPulsar(object):
             self.GtF = np.dot(self.Hmat.T, self.Fmat)
             GtU = np.dot(self.Hmat.T, self.Umat)
 
-            self.UtF = np.dot(self.Umat.T, self.Fmat)
-            self.UtD = np.dot(self.Umat.T, self.DF)
+            self.UtF = np.dot(self.Uimat, self.Fmat)
+            self.UtD = np.dot(self.Uimat, self.DF)
 
             # For two-component noise
             # Diagonalise GtEfG
@@ -2478,7 +2482,7 @@ class ptaPulsar(object):
             self.GtF = np.dot(self.Hmat.T, self.Fmat)
             GtU = np.dot(self.Hmat.T, self.Umat)
 
-            self.UtF = np.dot(self.Umat.T, self.Fmat)
+            self.UtF = np.dot(self.Uimat, self.Fmat)
 
             # Initialise the single frequency with a frequency of 10 / yr
             self.frequencyLinesAdded = nSingleFreqs
@@ -2488,7 +2492,7 @@ class ptaPulsar(object):
             self.FFmat = np.append(self.Fmat, self.SFmat, axis=1)
             self.SFfreqs = np.log10(np.array([sfreqs, sfreqs]).T.flatten())
 
-            self.UtFF = np.dot(self.Umat.T, self.FFmat)
+            self.UtFF = np.dot(self.Uimat, self.FFmat)
 
             # For two-component noise
             # Diagonalise GtEfG
@@ -2985,6 +2989,7 @@ class ptaPulsar(object):
             self.AoGU = np.array(h5df.getData(self.name, 'pic_AoGU', dontread=memsave))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
             self.Umat = np.array(h5df.getData(self.name, 'pic_Umat'))
+            self.Uimat = np.array(h5df.getData(self.name, 'pic_Uimat'))
             self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat', dontread=memsave))
 
         if likfunc == 'mark4ln':
@@ -2999,6 +3004,7 @@ class ptaPulsar(object):
             self.AoGU = np.array(h5df.getData(self.name, 'pic_AoGU', dontread=memsave))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
             self.Umat = np.array(h5df.getData(self.name, 'pic_Umat'))
+            self.Uimat = np.array(h5df.getData(self.name, 'pic_Uimat'))
             self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat', dontread=memsave))
 
         if likfunc == 'mark6' or likfunc == 'mark6fa':
@@ -5432,7 +5438,7 @@ class ptaLikelihood(object):
                     m2psr.SFmat = singleFreqFourierModes(m2psr.toas, 10**m2psr.SFfreqs[::2])
                     m2psr.FFmat = np.append(m2psr.Fmat, m2psr.SFmat, axis=1)
 
-                    m2psr.UtFF = np.dot(m2psr.Umat.T, m2psr.FFmat)
+                    m2psr.UtFF = np.dot(m2psr.Uimat, m2psr.FFmat)
                 else:
                     m2psr.SFmat = singleFreqFourierModes(m2psr.toas, 10**m2psr.SFfreqs[::2])
                     m2psr.FFmat = np.append(m2psr.Fmat, m2psr.SFmat, axis=1)
