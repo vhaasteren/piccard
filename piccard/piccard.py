@@ -1463,6 +1463,7 @@ class ptaPulsar(object):
     Wovec = None            # The weights in 2-component orthogonal noise
     Nwvec = None            # Total noise in 2-component basis (eq^2 + ef^2*Wvec)
     Nwovec = None           # Total noise in 2-component orthogonal basis
+    Jweight = None          # The weight of the jitter noise in compressed basis
 
     # To select the number of Frequency modes
     bfinc = None        # Number of modes of all internal matrices
@@ -1970,44 +1971,13 @@ class ptaPulsar(object):
             # in 'createPulsarAuxiliaries'
             if likfunc[:5] != 'mark4':
                 (self.avetoas, self.Umat) = dailyaveragequantities(self.toas)
+                Wjit = np.sum(self.Umat, axis=0)
+                self.Jweight = np.sum(Wjit * self.Umat, axis=1)
 
-            # There is a lot of stuff here that was used for debugging. Remove
-            # in a few commits
             #"""
-            # We will do an weighted fit
-            w = 1.0/self.toaerrs**0
-            # Create the weighted projection matrix (oblique projection)
-            UWU = np.dot(self.Umat.T, (w * self.Umat.T).T)
-            cf = sl.cho_factor(UWU)
-            UWUi = sl.cho_solve(cf, np.eye(UWU.shape[0]))
-            P = np.dot(self.Umat, np.dot(UWUi, self.Umat.T * w))
-            #PuG = self.Gmat
-            PuG = np.dot(P, self.Gmat)
-            GU = np.dot(PuG.T, self.Umat)
-            GUUG = np.dot(GU, GU.T)
-            #"""
-
-            """
-            # Build a projection matrix for U
-            Pu = np.dot(self.Umat, Ui)
-            PuG = np.dot(Pu, self.Gmat)
-            Vmat, svec, Vhsvd = sl.svd(np.dot(self.Gmat.T, PuG))
-
-            UU = np.dot(self.Umat.T, self.Umat)
-            cf = sl.cho_factor(UU)
-            UUi = sl.cho_solve(cf, np.eye(UU.shape[0]))
-            Pu = np.dot(self.Umat, np.dot(UUi, self.Umat.T))
-
-            # This assumes that self.Umat has already been set
-            #GU = np.dot(self.Gmat.T, self.Umat)
-            #GUUG = np.dot(GU, GU.T)
-            GUUG = np.dot(self.Gmat.T, np.dot(Pu, self.Gmat))
-            """
-
-            """
             GU = np.dot(self.Gmat.T, self.Umat)
             GUUG = np.dot(GU, GU.T)
-            """
+            #"""
 
             # Construct an orthogonal basis, and singular values
             #svech, Vmath = sl.eigh(GUUG)
@@ -2119,6 +2089,9 @@ class ptaPulsar(object):
                 (self.avetoas, self.Umat, Ui) = dailyaveragequantities(self.toas, calcInverse=True)
                 UUi = np.dot(self.Umat, Ui)
                 GF = np.dot(self.Gmat.T, np.dot(UUi, Ftot))
+
+                Wjit = np.sum(self.Umat, axis=0)
+                self.Jweight = np.sum(Wjit * self.Umat, axis=1)
             else:
                 GF = np.dot(self.Gmat.T, Ftot)
 
@@ -2268,6 +2241,8 @@ class ptaPulsar(object):
         # Create the dailay averaged residuals
         (self.avetoas, self.Umat, self.Uimat) = \
                 dailyaveragequantities(self.toas, calcInverse=True)
+        Wjit = np.sum(self.Umat, axis=0)
+        self.Jweight = np.sum(Wjit * self.Umat, axis=1)
 
         # Write these quantities to disk
         if write != 'no':
@@ -2281,6 +2256,7 @@ class ptaPulsar(object):
             h5df.addData(self.name, 'pic_avetoas', self.avetoas)
             h5df.addData(self.name, 'pic_Umat', self.Umat)
             h5df.addData(self.name, 'pic_Uimat', self.Uimat)
+            h5df.addData(self.name, 'pic_Jweight', self.Jweight)
 
         # Next we'll need the G-matrices, and the compression matrices.
         U, s, Vh = sl.svd(self.Mmat)
@@ -2989,6 +2965,7 @@ class ptaPulsar(object):
             self.AoGU = np.array(h5df.getData(self.name, 'pic_AoGU', dontread=memsave))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
             self.Umat = np.array(h5df.getData(self.name, 'pic_Umat'))
+            self.Jweight = np.array(h5df.getData(self.name, 'pic_Jweight'))
             self.Uimat = np.array(h5df.getData(self.name, 'pic_Uimat'))
             self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat', dontread=memsave))
 
@@ -3004,6 +2981,7 @@ class ptaPulsar(object):
             self.AoGU = np.array(h5df.getData(self.name, 'pic_AoGU', dontread=memsave))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
             self.Umat = np.array(h5df.getData(self.name, 'pic_Umat'))
+            self.Jweight = np.array(h5df.getData(self.name, 'pic_Jweight'))
             self.Uimat = np.array(h5df.getData(self.name, 'pic_Uimat'))
             self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat', dontread=memsave))
 
@@ -3767,7 +3745,7 @@ class ptaLikelihood(object):
             if self.likfunc in ['mark4ln', 'mark9', 'mark10']:
                 self.npff[ii] += len(self.ptapsrs[ii].SFfreqs)
 
-            if self.likfunc in ['mark4', 'mark4ln']:
+            if self.likfunc in ['mark1', 'mark4', 'mark4ln']:
                 self.npu[ii] = len(self.ptapsrs[ii].avetoas)
 
             if self.likfunc in ['mark1', 'mark4', 'mark4ln', 'mark6', 'mark6fa', 'mark8', 'mark10']:
@@ -4866,6 +4844,7 @@ class ptaLikelihood(object):
         # Loop over all white noise signals, and fill the pulsar Nvec
         for ss, m2signal in enumerate(self.ptasignals):
             m2signal = self.ptasignals[ss]
+            psr = self.ptapsrs[m2signal['pulsarind']]
             if selection[ss]:
                 if m2signal['stype'] == 'efac':
                     if m2signal['npars'] == 1:
@@ -4873,13 +4852,11 @@ class ptaLikelihood(object):
                     else:
                         pefac = m2signal['pstart'][0]
 
-                    if self.ptapsrs[m2signal['pulsarind']].twoComponentNoise:
-                        self.ptapsrs[m2signal['pulsarind']].Nwvec += \
-                                self.ptapsrs[m2signal['pulsarind']].Wvec * pefac**2
-                        self.ptapsrs[m2signal['pulsarind']].Nwovec += \
-                                self.ptapsrs[m2signal['pulsarind']].Wovec * pefac**2
+                    if psr.twoComponentNoise:
+                        psr.Nwvec += psr.Wvec * pefac**2
+                        psr.Nwovec += psr.Wovec * pefac**2
 
-                    self.ptapsrs[m2signal['pulsarind']].Nvec += m2signal['Nvec'] * pefac**2
+                    psr.Nvec += m2signal['Nvec'] * pefac**2
 
                 elif m2signal['stype'] == 'equad':
                     if m2signal['npars'] == 1:
@@ -4887,26 +4864,26 @@ class ptaLikelihood(object):
                     else:
                         pequadsqr = 10**(2*m2signal['pstart'][0])
 
-                    if self.ptapsrs[m2signal['pulsarind']].twoComponentNoise:
-                        self.ptapsrs[m2signal['pulsarind']].Nwvec += pequadsqr
-                        self.ptapsrs[m2signal['pulsarind']].Nwovec += pequadsqr
+                    if psr.twoComponentNoise:
+                        psr.Nwvec += pequadsqr
+                        psr.Nwovec += pequadsqr
 
-                    self.ptapsrs[m2signal['pulsarind']].Nvec += m2signal['Nvec'] * pequadsqr
+                    psr.Nvec += m2signal['Nvec'] * pequadsqr
                 elif m2signal['stype'] == 'jitter':
                     if m2signal['npars'] == 1:
                         pequadsqr = 10**(2*parameters[m2signal['parindex']])
                     else:
                         pequadsqr = 10**(2*m2signal['pstart'][0])
 
-                    self.ptapsrs[m2signal['pulsarind']].Qamp = pequadsqr
+                    psr.Qamp = pequadsqr
 
                     if incJitter:
                         # Need to include it just like the equad (for compresison)
-                        self.ptapsrs[m2signal['pulsarind']].Nvec += m2signal['Nvec'] * pequadsqr
+                        psr.Nvec += m2signal['Nvec'] * psr.Jweight * pequadsqr
 
-                        if self.ptapsrs[m2signal['pulsarind']].twoComponentNoise:
-                            self.ptapsrs[m2signal['pulsarind']].Nwvec += pequadsqr
-                            self.ptapsrs[m2signal['pulsarind']].Nwovec += pequadsqr
+                        if psr.twoComponentNoise:
+                            psr.Nwvec += pequadsqr
+                            psr.Nwovec += pequadsqr
 
 
     """
@@ -7343,8 +7320,8 @@ class ptaLikelihood(object):
             for pp, psr in enumerate(self.ptapsrs):
                 qvec = np.append(qvec, [psr.Qamp]*len(psr.avetoas))
 
-            #if totU.shape[1] == len(qvec):
-            #    Cov += np.dot(totU, (qvec * totU).T)
+            if totU.shape[1] == len(qvec):
+                Cov += np.dot(totU, (qvec * totU).T)
 
         # Create the projected covariance matrix, and decompose it
         # WARNING: for now we are ignoring the G-matrix when generating data
@@ -7388,7 +7365,7 @@ class ptaLikelihood(object):
         else:
             print "WARNING: libstempo not imported. Par/tim files will not be updated"
 
-        """
+        #"""
         # Display the data
         #plt.errorbar(tottoas, ygen, yerr=tottoaerrs, fmt='.', c='blue')
         plt.errorbar(self.ptapsrs[0].toas, \
@@ -7397,7 +7374,7 @@ class ptaLikelihood(object):
                 
         plt.grid(True)
         plt.show()
-        """
+        #"""
 
         # If required, write all this to HDF5 file
         if filename != None:
