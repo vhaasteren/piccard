@@ -769,6 +769,8 @@ def block_diag(*arrs):
     return out
 
 
+
+
 """
 Calculate the daily-averaging exploder matrix, and the daily averaged site
 arrival times. In the modelling, the residuals will not be changed. It is only
@@ -820,6 +822,21 @@ def dailyaveragequantities(toas, calcInverse=False):
 
     return returnvalues
 
+
+def selection_to_dselection(Nvec, U):
+    """
+    Given a selection vector Nvec and a quantization matrix U, both with
+    elements in [0, 1.0], this function returns the selection vector in the
+    basis of epoch average residuals. This assumes that all observations in a
+    single observation epoch are flagged identically (same backend).
+
+    @param Nvec:    vector with elements in [0.0, 1.0] that indicates which
+                    observations are selected
+    @param U:       quantization matrix
+    
+    @returns:   Selection matrix as Nvec, but in the epoch-averaged basis
+    """
+    return np.array(np.sum(Nvec * U.T, axis=1) > 0.0, dtype=np.double)
 
 
 """
@@ -1464,6 +1481,7 @@ class ptaPulsar(object):
     Nwvec = None            # Total noise in 2-component basis (eq^2 + ef^2*Wvec)
     Nwovec = None           # Total noise in 2-component orthogonal basis
     Jweight = None          # The weight of the jitter noise in compressed basis
+    Jvec = None
 
     # To select the number of Frequency modes
     bfinc = None        # Number of modes of all internal matrices
@@ -3484,12 +3502,16 @@ class ptaLikelihood(object):
         if not all(k in signal for k in keys):
             raise ValueError("ERROR: Not all signal keys are present in equad signal. Keys: {0}. Required: {1}".format(signal.keys(), keys))
 
-        signal['Nvec'] = np.ones(len(self.ptapsrs[signal['pulsarind']].toaerrs))
+        psr = self.ptapsrs[signal['pulsarind']]
+        signal['Nvec'] = np.ones(len(psr.toaerrs))
+        signal['Jvec'] = np.ones(psr.Umat.shape[1])
 
         if signal['flagname'] != 'pulsarname':
             # This equad only applies to some TOAs, not all of 'm
-            ind = np.array(self.ptapsrs[signal['pulsarind']].flags) != signal['flagvalue']
+            ind = np.array(psr.flags) != signal['flagvalue']
             signal['Nvec'][ind] = 0.0
+            signal['Jvec']= selection_to_dselection(signal['Nvec'],
+                    psr.Umat)
 
         self.ptasignals.append(signal.copy())
 
@@ -3745,7 +3767,7 @@ class ptaLikelihood(object):
             if self.likfunc in ['mark4ln', 'mark9', 'mark10']:
                 self.npff[ii] += len(self.ptapsrs[ii].SFfreqs)
 
-            if self.likfunc in ['mark1', 'mark4', 'mark4ln']:
+            if self.likfunc in ['mark1', 'mark3', 'mark4', 'mark4ln']:
                 self.npu[ii] = len(self.ptapsrs[ii].avetoas)
 
             if self.likfunc in ['mark1', 'mark4', 'mark4ln', 'mark6', 'mark6fa', 'mark8', 'mark10']:
@@ -3759,6 +3781,7 @@ class ptaLikelihood(object):
             self.npgs[ii] = self.ptapsrs[ii].Hmat.shape[1]
             self.npgos[ii] = self.ptapsrs[ii].Homat.shape[1]
             self.ptapsrs[ii].Nvec = np.zeros(len(self.ptapsrs[ii].toas))
+            self.ptapsrs[ii].Jvec = np.zeros(len(self.ptapsrs[ii].avetoas))
             self.ptapsrs[ii].Nwvec = np.zeros(self.ptapsrs[ii].Hmat.shape[1])
             self.ptapsrs[ii].Nwovec = np.zeros(self.ptapsrs[ii].Homat.shape[1])
 
@@ -4514,7 +4537,9 @@ class ptaLikelihood(object):
         # separateEfacs boolean array (for two-component noise analysis)
         numEfacs = self.getNumberOfSignalsFromDict(signals, \
                 stype='efac', corr='single')
-        separateEfacs = numEfacs > 1
+        numJits = self.getNumberOfSignalsFromDict(signals, \
+                stype='jitter', corr='single')
+        separateEfacs = (numEfacs + numJits) > 1
 
         # Modify design matrices, and create pulsar Auxiliary quantities
         for pindex, m2psr in enumerate(self.ptapsrs):
@@ -4836,6 +4861,7 @@ class ptaLikelihood(object):
                 m2psr.Nwovec[:] = 0
             #else:
             m2psr.Nvec[:] = 0
+            m2psr.Jvec[:] = 0
             m2psr.Qamp = 0
 
         if selection is None:
@@ -4878,12 +4904,17 @@ class ptaLikelihood(object):
                     psr.Qamp = pequadsqr
 
                     if incJitter:
+                        """ # No longer do it this way
+
                         # Need to include it just like the equad (for compresison)
                         psr.Nvec += m2signal['Nvec'] * psr.Jweight * pequadsqr
+
 
                         if psr.twoComponentNoise:
                             psr.Nwvec += pequadsqr
                             psr.Nwovec += pequadsqr
+                        """
+                        psr.Jvec += m2signal['Jvec'] * pequadsqr
 
 
     """
@@ -5481,14 +5512,28 @@ class ptaLikelihood(object):
 
         # Armed with the Noise (and it's inverse), we'll construct the
         # auxiliaries for all pulsars
-        for ii in range(npsrs):
+        for ii, psr in enumerate(self.ptapsrs):
             if self.npgos[ii] > 0:
                 if self.ptapsrs[ii].twoComponentNoise:
                     self.rGr[ii] = np.sum(self.ptapsrs[ii].AoGr ** 2 / self.ptapsrs[ii].Nwovec)
                     self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nwovec))
                 else:
-                    Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
-                    NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Hocmat.T).T
+                    if np.sum(psr.Jvec) > 0:
+                        Nir = np.zeros(len(psr.detresiduals))
+                        NiGc = np.zeros(psr.Hocmat.shape)
+
+                        for cc, col in enumerate(psr.Umat.T):
+                            u = (col == 1.0)
+                            l = np.sum(u)
+                            mat = np.ones((l, l)) * psr.Jvec[cc]
+                            mat[range(l), range(l)] += psr.Nvec[u]
+                            cf = sl.cho_factor(mat)
+
+                            Nir[u] = sl.cho_solve(cf, psr.detresiduals[u])
+                            NiGc[u, :] = sl.cho_solve(cf, psr.Hocmat[u, :])
+                    else:
+                        Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
+                        NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Hocmat.T).T
                     GcNiGc = np.dot(self.ptapsrs[ii].Hocmat.T, NiGc)
                     GcNir = np.dot(NiGc.T, self.ptapsrs[ii].detresiduals)
 
@@ -5620,14 +5665,30 @@ class ptaLikelihood(object):
 
         # Armed with the Noise (and it's inverse), we'll construct the
         # auxiliaries for all pulsars
-        for ii in range(npsrs):
+        for ii, psr in enumerate(self.ptapsrs):
             if self.ptapsrs[ii].twoComponentNoise:
                 # This is equivalent to np.dot(np.diag(1.0/Nwvec, AGF))
                 self.rGr[ii] = np.sum(self.ptapsrs[ii].AGr ** 2 / self.ptapsrs[ii].Nwvec)
                 self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nwvec))
             else:
-                Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
-                NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Hcmat.T).T
+                if np.sum(psr.Jvec) > 0:
+                    Nir = np.zeros(len(psr.detresiduals))
+                    NiGc = np.zeros(psr.Hcmat.shape)
+
+                    for cc, col in enumerate(psr.Umat.T):
+                        u = (col == 1.0)
+                        l = np.sum(u)
+                        mat = np.ones((l, l)) * psr.Jvec[cc]
+                        mat[range(l), range(l)] += psr.Nvec[u]
+                        cf = sl.cho_factor(mat)
+
+                        Nir[u] = sl.cho_solve(cf, psr.detresiduals[u])
+                        NiGc[u, :] = sl.cho_solve(cf, psr.Hcmat[u, :])
+
+                else:
+                    Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
+                    NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Hcmat.T).T
+
                 GcNiGc = np.dot(self.ptapsrs[ii].Hcmat.T, NiGc)
                 GcNir = np.dot(NiGc.T, self.ptapsrs[ii].detresiduals)
 
@@ -5696,25 +5757,42 @@ class ptaLikelihood(object):
 
         # Armed with the Noise (and it's inverse), we'll construct the
         # auxiliaries for all pulsars
-        for ii in range(npsrs):
+        for ii, psr in enumerate(self.ptapsrs):
             findex = np.sum(self.npf[:ii])
             nfreq = int(self.npf[ii]/2)
 
-            if self.ptapsrs[ii].twoComponentNoise:
+            if psr.twoComponentNoise:
                 # This is equivalent to np.dot(np.diag(1.0/Nwvec, AGF))
-                NGGF = ((1.0/self.ptapsrs[ii].Nwvec) * self.ptapsrs[ii].AGF.T).T
+                NGGF = ((1.0/psr.Nwvec) * psr.AGF.T).T
 
-                self.rGr[ii] = np.sum(self.ptapsrs[ii].AGr ** 2 / self.ptapsrs[ii].Nwvec)
-                self.rGF[findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].AGr, NGGF)
-                self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nwvec))
-                self.FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].AGF.T, NGGF)
+                self.rGr[ii] = np.sum(psr.AGr ** 2 / psr.Nwvec)
+                self.rGF[findex:findex+2*nfreq] = np.dot(psr.AGr, NGGF)
+                self.GNGldet[ii] = np.sum(np.log(psr.Nwvec))
+                self.FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = \
+                        np.dot(psr.AGF.T, NGGF)
             else:
-                Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
-                NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Hcmat.T).T
-                GcNiGc = np.dot(self.ptapsrs[ii].Hcmat.T, NiGc)
-                NiF = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Fmat.T).T
-                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].detresiduals)
-                GcNiF = np.dot(NiGc.T, self.ptapsrs[ii].Fmat)
+                if np.sum(psr.Jvec) > 0:
+                    Nir = np.zeros(len(psr.detresiduals))
+                    NiGc = np.zeros(psr.Hcmat.shape)
+                    NiF = np.zeros(psr.Fmat.shape)
+
+                    for cc, col in enumerate(psr.Umat.T):
+                        u = (col == 1.0)
+                        l = np.sum(u)
+                        mat = np.ones((l, l)) * psr.Jvec[cc]
+                        mat[range(l), range(l)] += psr.Nvec[u]
+                        cf = sl.cho_factor(mat)
+
+                        Nir[u] = sl.cho_solve(cf, psr.detresiduals[u])
+                        NiGc[u, :] = sl.cho_solve(cf, psr.Hcmat[u, :])
+                        NiF[u, :] = sl.cho_solve(cf, psr.Fmat[u, :])
+                else:
+                    Nir = psr.detresiduals / psr.Nvec
+                    NiGc = ((1.0/psr.Nvec) * psr.Hcmat.T).T
+                    NiF = ((1.0/psr.Nvec) * psr.Fmat.T).T
+                GcNiGc = np.dot(psr.Hcmat.T, NiGc)
+                GcNir = np.dot(NiGc.T, psr.detresiduals)
+                GcNiF = np.dot(NiGc.T, psr.Fmat)
 
                 try:
                     cf = sl.cho_factor(GcNiGc)
@@ -5805,7 +5883,7 @@ class ptaLikelihood(object):
 
         # Armed with the Noise (and it's inverse), we'll construct the
         # auxiliaries for all pulsars
-        for ii in range(npsrs):
+        for ii, psr in enumerate(self.ptapsrs):
             findex = np.sum(self.npf[:ii])
             nfreq = int(self.npf[ii]/2)
 
@@ -5818,10 +5896,27 @@ class ptaLikelihood(object):
                 self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nwvec))
                 self.FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].AGF.T, NGGF)
             else:
-                Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
-                NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Hcmat.T).T
+                if np.sum(psr.Jvec) > 0:
+                    Nir = np.zeros(len(psr.detresiduals))
+                    NiGc = np.zeros(psr.Hcmat.shape)
+                    NiF = np.zeros(psr.Fmat.shape)
+
+                    for cc, col in enumerate(psr.Umat.T):
+                        u = (col == 1.0)
+                        l = np.sum(u)
+                        mat = np.ones((l, l)) * psr.Jvec[cc]
+                        mat[range(l), range(l)] += psr.Nvec[u]
+                        cf = sl.cho_factor(mat)
+
+                        Nir[u] = sl.cho_solve(cf, psr.detresiduals[u])
+                        NiGc[u, :] = sl.cho_solve(cf, psr.Hcmat[u, :])
+                        NiF[u, :] = sl.cho_solve(cf, psr.Fmat[u, :])
+                else:
+                    Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
+                    NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Hcmat.T).T
+                    NiF = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Fmat.T).T
+
                 GcNiGc = np.dot(self.ptapsrs[ii].Hcmat.T, NiGc)
-                NiF = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Fmat.T).T
                 GcNir = np.dot(NiGc.T, self.ptapsrs[ii].detresiduals)
                 GcNiF = np.dot(NiGc.T, self.ptapsrs[ii].Fmat)
 
@@ -5928,7 +6023,7 @@ class ptaLikelihood(object):
 
         # Armed with the Noise (and it's inverse), we'll construct the
         # auxiliaries for all pulsars
-        for ii in range(npsrs):
+        for ii, psr in enumerate(self.ptapsrs):
             findex = np.sum(self.npf[:ii])
             nfreq = int(self.npf[ii]/2)
             uindex = np.sum(self.npu[:ii])
@@ -6074,7 +6169,7 @@ class ptaLikelihood(object):
 
         # Armed with the Noise (and it's inverse), we'll construct the
         # auxiliaries for all pulsars
-        for ii in range(npsrs):
+        for ii, psr in enumerate(self.ptapsrs):
             uindex = np.sum(self.npu[:ii])
             nus = self.npu[ii]
 
@@ -6201,7 +6296,7 @@ class ptaLikelihood(object):
 
         # Armed with the Noise (and it's inverse), we'll construct the
         # auxiliaries for all pulsars
-        for ii in range(npsrs):
+        for ii, psr in enumerate(self.ptapsrs):
             findex = np.sum(self.npf[:ii])
             fdmindex = np.sum(self.npfdm[:ii])
             nfreq = int(self.npf[ii]/2)
@@ -6215,10 +6310,27 @@ class ptaLikelihood(object):
                 self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nwvec))
                 self.EGGNGGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm, findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].AGE.T, NGGE)
             else:
-                Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
-                NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Hcmat.T).T
+                if np.sum(psr.Jvec) > 0:
+                    Nir = np.zeros(len(psr.detresiduals))
+                    NiGc = np.zeros(psr.Hcmat.shape)
+                    NiE = np.zeros(psr.Emat.shape)
+
+                    for cc, col in enumerate(psr.Umat.T):
+                        u = (col == 1.0)
+                        l = np.sum(u)
+                        mat = np.ones((l, l)) * psr.Jvec[cc]
+                        mat[range(l), range(l)] += psr.Nvec[u]
+                        cf = sl.cho_factor(mat)
+
+                        Nir[u] = sl.cho_solve(cf, psr.detresiduals[u])
+                        NiGc[u, :] = sl.cho_solve(cf, psr.Hcmat[u, :])
+                        NiE[u, :] = sl.cho_solve(cf, psr.Emat[u, :])
+                else:
+                    Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
+                    NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Hcmat.T).T
+                    NiE = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Emat.T).T
+
                 GcNiGc = np.dot(self.ptapsrs[ii].Hcmat.T, NiGc)
-                NiE = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Emat.T).T
                 GcNir = np.dot(NiGc.T, self.ptapsrs[ii].detresiduals)
                 GcNiE = np.dot(NiGc.T, self.ptapsrs[ii].Emat)
 
@@ -6340,7 +6452,7 @@ class ptaLikelihood(object):
 
         # Armed with the Noise (and it's inverse), we'll construct the
         # auxiliaries for all pulsars
-        for ii in range(npsrs):
+        for ii, psr in enumerate(self.ptapsrs):
             findex = np.sum(self.npf[:ii])
             fdmindex = np.sum(self.npfdm[:ii])
             nfreq = int(self.npf[ii]/2)
@@ -6354,10 +6466,27 @@ class ptaLikelihood(object):
                 self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nwvec))
                 self.EGGNGGE[findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm, findex+fdmindex:findex+fdmindex+2*nfreq+2*nfreqdm] = np.dot(self.ptapsrs[ii].AGE.T, NGGE)
             else:
-                Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
-                NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Hcmat.T).T
+                if np.sum(psr.Jvec) > 0:
+                    Nir = np.zeros(len(psr.detresiduals))
+                    NiGc = np.zeros(psr.Hcmat.shape)
+                    NiE = np.zeros(psr.Emat.shape)
+
+                    for cc, col in enumerate(psr.Umat.T):
+                        u = (col == 1.0)
+                        l = np.sum(u)
+                        mat = np.ones((l, l)) * psr.Jvec[cc]
+                        mat[range(l), range(l)] += psr.Nvec[u]
+                        cf = sl.cho_factor(mat)
+
+                        Nir[u] = sl.cho_solve(cf, psr.detresiduals[u])
+                        NiGc[u, :] = sl.cho_solve(cf, psr.Hcmat[u, :])
+                        NiE[u, :] = sl.cho_solve(cf, psr.Emat[u, :])
+                else:
+                    Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
+                    NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Hcmat.T).T
+                    NiE = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Emat.T).T
+
                 GcNiGc = np.dot(self.ptapsrs[ii].Hcmat.T, NiGc)
-                NiE = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Emat.T).T
                 GcNir = np.dot(NiGc.T, self.ptapsrs[ii].detresiduals)
                 GcNiE = np.dot(NiGc.T, self.ptapsrs[ii].Emat)
 
@@ -6502,7 +6631,7 @@ class ptaLikelihood(object):
 
         # Armed with the Noise (and it's inverse), we'll construct the
         # auxiliaries for all pulsars
-        for ii in range(npsrs):
+        for ii, psr in enumerate(self.ptapsrs):
             findex = np.sum(self.lnpf[:ii])
             nfreq = int(self.lnpf[ii]/2)
 
@@ -6668,7 +6797,7 @@ class ptaLikelihood(object):
 
         # Armed with the Noise (and it's inverse), we'll construct the
         # auxiliaries for all pulsars
-        for ii in range(npsrs):
+        for ii, psr in enumerate(self.ptapsrs):
             findex = np.sum(self.lnpf[:ii])
             fdmindex = np.sum(self.lnpfdm[:ii])
             nfreq = int(self.lnpf[ii]/2)
@@ -6787,7 +6916,7 @@ class ptaLikelihood(object):
 
         # Armed with the Noise (and it's inverse), we'll construct the
         # auxiliaries for all pulsars
-        for ii in range(npsrs):
+        for ii, psr in enumerate(self.ptapsrs):
             findex = np.sum(self.npff[:ii])
             nfreq = int(self.npff[ii]/2)
 
@@ -6891,7 +7020,7 @@ class ptaLikelihood(object):
 
         # Armed with the Noise (and it's inverse), we'll construct the
         # auxiliaries for all pulsars
-        for ii in range(npsrs):
+        for ii, psr in enumerate(self.ptapsrs):
             findex = np.sum(self.npff[:ii])
             fdmindex = np.sum(self.npffdm[:ii])
             nfreq = int(self.npff[ii]/2)
@@ -7224,7 +7353,7 @@ class ptaLikelihood(object):
 
         npsrs = len(self.ptapsrs)
 
-        self.setPsrNoise(parameters)
+        self.setPsrNoise(parameters, incJitter=False)
 
         if self.haveStochSources:
             self.constructPhiAndTheta(parameters)
@@ -7258,7 +7387,7 @@ class ptaLikelihood(object):
             if psr.Fmat.shape[1] == nppf:
                 totFmat[nindex:nindex+npobs, findex:findex+nppf] = psr.Fmat
 
-            if psr.DF.shape[1] == nppfdm:
+            if not psr.DF is None and psr.DF.shape[1] == nppfdm:
                 totDFmat[nindex:nindex+npobs, fdmindex:fdmindex+nppfdm] = psr.DF
                 totDmat[nindex:nindex+npobs, nindex:nindex+npobs] = psr.Dmat
 
@@ -7368,9 +7497,12 @@ class ptaLikelihood(object):
         #"""
         # Display the data
         #plt.errorbar(tottoas, ygen, yerr=tottoaerrs, fmt='.', c='blue')
-        plt.errorbar(self.ptapsrs[0].toas, \
-                self.ptapsrs[0].residuals, \
-                yerr=self.ptapsrs[0].toaerrs, fmt='.', c='blue')
+        #plt.errorbar(self.ptapsrs[0].toas, \
+        #        self.ptapsrs[0].residuals, \
+        #        yerr=self.ptapsrs[0].toaerrs, fmt='.', c='blue')
+        psr = self.ptapsrs[0]
+        plt.scatter(psr.toas, psr.residuals)
+        plt.axis([psr.toas.min(), psr.toas.max(), psr.residuals.min(), psr.residuals.max()])
                 
         plt.grid(True)
         plt.show()
@@ -7822,7 +7954,7 @@ class ptaLikelihood(object):
         totDvec = np.zeros(np.sum(self.npobs))
 
         # Construct the full covariance matrices
-        for ii in range(npsrs):
+        for ii, psr in enumerate(self.ptapsrs):
             findex = np.sum(self.npf[:ii])
             fdmindex = np.sum(self.npfdm[:ii])
             nfreq = int(self.npf[ii]/2)
