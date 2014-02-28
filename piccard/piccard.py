@@ -5176,7 +5176,7 @@ class ptaLikelihood(object):
                     # residuals = M * pars
                     self.ptapsrs[pp].detresiduals -= \
                             np.dot(self.ptapsrs[pp].Mmat[:,ind], \
-                            (sparameters-m2signal['pstart']) # / m2signal['unitconversion'])
+                            (sparameters-m2signal['pstart'])) # / m2signal['unitconversion'])
 
                 elif m2signal['stype'] == 'nonlineartimingmodel':
                     # The t2psr libstempo object has to be set. Assume it is.
