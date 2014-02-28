@@ -323,13 +323,13 @@ class DataFile(object):
         self.writeData(psrGroup, 'freq', np.double(t2pulsar.freqs), overwrite=overwrite)    # MHz
 
         # TODO: writing the design matrix should be done irrespective of the fitting flag
-        desmat = t2pulsar.designmatrix()
+        desmat = t2pulsar.designmatrix(fixunits=True)
         self.writeData(psrGroup, 'designmatrix', desmat, overwrite=overwrite)
 
         # Write the unit conversions for the design matrix (to timing model
         # parameters
-        unitConversion = t2pulsar.getUnitConversion()
-        self.writeData(psrGroup, 'unitConversion', unitConversion, overwrite=overwrite)
+        #unitConversion = t2pulsar.getUnitConversion()
+        #self.writeData(psrGroup, 'unitConversion', unitConversion, overwrite=overwrite)
 
         # Do not write the (co)G-matrix anymore
         # U, s, Vh = sl.svd(desmat)
@@ -484,7 +484,7 @@ class DataFile(object):
         psr.detresiduals = np.array(self.getData(psrname, 'prefitRes'))
         psr.freqs = np.array(self.getData(psrname, 'freq'))
         psr.Mmat = np.array(self.getData(psrname, 'designmatrix'))
-        psr.unitconversion = np.array(self.getData(psrname, 'unitConversion', required=False))
+        #psr.unitconversion = np.array(self.getData(psrname, 'unitConversion', required=False))
 
         # We do not read the (co)G-matrix anymore here. Happens when
         # initialising the model
@@ -1420,7 +1420,7 @@ class ptaPulsar(object):
     residuals = None
     detresiduals = None     # Residuals after subtraction of deterministic sources
     freqs = None
-    unitconversion = None
+    #unitconversion = None
     Gmat = None
     Gcmat = None
     Mmat = None
@@ -1504,7 +1504,7 @@ class ptaPulsar(object):
         self.residuals = None
         self.detresiduals = None     # Residuals after subtraction of deterministic sources
         self.freqs = None
-        self.unitconversion = None
+        #self.unitconversion = None
         self.Gmat = None
         self.Gcmat = None
         self.Mmat = None
@@ -1623,15 +1623,15 @@ class ptaPulsar(object):
     def addToDesignMatrix(self, addpars, \
             oldMmat=None, oldGmat=None, oldGcmat=None, \
             oldptmpars=None, oldptmdescription=None, \
-            oldunitconversion=None, noWarning=False):
+            noWarning=False):
         if oldMmat is None:
             oldMmat = self.Mmat
         if oldptmdescription is None:
             oldptmdescription = self.ptmdescription
         if oldptmpars is None:
             oldptmpars = self.ptmpars
-        if oldunitconversion is None:
-            oldunitconversion = self.unitconversion
+        #if oldunitconversion is None:
+        #    oldunitconversion = self.unitconversion
         if oldGmat is None:
             oldGmat = self.Gmat
         if oldGcmat is None:
@@ -1681,7 +1681,7 @@ class ptaPulsar(object):
             newM = np.append(oldMmat, addM, axis=1)
             newptmdescription = np.append(oldptmdescription, adddes)
             newptmpars = np.append(oldptmpars, addparvals)
-            newunitconversion = np.append(oldunitconversion, addunitvals)
+            #newunitconversion = np.append(oldunitconversion, addunitvals)
 
             # Construct the G-matrices
             U, s, Vh = sl.svd(newM)
@@ -1690,7 +1690,7 @@ class ptaPulsar(object):
         else:
             newM = oldMmat.copy()
             newptmdescription = np.array(oldptmdescription)
-            newunitconversion = np.array(oldunitconversion)
+            #newunitconversion = np.array(oldunitconversion)
             newptmpars = oldptmpars.copy()
 
             if oldGmat is not None:
@@ -1702,7 +1702,7 @@ class ptaPulsar(object):
                 newGc = U[:, :(newM.shape[1])].copy()
 
 
-        return newM, newG, newGc, newptmpars, map(str, newptmdescription), newunitconversion
+        return newM, newG, newGc, newptmpars, map(str, newptmdescription)
 
     """
     Consgtructs a new modified design matrix by deleting some columns from it.
@@ -1711,7 +1711,7 @@ class ptaPulsar(object):
     @param delpars:     Names of the parameters/columns that need to be deleted.
     
     @return (list):     Return the elements: (newM, newG, newGc,
-                        newptmpars, newptmdescription, newunitconversion)
+                        newptmpars, newptmdescription)
                         in order: the new design matrix, the new G-matrix, the
                         new co-Gmatrix (orthogonal complement), the new values
                         of the timing model parameters, the new descriptions of
@@ -1720,14 +1720,13 @@ class ptaPulsar(object):
     """
     def delFromDesignMatrix(self, delpars, \
             oldMmat=None, oldGmat=None, oldGcmat=None, \
-            oldptmpars=None, oldptmdescription=None, \
-            oldunitconversion=None):
+            oldptmpars=None, oldptmdescription=None):
         if oldMmat is None:
             oldMmat = self.Mmat
         if oldptmdescription is None:
             oldptmdescription = self.ptmdescription
-        if oldunitconversion is None:
-            oldunitconversion = self.unitconversion
+        #if oldunitconversion is None:
+        #    oldunitconversion = self.unitconversion
         if oldptmpars is None:
             oldptmpars = self.ptmpars
         if oldGmat is None:
@@ -1753,7 +1752,7 @@ class ptaPulsar(object):
             # We have actually deleted some parameters
             newM = oldMmat[:, indkeep]
             newptmdescription = np.array(oldptmdescription)[indkeep]
-            newunitconversion = np.array(oldunitconversion)[indkeep]
+            #newunitconversion = np.array(oldunitconversion)[indkeep]
             newptmpars = oldptmpars[indkeep]
 
             # Construct the G-matrices
@@ -1763,12 +1762,12 @@ class ptaPulsar(object):
         else:
             newM = oldMmat.copy()
             newptmdescription = np.array(oldptmdescription)
-            newunitconversion = oldunitconversion.copy()
+            #newunitconversion = oldunitconversion.copy()
             newptmpars = oldptmpars.copy()
             newG = oldGmat.copy()
             newGc = oldGcmat.copy()
 
-        return newM, newG, newGc, newptmpars, map(str, newptmdescription), newunitconversion
+        return newM, newG, newGc, newptmpars, map(str, newptmdescription)
 
 
     """
@@ -1798,9 +1797,9 @@ class ptaPulsar(object):
     def getModifiedDesignMatrix(self, addDMQSD=False, addQSD=False, \
             removeJumps=False, removeAll=False):
         
-        (newM, newG, newGc, newptmpars, newptmdescription, newunitconversion) = \
+        (newM, newG, newGc, newptmpars, newptmdescription) = \
                 (self.Mmat, self.Gmat, self.Gcmat, self.ptmpars, \
-                self.ptmdescription, self.unitconversion)
+                self.ptmdescription)
 
         # DM and QSD parameter names
         dmaddes = ['DM', 'DM1', 'DM2']
@@ -1817,9 +1816,9 @@ class ptaPulsar(object):
 
         # Add those parameters
         if len(addpar) > 0:
-            (newM, newG, newGc, newptmpars, newptmdescription, newunitconversion) = \
+            (newM, newG, newGc, newptmpars, newptmdescription) = \
                     self.addToDesignMatrix(addpar, newM, newG, newGc, \
-                    newptmpars, newptmdescription, newunitconversion, \
+                    newptmpars, newptmdescription, \
                     noWarning=True)
 
         # See whether some parameters need to be deleted
@@ -1832,11 +1831,11 @@ class ptaPulsar(object):
 
         # Delete those parameters
         if len(delpar) > 0:
-            (newM, newG, newGc, newptmpars, newptmdescription, newunitconversion) = \
+            (newM, newG, newGc, newptmpars, newptmdescription) = \
                     self.delFromDesignMatrix(delpar, newM, newG, newGc, \
-                    newptmpars, newptmdescription, newunitconversion)
+                    newptmpars, newptmdescription)
 
-        return newM, newG, newGc, newptmpars, newptmdescription, newunitconversion
+        return newM, newG, newGc, newptmpars, newptmdescription
 
 
 
@@ -1847,7 +1846,7 @@ class ptaPulsar(object):
     #       for that. It should have a field with 'DM' in it.
     def addDMQuadratic(self):
         self.Mmat, self.Gmat, self.Gcmat, self.ptmpars, \
-                self.ptmdescription, self.unitconversion = \
+                self.ptmdescription = \
                 self.getModifiedDesignMatrix(addDMQSD=True, removeJumps=False)
 
 
@@ -2151,7 +2150,7 @@ class ptaPulsar(object):
         elif compression == 'qsd':
             # Only include (DM)QSD in the G-matrix. The other parameters can be
             # handled numerically with 'lineartimingmodel' signals
-            (newM, newG, newGc, newptmpars, newptmdescription, newunitconversion) = \
+            (newM, newG, newGc, newptmpars, newptmdescription) = \
                     self.getModifiedDesignMatrix(removeAll=True)
             self.Hmat = newG
             self.Hcmat = newGc
@@ -2160,7 +2159,7 @@ class ptaPulsar(object):
         elif compression == 'timingmodel':
             tmpardel = self.getNewTimingModelParameterList(keep=False, tmpars=tmpars)
 
-            (newM, newG, newGc, newptmpars, newptmdescription, newunitconversion) = \
+            (newM, newG, newGc, newptmpars, newptmdescription) = \
                     self.delFromDesignMatrix(tmpardel)
             self.Hmat = newG
             self.Hcmat = newGc
@@ -3649,12 +3648,11 @@ class ptaLikelihood(object):
     @param pstart:      Typical start position for the parameters
     @param parid:       The identifiers (as used in par-file) that identify
                         which parameters are included
-    @param unitconversion:  The unit conversion factor for the timing model
     """
     def addSignalTimingModel(self, signal, linear=True):
         # Assert that all the correct keys are there...
         keys = ['pulsarind', 'stype', 'corr', 'bvary', 'parid', \
-                'pmin', 'pmax', 'pwidth', 'pstart', 'parindex', 'unitconversion']
+                'pmin', 'pmax', 'pwidth', 'pstart', 'parindex']
         if not all(k in signal for k in keys):
             raise ValueError("ERROR: Not all signal keys are present in TimingModel signal. Keys: {0}. Required: {1}".format(signal.keys(), keys))
 
@@ -3859,7 +3857,9 @@ class ptaLikelihood(object):
             incAniGWB=False, anigwbModel='powerlaw', lAniGWB=1, \
             incBWM=False, \
             incTimingModel=False, nonLinear=False, \
-            varyEfac=True, incEquad=False, separateEfacs=False, \
+            varyEfac=True, incEquad=False, \
+            separateCEquads=False, separateEquads=False, \
+            separateEfacs=False, \
             incCEquad=False, \
             incJitter=False, \
             incSingleFreqNoise=False, \
@@ -3937,34 +3937,66 @@ class ptaLikelihood(object):
                 signals.append(newsignal)
 
             if incEquad:
-                newsignal = OrderedDict({
-                    "stype":"equad",
-                    "corr":"single",
-                    "pulsarind":ii,
-                    "flagname":"pulsarname",
-                    "flagvalue":m2psr.name,
-                    "bvary":[True],
-                    "pmin":[-10.0],
-                    "pmax":[-4.0],
-                    "pwidth":[0.1],
-                    "pstart":[-8.0]
-                    })
-                signals.append(newsignal)
+                if separateEquads:
+                    for flagval in uflagvals:
+                        newsignal = OrderedDict({
+                            "stype":"equad",
+                            "corr":"single",
+                            "pulsarind":ii,
+                            "flagname":"efacequad",
+                            "flagvalue":flagval,
+                            "bvary":[True],
+                            "pmin":[-10.0],
+                            "pmax":[-4.0],
+                            "pwidth":[0.1],
+                            "pstart":[-8.0]
+                            })
+                        signals.append(newsignal)
+                else:
+                    newsignal = OrderedDict({
+                        "stype":"equad",
+                        "corr":"single",
+                        "pulsarind":ii,
+                        "flagname":"pulsarname",
+                        "flagvalue":m2psr.name,
+                        "bvary":[True],
+                        "pmin":[-10.0],
+                        "pmax":[-4.0],
+                        "pwidth":[0.1],
+                        "pstart":[-8.0]
+                        })
+                    signals.append(newsignal)
 
             if incCEquad or incJitter:
-                newsignal = OrderedDict({
-                    "stype":"jitter",
-                    "corr":"single",
-                    "pulsarind":ii,
-                    "flagname":"pulsarname",
-                    "flagvalue":m2psr.name,
-                    "bvary":[True],
-                    "pmin":[-10.0],
-                    "pmax":[-4.0],
-                    "pwidth":[0.1],
-                    "pstart":[-8.0]
-                    })
-                signals.append(newsignal)
+                if separateCEquads:
+                    for flagval in uflagvals:
+                        newsignal = OrderedDict({
+                            "stype":"jitter",
+                            "corr":"single",
+                            "pulsarind":ii,
+                            "flagname":"efacequad",
+                            "flagvalue":flagval,
+                            "bvary":[True],
+                            "pmin":[-10.0],
+                            "pmax":[-4.0],
+                            "pwidth":[0.1],
+                            "pstart":[-8.0]
+                            })
+                        signals.append(newsignal)
+                else:
+                    newsignal = OrderedDict({
+                        "stype":"jitter",
+                        "corr":"single",
+                        "pulsarind":ii,
+                        "flagname":"pulsarname",
+                        "flagvalue":m2psr.name,
+                        "bvary":[True],
+                        "pmin":[-10.0],
+                        "pmax":[-4.0],
+                        "pwidth":[0.1],
+                        "pstart":[-8.0]
+                        })
+                    signals.append(newsignal)
 
                 # If compression 
                 if compression != 'average' and compression != 'avefrequencies' \
@@ -4103,7 +4135,7 @@ class ptaLikelihood(object):
                         if not np.all(s > 0):
                             raise ValueError("Sigi singular according to SVD")
                         Sigma = np.dot(Vh.T, np.dot(np.diag(1.0/s), U.T))
-                    tmperrs = np.sqrt(np.diag(Sigma)) * m2psr.unitconversion
+                    tmperrs = np.sqrt(np.diag(Sigma))
                     #tmperrs = m2psr.ptmparerrs
                     tmpest = m2psr.ptmpars
 
@@ -4132,7 +4164,6 @@ class ptaLikelihood(object):
                 pmax = []
                 pwidth = []
                 pstart = []
-                unitconversion = []
                 for jj, parid in enumerate(m2psr.ptmdescription):
                     if not parid in newptmdescription:
                         parids += [parid]
@@ -4150,7 +4181,6 @@ class ptaLikelihood(object):
                             pmax += [150.0 * tmperrs[jj] + tmpest[jj]]
                             pwidth += [(pmax[-1]-pmin[-1])/20.0]
                         pstart += [tmpest[jj]]
-                        unitconversion += [m2psr.unitconversion[jj]]
 
                 if nonLinear:
                     stype = 'nonlineartimingmodel'
@@ -4166,8 +4196,7 @@ class ptaLikelihood(object):
                     "pmax":pmax,
                     "pwidth":pwidth,
                     "pstart":pstart,
-                    "parid":parids,
-                    "unitconversion":unitconversion
+                    "parid":parids
                     })
                 signals.append(newsignal)
 
@@ -4366,8 +4395,8 @@ class ptaLikelihood(object):
             signals[-1]['pmax'] = map(float, signals[-1]['pmax'])
             signals[-1]['pstart'] = map(float, signals[-1]['pstart'])
             signals[-1]['pwidth'] = map(float, signals[-1]['pwidth'])
-            if 'unitconversion' in signals[-1]:
-                signals[-1]['unitconversion'] = map(float, signals[-1]['unitconversion'])
+            #if 'unitconversion' in signals[-1]:
+            #    signals[-1]['unitconversion'] = map(float, signals[-1]['unitconversion'])
 
         modeldict = OrderedDict({
             "file version":2013.12,
@@ -4862,7 +4891,6 @@ class ptaLikelihood(object):
             #else:
             m2psr.Nvec[:] = 0
             m2psr.Jvec[:] = 0
-            m2psr.Qamp = 0
 
         if selection is None:
             selection = np.array([1]*len(self.ptasignals), dtype=np.bool)
@@ -4900,8 +4928,6 @@ class ptaLikelihood(object):
                         pequadsqr = 10**(2*parameters[m2signal['parindex']])
                     else:
                         pequadsqr = 10**(2*m2signal['pstart'][0])
-
-                    psr.Qamp = pequadsqr
 
                     if incJitter:
                         """ # No longer do it this way
@@ -5150,7 +5176,7 @@ class ptaLikelihood(object):
                     # residuals = M * pars
                     self.ptapsrs[pp].detresiduals -= \
                             np.dot(self.ptapsrs[pp].Mmat[:,ind], \
-                            (sparameters-m2signal['pstart']) / m2signal['unitconversion'])
+                            (sparameters-m2signal['pstart']) # / m2signal['unitconversion'])
 
                 elif m2signal['stype'] == 'nonlineartimingmodel':
                     # The t2psr libstempo object has to be set. Assume it is.
@@ -5595,7 +5621,7 @@ class ptaLikelihood(object):
             GtFtot.append(psr.GtF)
             GtDtot.append(psr.GtD)
             GtUtot.append(psr.GtU)
-            uvec = np.append(uvec, np.ones(len(psr.avetoas))*psr.Qamp)
+            uvec = np.append(uvec, psr.Jvec)
 
             self.Gr[gindex:gindex+ng] = np.dot(self.ptapsrs[ii].Hmat.T, self.ptapsrs[ii].detresiduals)
 
@@ -6076,7 +6102,7 @@ class ptaLikelihood(object):
 
 
             UPhiU = np.dot(self.ptapsrs[0].UtF, np.dot(self.Phi, self.ptapsrs[0].UtF.T))
-            Phi = UPhiU + self.ptapsrs[0].Qamp * np.eye(len(self.ptapsrs[0].avetoas))
+            Phi = UPhiU + np.diag(self.ptapsrs[0].Jvec)
 
             if len(self.Thetavec) > 0:
                 #UThetaU = np.dot(self.ptapsrs[0].UtD, (self.Thetavec * self.ptapsrs[0].UtD).T)
@@ -6217,7 +6243,7 @@ class ptaLikelihood(object):
             #PhiU = ( * self.ptapsrs[ii].AGU.T).T
 
             UPhiU = np.dot(self.ptapsrs[0].UtFF, np.dot(self.Phi, self.ptapsrs[0].UtFF.T))
-            Phi = UPhiU + self.ptapsrs[0].Qamp * np.eye(len(self.ptapsrs[0].avetoas))
+            Phi = UPhiU + np.diag(self.ptapsrs[0].Jvec)
 
             #PhiLD = np.sum(np.log(np.diag(Phi)))
             #Phiinv = np.diag(1.0 / np.diag(Phi))
@@ -7447,7 +7473,7 @@ class ptaLikelihood(object):
             # Include jitter
             qvec = np.array([])
             for pp, psr in enumerate(self.ptapsrs):
-                qvec = np.append(qvec, [psr.Qamp]*len(psr.avetoas))
+                qvec = np.append(qvec, psr.Jvec)
 
             if totU.shape[1] == len(qvec):
                 Cov += np.dot(totU, (qvec * totU).T)
@@ -7643,7 +7669,7 @@ class ptaLikelihood(object):
             # Include jitter
             qvec = np.array([])
             for pp, psr in enumerate(self.ptapsrs):
-                qvec = np.append(qvec, [psr.Qamp]*len(psr.avetoas))
+                qvec = np.append(qvec, psr.Jvec)
             Cov += np.dot(totU, (qvec * totU).T)
 
         # Create the projected covariance matrix, and decompose it
@@ -7774,8 +7800,9 @@ class ptaLikelihood(object):
             if len(self.getSignalNumbersFromDict(self.ptasignals, \
                     stype='jitter', corr='single', psrind=pp)) > 0:
                 Cfull[nindex:nindex+nobs, nindex:nindex+nobs] += \
-                        np.dot(psr.Umat, np.dot(psr.Qamp * np.eye(psr.Umat.shape[1]), \
-                        psr.Umat.T))
+                        np.dot(psr.Umat, (psr.Jvec * psr.Umat).T)
+                #        np.dot(psr.Umat, np.dot(psr.Qamp * np.eye(psr.Umat.shape[1]), \
+                #        psr.Umat.T))
 
             # To get the adjusted design matrix, we need to jump through hoops.
             # TODO: put this in a separate function!
@@ -7869,7 +7896,7 @@ class ptaLikelihood(object):
             ind = np.array(ind, dtype=np.bool)
 
             # The new, adjusted timing model parameters updates are then:
-            tmpdelta = chi[index:index+np.sum(ind)] * psr.unitconversion[ind]
+            tmpdelta = chi[index:index+np.sum(ind)]   # * psr.unitconversion[ind]
 
             # Update the analytically included timing model parameters
             psr.ptmpars[ind] += tmpdelta
