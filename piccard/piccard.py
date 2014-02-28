@@ -5551,12 +5551,13 @@ class ptaLikelihood(object):
                         for cc, col in enumerate(psr.Umat.T):
                             u = (col == 1.0)
                             l = np.sum(u)
-                            mat = np.ones((l, l)) * psr.Jvec[cc]
-                            mat[range(l), range(l)] += psr.Nvec[u]
-                            cf = sl.cho_factor(mat)
+                            ji = 1.0 / psr.Jvec[cc]
+                            ni = 1.0 / psr.Nvec[u]
+                            beta = 1.0 / (np.sum(ni) + ji)
+                            Ni = np.diag(ni) - beta * np.outer(ni, ni)
 
-                            Nir[u] = sl.cho_solve(cf, psr.detresiduals[u])
-                            NiGc[u, :] = sl.cho_solve(cf, psr.Hocmat[u, :])
+                            Nir[u] = np.dot(Ni, psr.detresiduals[u])
+                            NiGc[u, :] = np.dot(Ni, psr.Hocmat[u, :])
                     else:
                         Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
                         NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Hocmat.T).T
@@ -5797,7 +5798,7 @@ class ptaLikelihood(object):
                 self.FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = \
                         np.dot(psr.AGF.T, NGGF)
             else:
-                if np.sum(psr.Jvec) > 0:
+                if np.sum(psr.Jvec) > 0 and False:
                     Nir = np.zeros(len(psr.detresiduals))
                     NiGc = np.zeros(psr.Hcmat.shape)
                     NiF = np.zeros(psr.Fmat.shape)
@@ -5805,13 +5806,14 @@ class ptaLikelihood(object):
                     for cc, col in enumerate(psr.Umat.T):
                         u = (col == 1.0)
                         l = np.sum(u)
-                        mat = np.ones((l, l)) * psr.Jvec[cc]
-                        mat[range(l), range(l)] += psr.Nvec[u]
-                        cf = sl.cho_factor(mat)
+                        ji = 1.0 / psr.Jvec[cc]
+                        ni = 1.0 / psr.Nvec[u]
+                        beta = 1.0 / (np.sum(ni) + ji)
+                        Ni = np.diag(ni) - beta * np.outer(ni, ni)
 
-                        Nir[u] = sl.cho_solve(cf, psr.detresiduals[u])
-                        NiGc[u, :] = sl.cho_solve(cf, psr.Hcmat[u, :])
-                        NiF[u, :] = sl.cho_solve(cf, psr.Fmat[u, :])
+                        Nir[u] = np.dot(Ni, psr.detresiduals[u])
+                        NiGc[u, :] = np.dot(Ni, psr.Hcmat[u, :])
+                        NiF[u, :] = np.dot(Ni, psr.Fmat[u, :])
                 else:
                     Nir = psr.detresiduals / psr.Nvec
                     NiGc = ((1.0/psr.Nvec) * psr.Hcmat.T).T
@@ -5930,13 +5932,14 @@ class ptaLikelihood(object):
                     for cc, col in enumerate(psr.Umat.T):
                         u = (col == 1.0)
                         l = np.sum(u)
-                        mat = np.ones((l, l)) * psr.Jvec[cc]
-                        mat[range(l), range(l)] += psr.Nvec[u]
-                        cf = sl.cho_factor(mat)
+                        ji = 1.0 / psr.Jvec[cc]
+                        ni = 1.0 / psr.Nvec[u]
+                        beta = 1.0 / (np.sum(ni) + ji)
+                        Ni = np.diag(ni) - beta * np.outer(ni, ni)
 
-                        Nir[u] = sl.cho_solve(cf, psr.detresiduals[u])
-                        NiGc[u, :] = sl.cho_solve(cf, psr.Hcmat[u, :])
-                        NiF[u, :] = sl.cho_solve(cf, psr.Fmat[u, :])
+                        Nir[u] = np.dot(Ni, psr.detresiduals[u])
+                        NiGc[u, :] = np.dot(Ni, psr.Hcmat[u, :])
+                        NiF[u, :] = np.dot(Ni, psr.Fmat[u, :])
                 else:
                     Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
                     NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Hcmat.T).T
@@ -6344,13 +6347,14 @@ class ptaLikelihood(object):
                     for cc, col in enumerate(psr.Umat.T):
                         u = (col == 1.0)
                         l = np.sum(u)
-                        mat = np.ones((l, l)) * psr.Jvec[cc]
-                        mat[range(l), range(l)] += psr.Nvec[u]
-                        cf = sl.cho_factor(mat)
+                        ji = 1.0 / psr.Jvec[cc]
+                        ni = 1.0 / psr.Nvec[u]
+                        beta = 1.0 / (np.sum(ni) + ji)
+                        Ni = np.diag(ni) - beta * np.outer(ni, ni)
 
-                        Nir[u] = sl.cho_solve(cf, psr.detresiduals[u])
-                        NiGc[u, :] = sl.cho_solve(cf, psr.Hcmat[u, :])
-                        NiE[u, :] = sl.cho_solve(cf, psr.Emat[u, :])
+                        Nir[u] = np.dot(Ni, psr.detresiduals[u])
+                        NiGc[u, :] = np.dot(Ni, psr.Hcmat[u, :])
+                        NiE[u, :] = np.dot(Ni, psr.Emat[u, :])
                 else:
                     Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
                     NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Hcmat.T).T
@@ -6500,13 +6504,14 @@ class ptaLikelihood(object):
                     for cc, col in enumerate(psr.Umat.T):
                         u = (col == 1.0)
                         l = np.sum(u)
-                        mat = np.ones((l, l)) * psr.Jvec[cc]
-                        mat[range(l), range(l)] += psr.Nvec[u]
-                        cf = sl.cho_factor(mat)
+                        ji = 1.0 / psr.Jvec[cc]
+                        ni = 1.0 / psr.Nvec[u]
+                        beta = 1.0 / (np.sum(ni) + ji)
+                        Ni = np.diag(ni) - beta * np.outer(ni, ni)
 
-                        Nir[u] = sl.cho_solve(cf, psr.detresiduals[u])
-                        NiGc[u, :] = sl.cho_solve(cf, psr.Hcmat[u, :])
-                        NiE[u, :] = sl.cho_solve(cf, psr.Emat[u, :])
+                        Nir[u] = np.dot(Ni, psr.detresiduals[u])
+                        NiGc[u, :] = np.dot(Ni, psr.Hcmat[u, :])
+                        NiE[u, :] = np.dot(Ni, psr.Emat[u, :])
                 else:
                     Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
                     NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Hcmat.T).T
