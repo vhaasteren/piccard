@@ -55,9 +55,12 @@ except ImportError:
 
 # In order to keep the dictionary in order
 try:
-    from collections import OrderedDict
+    try:
+        from collections import OrderedDict
+    except ImportError:
+        from ordereddict import OrderedDict
 except ImportError:
-    from ordereddict import OrderedDict
+    OrderedDict = dict
 
 
 # Some constants used in Piccard
