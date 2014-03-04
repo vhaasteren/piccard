@@ -2284,8 +2284,8 @@ class ptaPulsar(object):
 
         # Next we'll need the G-matrices, and the compression matrices.
         U, s, Vh = sl.svd(self.Mmat)
-        self.Gmat = U[:, self.Mmat.shape[1]:].copy()
-        self.Gcmat = U[:, :self.Mmat.shape[1]].copy()
+        self.Gmat = U[:, self.Mmat.shape[1]:]
+        self.Gcmat = U[:, :self.Mmat.shape[1]]
 
         # Construct the compression matrix
         if tmsigpars is None:
