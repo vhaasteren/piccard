@@ -4385,6 +4385,8 @@ class ptaLikelihood(object):
             # Delete a few redundant quantities
             if 'Nvec' in signals[-1]:
                 del signals[-1]['Nvec']
+            if 'Jvec' in signals[-1]:
+                del signals[-1]['Jvec']
             if 'corrmat' in signals[-1]:
                 del signals[-1]['corrmat']
             if 'aniCorr' in signals[-1]:
