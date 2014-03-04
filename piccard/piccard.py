@@ -1451,7 +1451,8 @@ class ptaPulsar(object):
     avetoas = None          
     SFdmmat = None         # Fdmmatrix for the dm frequency lines
     #FFdmmat = None         # Total of SFdmmatrix and Fdmmat
-    Dmat = None
+    #Dmat = None
+    Dvec = None
     DF = None
     DSF = None
     DFF = None              # Total of DF and DSF
@@ -1532,7 +1533,8 @@ class ptaPulsar(object):
         self.Umat = None
         self.Uimat = None
         self.avetoas = None
-        self.Dmat = None
+        #self.Dmat = None
+        self.Dvec = None
         self.DF = None
         self.Ffreqs = None
         self.SFfreqs = None
@@ -2253,13 +2255,15 @@ class ptaPulsar(object):
         # Create the Fourier design matrices for DM variations
         if ndmf > 0:
             (self.Fdmmat, self.Fdmfreqs) = fourierdesignmatrix(self.toas, 2*ndmf, Tmax)
-            self.Dmat = np.diag(pic_DMk / (self.freqs**2))
+            #self.Dmat = np.diag(pic_DMk / (self.freqs**2))
+            self.Dvec = pic_DMk / (self.freqs**2)
             #self.DF = np.dot(self.Dmat, self.Fdmmat)
-            self.DF = (np.diag(self.Dmat) * self.Fdmmat.T).T
+            self.DF = (self.Dvec * self.Fdmmat.T).T
         else:
             self.Fdmmat = np.zeros((len(self.freqs), 0))
             self.Fdmfreqs = np.zeros(0)
-            self.Dmat = np.diag(pic_DMk / (self.freqs**2))
+            #self.Dmat = np.diag(pic_DMk / (self.freqs**2))
+            self.Dvec = pic_DMk / (self.freqs**2)
             self.DF = np.zeros((len(self.freqs), 0))
 
         # Create the dailay averaged residuals
@@ -2274,7 +2278,8 @@ class ptaPulsar(object):
             h5df.addData(self.name, 'pic_Ffreqs', self.Ffreqs)
             h5df.addData(self.name, 'pic_Fdmmat', self.Fdmmat)
             h5df.addData(self.name, 'pic_Fdmfreqs', self.Fdmfreqs)
-            h5df.addData(self.name, 'pic_Dmat', self.Dmat)
+            #h5df.addData(self.name, 'pic_Dmat', self.Dmat)
+            h5df.addData(self.name, 'pic_Dvec', self.Dvec)
             h5df.addData(self.name, 'pic_DF', self.DF)
 
             h5df.addData(self.name, 'pic_avetoas', self.avetoas)
@@ -2797,7 +2802,8 @@ class ptaPulsar(object):
             self.FFmat = np.append(self.Fmat, self.SFmat, axis=1)
             self.SFfreqs = np.log10(np.array([sfreqs, sfreqs]).T.flatten())
             self.SFdmfreqs = np.log10(np.array([sdmfreqs, sdmfreqs]).T.flatten())
-            self.DSF = np.dot(self.Dmat, self.SFdmmat)
+            #self.DSF = np.dot(self.Dmat, self.SFdmmat)
+            self.DSF = (self.Dvec * self.SFdmmat.T).T
             self.DFF = np.append(self.DF, self.DSF, axis=1)
 
             GtFF = np.dot(self.Hmat.T, self.FFmat)
@@ -2964,7 +2970,8 @@ class ptaPulsar(object):
             self.AGF = np.array(h5df.getData(self.name, 'pic_AGF', dontread=memsave))
             self.AoGF = np.array(h5df.getData(self.name, 'pic_AoGF', dontread=memsave))
             self.Fdmmat = np.array(h5df.getData(self.name, 'pic_Fdmmat', dontread=memsave))
-            self.Dmat = np.array(h5df.getData(self.name, 'pic_Dmat', dontread=memsave))
+            #self.Dmat = np.array(h5df.getData(self.name, 'pic_Dmat', dontread=memsave))
+            self.Dvec = np.array(h5df.getData(self.name, 'pic_Dvec', dontread=memsave))
             self.DF = np.array(h5df.getData(self.name, 'pic_DF', dontread=memsave))
             self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat', dontread=memsave))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
@@ -3022,7 +3029,8 @@ class ptaPulsar(object):
             self.AoGD = np.array(h5df.getData(self.name, 'pic_AoGD', dontread=memsave))
             self.AoGE = np.array(h5df.getData(self.name, 'pic_AoGE', dontread=memsave))
             self.Fdmmat = np.array(h5df.getData(self.name, 'pic_Fdmmat', dontread=memsave))
-            self.Dmat = np.array(h5df.getData(self.name, 'pic_Dmat', dontread=memsave))
+            #self.Dmat = np.array(h5df.getData(self.name, 'pic_Dmat', dontread=memsave))
+            self.Dvec = np.array(h5df.getData(self.name, 'pic_Dvec', dontread=memsave))
             self.DF = np.array(h5df.getData(self.name, 'pic_DF', dontread=memsave))
             self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat', dontread=memsave))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
@@ -3048,7 +3056,8 @@ class ptaPulsar(object):
             self.AoGD = np.array(h5df.getData(self.name, 'pic_AoGD', dontread=memsave))
             self.AoGE = np.array(h5df.getData(self.name, 'pic_AoGE', dontread=memsave))
             self.Fdmmat = np.array(h5df.getData(self.name, 'pic_Fdmmat', dontread=memsave))
-            self.Dmat = np.array(h5df.getData(self.name, 'pic_Dmat'))
+            #self.Dmat = np.array(h5df.getData(self.name, 'pic_Dmat'))
+            self.Dvec = np.array(h5df.getData(self.name, 'pic_Dvec'))
             self.DF = np.array(h5df.getData(self.name, 'pic_DF'))
             self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat'))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
@@ -3091,7 +3100,8 @@ class ptaPulsar(object):
             self.AoGE = np.array(h5df.getData(self.name, 'pic_AoGE', dontread=memsave))
             self.AoGEE = np.array(h5df.getData(self.name, 'pic_AoGEE', dontread=memsave))
             self.Fdmmat = np.array(h5df.getData(self.name, 'pic_Fdmmat', dontread=memsave))
-            self.Dmat = np.array(h5df.getData(self.name, 'pic_Dmat'))
+            #self.Dmat = np.array(h5df.getData(self.name, 'pic_Dmat'))
+            self.Dvec = np.array(h5df.getData(self.name, 'pic_Dvec'))
             self.DF = np.array(h5df.getData(self.name, 'pic_DF'))
             self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat'))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
@@ -5504,7 +5514,8 @@ class ptaLikelihood(object):
 
             if m2psr.dmfrequencyLinesAdded > 0:
                 m2psr.SFdmmat = singleFreqFourierModes(m2psr.toas, 10**m2psr.SFdmfreqs[::2])
-                m2psr.DSF = np.dot(m2psr.Dmat, m2psr.SFdmmat)
+                #m2psr.DSF = np.dot(m2psr.Dmat, m2psr.SFdmmat)
+                m2psr.DSF = (m2psr.Dvec * m2psr.SFdmmat.T).T
                 m2psr.DFF = np.append(m2psr.DF, m2psr.DSF, axis=1)
 
                 m2psr.EEmat = np.append(m2psr.FFmat, m2psr.DF, axis=1)
@@ -7602,7 +7613,8 @@ class ptaLikelihood(object):
         Cov = np.zeros((np.sum(self.npobs), np.sum(self.npobs)))
         totFmat = np.zeros((np.sum(self.npobs), np.sum(self.npf)))
         totDFmat = np.zeros((np.sum(self.npobs), np.sum(self.npf)))
-        totDmat = np.zeros((np.sum(self.npobs), np.sum(self.npobs)))
+        #totDmat = np.zeros((np.sum(self.npobs), np.sum(self.npobs)))
+        totDvec = np.zeros(np.sum(self.npobs))
         totG = np.zeros((np.sum(self.npobs), np.sum(self.npgs)))
         totU = np.zeros((np.sum(self.npobs), np.sum(self.npu)))
         tottoas = np.zeros(np.sum(self.npobs))
@@ -7629,7 +7641,8 @@ class ptaLikelihood(object):
 
             if self.ptapsrs[ii].DF is not None:
                 totDFmat[nindex:nindex+npobs, fdmindex:fdmindex+nppfdm] = self.ptapsrs[ii].DF
-                totDmat[nindex:nindex+npobs, nindex:nindex+npobs] = self.ptapsrs[ii].Dmat
+                #totDmat[nindex:nindex+npobs, nindex:nindex+npobs] = self.ptapsrs[ii].Dmat
+                totDvec[nindex:nindex+npobs] = self.ptapsrs[ii].Dvec
 
             totG[nindex:nindex+npobs, gindex:gindex+npgs] = self.ptapsrs[ii].Hmat
             totU[nindex:nindex+npobs, uindex:uindex+npus] = self.ptapsrs[ii].Umat
@@ -7673,7 +7686,7 @@ class ptaLikelihood(object):
 
 
             Cov += Cr
-            Cov += np.dot(totDmat, np.dot(Cdm, totDmat))
+            Cov += np.dot(np.diag(totDvec), np.dot(Cdm, np.diag(totDvec)))
         else:
             # Construct them from Phi/Theta
             Cov += np.dot(totFmat, np.dot(self.Phi, totFmat.T))
@@ -8023,7 +8036,7 @@ class ptaLikelihood(object):
                     self.ptapsrs[ii].Fmat
             totG[nindex:nindex+nobs, gindex:gindex+ngs] = self.ptapsrs[ii].Gmat
             totGr[gindex:gindex+ngs] = self.ptapsrs[ii].Gr
-            totDvec[nindex:nindex+nobs] = np.diag(self.ptapsrs[ii].Dmat)
+            totDvec[nindex:nindex+nobs] = self.ptapsrs[ii].Dvec
 
             DF = self.ptapsrs[ii].DF
             GDF = np.dot(self.ptapsrs[ii].Gmat.T, self.ptapsrs[ii].DF)
@@ -8142,7 +8155,7 @@ class ptaLikelihood(object):
                     self.ptapsrs[ii].Fmat
             totG[nindex:nindex+nobs, gindex:gindex+ngs] = self.ptapsrs[ii].Gmat
             totGr[gindex:gindex+ngs] = self.ptapsrs[ii].Gr
-            totDvec[nindex:nindex+nobs] = np.diag(self.ptapsrs[ii].Dmat)
+            totDvec[nindex:nindex+nobs] = self.ptapsrs[ii].Dvec
 
             totGFp[gindexp:gindexp+ngsp, findexp:findexp+2*nfreqp] = \
                     np.dot(predlikob.ptapsrs[ii].Gmat.T, predlikob.ptapsrs[ii].Fmat)
@@ -8150,7 +8163,7 @@ class ptaLikelihood(object):
                     predlikob.ptapsrs[ii].Fmat
             totGp[nindexp:nindexp+nobsp, gindexp:gindexp+ngsp] = predlikob.ptapsrs[ii].Gmat
             totGrp[gindexp:gindexp+ngsp] = predlikob.ptapsrs[ii].Gr
-            totDvecp[nindexp:nindexp+nobsp] = np.diag(predlikob.ptapsrs[ii].Dmat)
+            totDvecp[nindexp:nindexp+nobsp] = predlikob.ptapsrs[ii].Dvec
 
             DF = self.ptapsrs[ii].DF
             GDF = np.dot(self.ptapsrs[ii].Gmat.T, self.ptapsrs[ii].DF)
