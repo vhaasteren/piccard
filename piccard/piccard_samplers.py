@@ -663,8 +663,10 @@ Given a likelihood object, a 'normal' MCMC chain file, and an output directory,
 this function spits out a lot of plots summarising all relevant results of the
 MCMC
 """
-def makeresultsplot(likob, chainfilename, outputdir):
-    (logpost, loglik, emceechain, labels) = ReadMCMCFile(chainfilename)
+def makeresultsplot(likob, chainfilename, outputdir, burnin=0, thin=1):
+    (logpost_long, loglik_long, emceechain_long, labels) = ReadMCMCFile(chainfilename)
+    (logpost, loglik, emceechain) = (logpost_long[burnin::thin], \
+            loglik[burnin::thin], emceechain_long[burnin::thin])
     if logpost is None:
         lp = loglik
     else:
