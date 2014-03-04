@@ -243,7 +243,10 @@ class DataFile(object):
             del dataGroup[field]
 
         if not field in dataGroup:
-            dataGroup.create_dataset(field, data=data)
+            try:
+                dataGroup.create_dataset(field, data=data)
+            except ValueError:
+                print("WARNING: h5py too old to support empty arrays")
 
     """
     Add a pulsar to the HDF5 file, given a tempo2 par and tim file. No extra
