@@ -378,7 +378,9 @@ class DataFile(object):
             nobs = len(t2pulsar.toas())
             pulsarname = map(str, [t2pulsar.name] * nobs)
 
-            if "sys" in flagGroup:
+            if "group" in flagGroup:
+                efacequad = map('-'.join, zip(pulsarname, flagGroup['group']))
+            elif "sys" in flagGroup:
                 efacequad = map('-'.join, zip(pulsarname, flagGroup['sys']))
             elif "be" in flagGroup:
                 efacequad = map('-'.join, zip(pulsarname, flagGroup['be']))
