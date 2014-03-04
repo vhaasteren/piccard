@@ -2323,25 +2323,26 @@ class ptaPulsar(object):
 
             # For two-component noise
             # Diagonalise GtEfG (HtEfH)
-            GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
-            self.Wvec, self.Amat = sl.eigh(GtNeG)
-            self.AGr = np.dot(self.Amat.T, self.Gr)
-            self.AGF = np.dot(self.Amat.T, self.GtF)
+            if self.twoComponentNoise:
+                GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
+                self.Wvec, self.Amat = sl.eigh(GtNeG)
+                self.AGr = np.dot(self.Amat.T, self.Gr)
+                self.AGF = np.dot(self.Amat.T, self.GtF)
 
-            # Diagonalise HotEfHo
-            if self.Homat.shape[1] > 0:
-                HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
-                self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+                # Diagonalise HotEfHo
+                if self.Homat.shape[1] > 0:
+                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
 
-                Hor = np.dot(self.Homat.T, self.residuals)
-                HotF = np.dot(self.Homat.T, self.Fmat)
-                self.AoGr = np.dot(self.Aomat.T, Hor)
-                self.AoGF = np.dot(self.Aomat.T, HotF)
-            else:
-                self.Wovec = np.zeros(0)
-                self.Aomat = np.zeros((self.Amat.shape[0], 0))
-                self.AoGr = np.zeros((0, self.Gr.shape[0]))
-                self.AoGF = np.zeros((0, self.GtF.shape[1]))
+                    Hor = np.dot(self.Homat.T, self.residuals)
+                    HotF = np.dot(self.Homat.T, self.Fmat)
+                    self.AoGr = np.dot(self.Aomat.T, Hor)
+                    self.AoGF = np.dot(self.Aomat.T, HotF)
+                else:
+                    self.Wovec = np.zeros(0)
+                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                    self.AoGF = np.zeros((0, self.GtF.shape[1]))
 
             if write != 'none':
                 # Write all these quantities to the HDF5 file
@@ -2349,14 +2350,16 @@ class ptaPulsar(object):
                 h5df.addData(self.name, 'pic_GGr', self.GGr)
                 h5df.addData(self.name, 'pic_GtF', self.GtF)
                 h5df.addData(self.name, 'pic_GtD', self.GtD)
-                h5df.addData(self.name, 'pic_Wvec', self.Wvec)
-                h5df.addData(self.name, 'pic_Amat', self.Amat)
-                h5df.addData(self.name, 'pic_AGr', self.AGr)
-                h5df.addData(self.name, 'pic_AGF', self.AGF)
-                h5df.addData(self.name, 'pic_Wovec', self.Wovec)
-                h5df.addData(self.name, 'pic_Aomat', self.Aomat)
-                h5df.addData(self.name, 'pic_AoGr', self.AoGr)
-                h5df.addData(self.name, 'pic_AoGF', self.AoGF)
+
+                if self.twoComponentNoise:
+                    h5df.addData(self.name, 'pic_Wvec', self.Wvec)
+                    h5df.addData(self.name, 'pic_Amat', self.Amat)
+                    h5df.addData(self.name, 'pic_AGr', self.AGr)
+                    h5df.addData(self.name, 'pic_AGF', self.AGF)
+                    h5df.addData(self.name, 'pic_Wovec', self.Wovec)
+                    h5df.addData(self.name, 'pic_Aomat', self.Aomat)
+                    h5df.addData(self.name, 'pic_AoGr', self.AoGr)
+                    h5df.addData(self.name, 'pic_AoGF', self.AoGF)
 
         if likfunc == 'mark2' or write == 'all':
             self.Gr = np.dot(self.Hmat.T, self.residuals)
@@ -2364,32 +2367,34 @@ class ptaPulsar(object):
 
             # For two-component noise
             # Diagonalise GtEfG
-            GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
-            self.Wvec, self.Amat = sl.eigh(GtNeG)
-            self.AGr = np.dot(self.Amat.T, self.Gr)
+            if self.twoComponentNoise:
+                GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
+                self.Wvec, self.Amat = sl.eigh(GtNeG)
+                self.AGr = np.dot(self.Amat.T, self.Gr)
 
-            # Diagonalise HotEfHo
-            if self.Homat.shape[1] > 0:
-                HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
-                self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+                # Diagonalise HotEfHo
+                if self.Homat.shape[1] > 0:
+                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
 
-                Hor = np.dot(self.Homat.T, self.residuals)
-                self.AoGr = np.dot(self.Aomat.T, Hor)
-            else:
-                self.Wovec = np.zeros(0)
-                self.Aomat = np.zeros((self.Amat.shape[0], 0))
-                self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                    Hor = np.dot(self.Homat.T, self.residuals)
+                    self.AoGr = np.dot(self.Aomat.T, Hor)
+                else:
+                    self.Wovec = np.zeros(0)
+                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
 
             if write != 'none':
                 # Write all these quantities to the HDF5 file
                 h5df.addData(self.name, 'pic_Gr', self.Gr)
                 h5df.addData(self.name, 'pic_GGr', self.GGr)
-                h5df.addData(self.name, 'pic_Wvec', self.Wvec)
-                h5df.addData(self.name, 'pic_Amat', self.Amat)
-                h5df.addData(self.name, 'pic_AGr', self.AGr)
-                h5df.addData(self.name, 'pic_Wovec', self.Wovec)
-                h5df.addData(self.name, 'pic_Aomat', self.Aomat)
-                h5df.addData(self.name, 'pic_AoGr', self.AoGr)
+                if self.twoComponentNoise:
+                    h5df.addData(self.name, 'pic_Wvec', self.Wvec)
+                    h5df.addData(self.name, 'pic_Amat', self.Amat)
+                    h5df.addData(self.name, 'pic_AGr', self.AGr)
+                    h5df.addData(self.name, 'pic_Wovec', self.Wovec)
+                    h5df.addData(self.name, 'pic_Aomat', self.Aomat)
+                    h5df.addData(self.name, 'pic_AoGr', self.AoGr)
 
         if likfunc == 'mark3' or likfunc == 'mark3fa' or write == 'all':
             self.Gr = np.dot(self.Hmat.T, self.residuals)
@@ -2398,40 +2403,43 @@ class ptaPulsar(object):
 
             # For two-component noise
             # Diagonalise GtEfG
-            GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
-            self.Wvec, self.Amat = sl.eigh(GtNeG)
+            if self.twoComponentNoise:
+                GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
+                self.Wvec, self.Amat = sl.eigh(GtNeG)
 
-            self.AGr = np.dot(self.Amat.T, self.Gr)
-            self.AGF = np.dot(self.Amat.T, self.GtF)
+                self.AGr = np.dot(self.Amat.T, self.Gr)
+                self.AGF = np.dot(self.Amat.T, self.GtF)
 
-            # Diagonalise HotEfHo
-            if self.Homat.shape[1] > 0:
-                HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
-                self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+                # Diagonalise HotEfHo
+                if self.Homat.shape[1] > 0:
+                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
 
-                Hor = np.dot(self.Homat.T, self.residuals)
-                HotF = np.dot(self.Homat.T, self.Fmat)
-                self.AoGr = np.dot(self.Aomat.T, Hor)
-                self.AoGF = np.dot(self.Aomat.T, HotF)
-            else:
-                self.Wovec = np.zeros(0)
-                self.Aomat = np.zeros((self.Amat.shape[0], 0))
-                self.AoGr = np.zeros((0, self.Gr.shape[0]))
-                self.AoGF = np.zeros((0, self.GtF.shape[1]))
+                    Hor = np.dot(self.Homat.T, self.residuals)
+                    HotF = np.dot(self.Homat.T, self.Fmat)
+                    self.AoGr = np.dot(self.Aomat.T, Hor)
+                    self.AoGF = np.dot(self.Aomat.T, HotF)
+                else:
+                    self.Wovec = np.zeros(0)
+                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                    self.AoGF = np.zeros((0, self.GtF.shape[1]))
 
             if write != 'none':
                 # Write all these quantities to the HDF5 file
                 h5df.addData(self.name, 'pic_Gr', self.Gr)
                 h5df.addData(self.name, 'pic_GGr', self.GGr)
                 h5df.addData(self.name, 'pic_GtF', self.GtF)
-                h5df.addData(self.name, 'pic_Wvec', self.Wvec)
-                h5df.addData(self.name, 'pic_Amat', self.Amat)
-                h5df.addData(self.name, 'pic_AGr', self.AGr)
-                h5df.addData(self.name, 'pic_AGF', self.AGF)
-                h5df.addData(self.name, 'pic_Wovec', self.Wovec)
-                h5df.addData(self.name, 'pic_Aomat', self.Aomat)
-                h5df.addData(self.name, 'pic_AoGr', self.AoGr)
-                h5df.addData(self.name, 'pic_AoGF', self.AoGF)
+
+                if self.twoComponentNoise:
+                    h5df.addData(self.name, 'pic_Wvec', self.Wvec)
+                    h5df.addData(self.name, 'pic_Amat', self.Amat)
+                    h5df.addData(self.name, 'pic_AGr', self.AGr)
+                    h5df.addData(self.name, 'pic_AGF', self.AGF)
+                    h5df.addData(self.name, 'pic_Wovec', self.Wovec)
+                    h5df.addData(self.name, 'pic_Aomat', self.Aomat)
+                    h5df.addData(self.name, 'pic_AoGr', self.AoGr)
+                    h5df.addData(self.name, 'pic_AoGF', self.AoGF)
 
         if likfunc == 'mark4' or write == 'all':
             self.Gr = np.dot(self.Hmat.T, self.residuals)
@@ -2444,26 +2452,27 @@ class ptaPulsar(object):
 
             # For two-component noise
             # Diagonalise GtEfG
-            GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
-            self.Wvec, self.Amat = sl.eigh(GtNeG)
+            if self.twoComponentNoise:
+                GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
+                self.Wvec, self.Amat = sl.eigh(GtNeG)
 
-            self.AGr = np.dot(self.Amat.T, self.Gr)
-            self.AGU = np.dot(self.Amat.T, GtU)
+                self.AGr = np.dot(self.Amat.T, self.Gr)
+                self.AGU = np.dot(self.Amat.T, GtU)
 
-            # Diagonalise HotEfHo
-            if self.Homat.shape[1] > 0:
-                HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
-                self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+                # Diagonalise HotEfHo
+                if self.Homat.shape[1] > 0:
+                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
 
-                Hor = np.dot(self.Homat.T, self.residuals)
-                HotU = np.dot(self.Homat.T, self.Umat)
-                self.AoGr = np.dot(self.Aomat.T, Hor)
-                self.AoGU = np.dot(self.Aomat.T, HotU)
-            else:
-                self.Wovec = np.zeros(0)
-                self.Aomat = np.zeros((self.Amat.shape[0], 0))
-                self.AoGr = np.zeros((0, self.Gr.shape[0]))
-                self.AoGU = np.zeros((0, GtU.shape[1]))
+                    Hor = np.dot(self.Homat.T, self.residuals)
+                    HotU = np.dot(self.Homat.T, self.Umat)
+                    self.AoGr = np.dot(self.Aomat.T, Hor)
+                    self.AoGU = np.dot(self.Aomat.T, HotU)
+                else:
+                    self.Wovec = np.zeros(0)
+                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                    self.AoGU = np.zeros((0, GtU.shape[1]))
 
             if write != 'none':
                 # Write all these quantities to the HDF5 file
@@ -2471,14 +2480,16 @@ class ptaPulsar(object):
                 h5df.addData(self.name, 'pic_GGr', self.GGr)
                 h5df.addData(self.name, 'pic_GtF', self.GtF)
                 h5df.addData(self.name, 'pic_UtF', self.UtF)
-                h5df.addData(self.name, 'pic_Wvec', self.Wvec)
-                h5df.addData(self.name, 'pic_Amat', self.Amat)
-                h5df.addData(self.name, 'pic_AGr', self.AGr)
-                h5df.addData(self.name, 'pic_AGU', self.AGU)
-                h5df.addData(self.name, 'pic_Wovec', self.Wovec)
-                h5df.addData(self.name, 'pic_Aomat', self.Aomat)
-                h5df.addData(self.name, 'pic_AoGr', self.AoGr)
-                h5df.addData(self.name, 'pic_AoGU', self.AoGU)
+
+                if self.twoComponentNoise:
+                    h5df.addData(self.name, 'pic_Wvec', self.Wvec)
+                    h5df.addData(self.name, 'pic_Amat', self.Amat)
+                    h5df.addData(self.name, 'pic_AGr', self.AGr)
+                    h5df.addData(self.name, 'pic_AGU', self.AGU)
+                    h5df.addData(self.name, 'pic_Wovec', self.Wovec)
+                    h5df.addData(self.name, 'pic_Aomat', self.Aomat)
+                    h5df.addData(self.name, 'pic_AoGr', self.AoGr)
+                    h5df.addData(self.name, 'pic_AoGU', self.AoGU)
 
 
         if likfunc == 'mark4ln' or write == 'all':
@@ -2501,26 +2512,27 @@ class ptaPulsar(object):
 
             # For two-component noise
             # Diagonalise GtEfG
-            GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
-            self.Wvec, self.Amat = sl.eigh(GtNeG)
+            if self.twoComponentNoise:
+                GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
+                self.Wvec, self.Amat = sl.eigh(GtNeG)
 
-            self.AGr = np.dot(self.Amat.T, self.Gr)
-            self.AGU = np.dot(self.Amat.T, GtU)
+                self.AGr = np.dot(self.Amat.T, self.Gr)
+                self.AGU = np.dot(self.Amat.T, GtU)
 
-            # Diagonalise HotEfHo
-            if self.Homat.shape[1] > 0:
-                HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
-                self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+                # Diagonalise HotEfHo
+                if self.Homat.shape[1] > 0:
+                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
 
-                Hor = np.dot(self.Homat.T, self.residuals)
-                HotU = np.dot(self.Homat.T, self.Umat)
-                self.AoGr = np.dot(self.Aomat.T, Hor)
-                self.AoGU = np.dot(self.Aomat.T, HotU)
-            else:
-                self.Wovec = np.zeros(0)
-                self.Aomat = np.zeros((self.Amat.shape[0], 0))
-                self.AoGr = np.zeros((0, self.Gr.shape[0]))
-                self.AoGU = np.zeros((0, GtU.shape[1]))
+                    Hor = np.dot(self.Homat.T, self.residuals)
+                    HotU = np.dot(self.Homat.T, self.Umat)
+                    self.AoGr = np.dot(self.Aomat.T, Hor)
+                    self.AoGU = np.dot(self.Aomat.T, HotU)
+                else:
+                    self.Wovec = np.zeros(0)
+                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                    self.AoGU = np.zeros((0, GtU.shape[1]))
 
             if write != 'none':
                 # Write all these quantities to the HDF5 file
@@ -2532,14 +2544,16 @@ class ptaPulsar(object):
                 h5df.addData(self.name, 'pic_FFmat', self.FFmat)
                 h5df.addData(self.name, 'pic_SFfreqs', self.SFfreqs)
                 h5df.addData(self.name, 'pic_UtFF', self.UtFF)
-                h5df.addData(self.name, 'pic_Wvec', self.Wvec)
-                h5df.addData(self.name, 'pic_Amat', self.Amat)
-                h5df.addData(self.name, 'pic_AGr', self.AGr)
-                h5df.addData(self.name, 'pic_AGU', self.AGU)
-                h5df.addData(self.name, 'pic_Wovec', self.Wovec)
-                h5df.addData(self.name, 'pic_Aomat', self.Aomat)
-                h5df.addData(self.name, 'pic_AoGr', self.AoGr)
-                h5df.addData(self.name, 'pic_AoGU', self.AoGU)
+
+                if self.twoComponentNoise:
+                    h5df.addData(self.name, 'pic_Wvec', self.Wvec)
+                    h5df.addData(self.name, 'pic_Amat', self.Amat)
+                    h5df.addData(self.name, 'pic_AGr', self.AGr)
+                    h5df.addData(self.name, 'pic_AGU', self.AGU)
+                    h5df.addData(self.name, 'pic_Wovec', self.Wovec)
+                    h5df.addData(self.name, 'pic_Aomat', self.Aomat)
+                    h5df.addData(self.name, 'pic_AoGr', self.AoGr)
+                    h5df.addData(self.name, 'pic_AoGU', self.AoGU)
 
         if likfunc == 'mark6' or likfunc == 'mark6fa' or write == 'all':
             # Red noise
@@ -2559,34 +2573,35 @@ class ptaPulsar(object):
 
             # For two-component noise
             # Diagonalise GtEfG
-            GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
-            self.Wvec, self.Amat = sl.eigh(GtNeG)
+            if self.twoComponentNoise:
+                GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
+                self.Wvec, self.Amat = sl.eigh(GtNeG)
 
-            self.AGr = np.dot(self.Amat.T, self.Gr)
-            self.AGF = np.dot(self.Amat.T, self.GtF)
-            self.AGD = np.dot(self.Amat.T, GtD)
-            self.AGE = np.dot(self.Amat.T, GtE)
+                self.AGr = np.dot(self.Amat.T, self.Gr)
+                self.AGF = np.dot(self.Amat.T, self.GtF)
+                self.AGD = np.dot(self.Amat.T, GtD)
+                self.AGE = np.dot(self.Amat.T, GtE)
 
-            # Diagonalise HotEfHo
-            if self.Homat.shape[1] > 0:
-                HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
-                self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+                # Diagonalise HotEfHo
+                if self.Homat.shape[1] > 0:
+                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
 
-                Hor = np.dot(self.Homat.T, self.residuals)
-                HotF = np.dot(self.Homat.T, self.Fmat)
-                HotD = np.dot(self.Homat.T, self.DF)
-                HotE = np.dot(self.Homat.T, self.Emat)
-                self.AoGr = np.dot(self.Aomat.T, Hor)
-                self.AoGF = np.dot(self.Aomat.T, HotF)
-                self.AoGD = np.dot(self.Aomat.T, HotD)
-                self.AoGE = np.dot(self.Aomat.T, HotE)
-            else:
-                self.Wovec = np.zeros(0)
-                self.Aomat = np.zeros((self.Amat.shape[0], 0))
-                self.AoGr = np.zeros((0, self.Gr.shape[0]))
-                self.AoGF = np.zeros((0, self.GtF.shape[1]))
-                self.AoGD = np.zeros((0, GtD.shape[1]))
-                self.AoGE = np.zeros((0, GtE.shape[1]))
+                    Hor = np.dot(self.Homat.T, self.residuals)
+                    HotF = np.dot(self.Homat.T, self.Fmat)
+                    HotD = np.dot(self.Homat.T, self.DF)
+                    HotE = np.dot(self.Homat.T, self.Emat)
+                    self.AoGr = np.dot(self.Aomat.T, Hor)
+                    self.AoGF = np.dot(self.Aomat.T, HotF)
+                    self.AoGD = np.dot(self.Aomat.T, HotD)
+                    self.AoGE = np.dot(self.Aomat.T, HotE)
+                else:
+                    self.Wovec = np.zeros(0)
+                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                    self.AoGF = np.zeros((0, self.GtF.shape[1]))
+                    self.AoGD = np.zeros((0, GtD.shape[1]))
+                    self.AoGE = np.zeros((0, GtE.shape[1]))
 
             if write != 'none':
                 # Write all these quantities to the HDF5 file
@@ -2596,18 +2611,20 @@ class ptaPulsar(object):
                 h5df.addData(self.name, 'pic_GGtD', self.GGtD)
                 h5df.addData(self.name, 'pic_Emat', self.Emat)
                 h5df.addData(self.name, 'pic_GGtE', self.GGtE)
-                h5df.addData(self.name, 'pic_Wvec', self.Wvec)
-                h5df.addData(self.name, 'pic_Amat', self.Amat)
-                h5df.addData(self.name, 'pic_AGr', self.AGr)
-                h5df.addData(self.name, 'pic_AGF', self.AGF)
-                h5df.addData(self.name, 'pic_AGD', self.AGD)
-                h5df.addData(self.name, 'pic_AGE', self.AGE)
-                h5df.addData(self.name, 'pic_Wovec', self.Wovec)
-                h5df.addData(self.name, 'pic_Aomat', self.Aomat)
-                h5df.addData(self.name, 'pic_AoGr', self.AoGr)
-                h5df.addData(self.name, 'pic_AoGF', self.AoGF)
-                h5df.addData(self.name, 'pic_AoGD', self.AoGD)
-                h5df.addData(self.name, 'pic_AoGE', self.AoGE)
+
+                if self.twoComponentNoise:
+                    h5df.addData(self.name, 'pic_Wvec', self.Wvec)
+                    h5df.addData(self.name, 'pic_Amat', self.Amat)
+                    h5df.addData(self.name, 'pic_AGr', self.AGr)
+                    h5df.addData(self.name, 'pic_AGF', self.AGF)
+                    h5df.addData(self.name, 'pic_AGD', self.AGD)
+                    h5df.addData(self.name, 'pic_AGE', self.AGE)
+                    h5df.addData(self.name, 'pic_Wovec', self.Wovec)
+                    h5df.addData(self.name, 'pic_Aomat', self.Aomat)
+                    h5df.addData(self.name, 'pic_AoGr', self.AoGr)
+                    h5df.addData(self.name, 'pic_AoGF', self.AoGF)
+                    h5df.addData(self.name, 'pic_AoGD', self.AoGD)
+                    h5df.addData(self.name, 'pic_AoGE', self.AoGE)
 
         if likfunc == 'mark7' or write == 'all':
             self.Gr = np.dot(self.Hmat.T, self.residuals)
@@ -2616,40 +2633,43 @@ class ptaPulsar(object):
 
             # For two-component noise
             # Diagonalise GtEfG
-            GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
-            self.Wvec, self.Amat = sl.eigh(GtNeG)
+            if self.twoComponentNoise:
+                GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
+                self.Wvec, self.Amat = sl.eigh(GtNeG)
 
-            self.AGr = np.dot(self.Amat.T, self.Gr)
-            self.AGF = np.dot(self.Amat.T, self.GtF)
+                self.AGr = np.dot(self.Amat.T, self.Gr)
+                self.AGF = np.dot(self.Amat.T, self.GtF)
 
-            # Diagonalise HotEfHo
-            if self.Homat.shape[1] > 0:
-                HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
-                self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+                # Diagonalise HotEfHo
+                if self.Homat.shape[1] > 0:
+                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
 
-                Hor = np.dot(self.Homat.T, self.residuals)
-                HotF = np.dot(self.Homat.T, self.Fmat)
-                self.AoGr = np.dot(self.Aomat.T, Hor)
-                self.AoGF = np.dot(self.Aomat.T, HotF)
-            else:
-                self.Wovec = np.zeros(0)
-                self.Aomat = np.zeros((self.Amat.shape[0], 0))
-                self.AoGr = np.zeros((0, self.Gr.shape[0]))
-                self.AoGF = np.zeros((0, self.GtF.shape[1]))
+                    Hor = np.dot(self.Homat.T, self.residuals)
+                    HotF = np.dot(self.Homat.T, self.Fmat)
+                    self.AoGr = np.dot(self.Aomat.T, Hor)
+                    self.AoGF = np.dot(self.Aomat.T, HotF)
+                else:
+                    self.Wovec = np.zeros(0)
+                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                    self.AoGF = np.zeros((0, self.GtF.shape[1]))
 
             if write != 'none':
                 # Write all these quantities to the HDF5 file
                 h5df.addData(self.name, 'pic_Gr', self.Gr)
                 h5df.addData(self.name, 'pic_GGr', self.GGr)
                 h5df.addData(self.name, 'pic_GtF', self.GtF)
-                h5df.addData(self.name, 'pic_Wvec', self.Wvec)
-                h5df.addData(self.name, 'pic_Amat', self.Amat)
-                h5df.addData(self.name, 'pic_AGr', self.AGr)
-                h5df.addData(self.name, 'pic_AGF', self.AGF)
-                h5df.addData(self.name, 'pic_Wovec', self.Wovec)
-                h5df.addData(self.name, 'pic_Aomat', self.Aomat)
-                h5df.addData(self.name, 'pic_AoGr', self.AoGr)
-                h5df.addData(self.name, 'pic_AoGF', self.AoGF)
+
+                if self.twoComponentNoise:
+                    h5df.addData(self.name, 'pic_Wvec', self.Wvec)
+                    h5df.addData(self.name, 'pic_Amat', self.Amat)
+                    h5df.addData(self.name, 'pic_AGr', self.AGr)
+                    h5df.addData(self.name, 'pic_AGF', self.AGF)
+                    h5df.addData(self.name, 'pic_Wovec', self.Wovec)
+                    h5df.addData(self.name, 'pic_Aomat', self.Aomat)
+                    h5df.addData(self.name, 'pic_AoGr', self.AoGr)
+                    h5df.addData(self.name, 'pic_AoGF', self.AoGF)
 
         if likfunc == 'mark8' or write == 'all':
             self.Gr = np.dot(self.Hmat.T, self.residuals)
@@ -2667,34 +2687,35 @@ class ptaPulsar(object):
 
             # For two-component noise
             # Diagonalise GtEfG
-            GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
-            self.Wvec, self.Amat = sl.eigh(GtNeG)
+            if self.twoComponentNoise:
+                GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
+                self.Wvec, self.Amat = sl.eigh(GtNeG)
 
-            self.AGr = np.dot(self.Amat.T, self.Gr)
-            self.AGF = np.dot(self.Amat.T, self.GtF)
-            self.AGD = np.dot(self.Amat.T, GtD)
-            self.AGE = np.dot(self.Amat.T, GtE)
+                self.AGr = np.dot(self.Amat.T, self.Gr)
+                self.AGF = np.dot(self.Amat.T, self.GtF)
+                self.AGD = np.dot(self.Amat.T, GtD)
+                self.AGE = np.dot(self.Amat.T, GtE)
 
-            # Diagonalise HotEfHo
-            if self.Homat.shape[1] > 0:
-                HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
-                self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+                # Diagonalise HotEfHo
+                if self.Homat.shape[1] > 0:
+                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
 
-                Hor = np.dot(self.Homat.T, self.residuals)
-                HotF = np.dot(self.Homat.T, self.Fmat)
-                HotD = np.dot(self.Homat.T, self.DF)
-                HotE = np.dot(self.Homat.T, self.Emat)
-                self.AoGr = np.dot(self.Aomat.T, Hor)
-                self.AoGF = np.dot(self.Aomat.T, HotF)
-                self.AoGD = np.dot(self.Aomat.T, HotD)
-                self.AoGE = np.dot(self.Aomat.T, HotE)
-            else:
-                self.Wovec = np.zeros(0)
-                self.Aomat = np.zeros((self.Amat.shape[0], 0))
-                self.AoGr = np.zeros((0, self.Gr.shape[0]))
-                self.AoGF = np.zeros((0, self.GtF.shape[1]))
-                self.AoGD = np.zeros((0, GtD.shape[1]))
-                self.AoGE = np.zeros((0, GtE.shape[1]))
+                    Hor = np.dot(self.Homat.T, self.residuals)
+                    HotF = np.dot(self.Homat.T, self.Fmat)
+                    HotD = np.dot(self.Homat.T, self.DF)
+                    HotE = np.dot(self.Homat.T, self.Emat)
+                    self.AoGr = np.dot(self.Aomat.T, Hor)
+                    self.AoGF = np.dot(self.Aomat.T, HotF)
+                    self.AoGD = np.dot(self.Aomat.T, HotD)
+                    self.AoGE = np.dot(self.Aomat.T, HotE)
+                else:
+                    self.Wovec = np.zeros(0)
+                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                    self.AoGF = np.zeros((0, self.GtF.shape[1]))
+                    self.AoGD = np.zeros((0, GtD.shape[1]))
+                    self.AoGE = np.zeros((0, GtE.shape[1]))
 
             if write != 'none':
                 # Write all these quantities to the HDF5 file
@@ -2704,18 +2725,20 @@ class ptaPulsar(object):
                 h5df.addData(self.name, 'pic_GGtD', self.GGtD)
                 h5df.addData(self.name, 'pic_Emat', self.Emat)
                 h5df.addData(self.name, 'pic_GGtE', self.GGtE)
-                h5df.addData(self.name, 'pic_Wvec', self.Wvec)
-                h5df.addData(self.name, 'pic_Amat', self.Amat)
-                h5df.addData(self.name, 'pic_AGr', self.AGr)
-                h5df.addData(self.name, 'pic_AGF', self.AGF)
-                h5df.addData(self.name, 'pic_AGD', self.AGD)
-                h5df.addData(self.name, 'pic_AGE', self.AGE)
-                h5df.addData(self.name, 'pic_Wovec', self.Wovec)
-                h5df.addData(self.name, 'pic_Aomat', self.Aomat)
-                h5df.addData(self.name, 'pic_AoGr', self.AoGr)
-                h5df.addData(self.name, 'pic_AoGF', self.AoGF)
-                h5df.addData(self.name, 'pic_AoGD', self.AoGD)
-                h5df.addData(self.name, 'pic_AoGE', self.AoGE)
+
+                if self.twoComponentNoise:
+                    h5df.addData(self.name, 'pic_Wvec', self.Wvec)
+                    h5df.addData(self.name, 'pic_Amat', self.Amat)
+                    h5df.addData(self.name, 'pic_AGr', self.AGr)
+                    h5df.addData(self.name, 'pic_AGF', self.AGF)
+                    h5df.addData(self.name, 'pic_AGD', self.AGD)
+                    h5df.addData(self.name, 'pic_AGE', self.AGE)
+                    h5df.addData(self.name, 'pic_Wovec', self.Wovec)
+                    h5df.addData(self.name, 'pic_Aomat', self.Aomat)
+                    h5df.addData(self.name, 'pic_AoGr', self.AoGr)
+                    h5df.addData(self.name, 'pic_AoGF', self.AoGF)
+                    h5df.addData(self.name, 'pic_AoGD', self.AoGD)
+                    h5df.addData(self.name, 'pic_AoGE', self.AoGE)
 
         if likfunc == 'mark9' or write == 'all':
             self.Gr = np.dot(self.Hmat.T, self.residuals)
@@ -2733,30 +2756,31 @@ class ptaPulsar(object):
 
             # For two-component noise model
             # Diagonalise GtEfG
-            GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
-            self.Wvec, self.Amat = sl.eigh(GtNeG)
+            if self.twoComponentNoise:
+                GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
+                self.Wvec, self.Amat = sl.eigh(GtNeG)
 
-            self.AGr = np.dot(self.Amat.T, self.Gr)
-            self.AGF = np.dot(self.Amat.T, self.GtF)
-            self.AGFF = np.dot(self.Amat.T, GtFF)
+                self.AGr = np.dot(self.Amat.T, self.Gr)
+                self.AGF = np.dot(self.Amat.T, self.GtF)
+                self.AGFF = np.dot(self.Amat.T, GtFF)
 
-            # Diagonalise HotEfHo
-            if self.Homat.shape[1] > 0:
-                HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
-                self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+                # Diagonalise HotEfHo
+                if self.Homat.shape[1] > 0:
+                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
 
-                Hor = np.dot(self.Homat.T, self.residuals)
-                HotF = np.dot(self.Homat.T, self.Fmat)
-                HotFF = np.dot(self.Homat.T, self.FFmat)
-                self.AoGr = np.dot(self.Aomat.T, Hor)
-                self.AoGF = np.dot(self.Aomat.T, HotF)
-                self.AoGFF = np.dot(self.Aomat.T, HotFF)
-            else:
-                self.Wovec = np.zeros(0)
-                self.Aomat = np.zeros((self.Amat.shape[0], 0))
-                self.AoGr = np.zeros((0, self.Gr.shape[0]))
-                self.AoGF = np.zeros((0, self.GtF.shape[1]))
-                self.AoGFF = np.zeros((0, GtFF.shape[1]))
+                    Hor = np.dot(self.Homat.T, self.residuals)
+                    HotF = np.dot(self.Homat.T, self.Fmat)
+                    HotFF = np.dot(self.Homat.T, self.FFmat)
+                    self.AoGr = np.dot(self.Aomat.T, Hor)
+                    self.AoGF = np.dot(self.Aomat.T, HotF)
+                    self.AoGFF = np.dot(self.Aomat.T, HotFF)
+                else:
+                    self.Wovec = np.zeros(0)
+                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                    self.AoGF = np.zeros((0, self.GtF.shape[1]))
+                    self.AoGFF = np.zeros((0, GtFF.shape[1]))
 
             if write != 'none':
                 # Write all these quantities to the HDF5 file
@@ -2766,16 +2790,18 @@ class ptaPulsar(object):
                 h5df.addData(self.name, 'pic_SFmat', self.SFmat)
                 h5df.addData(self.name, 'pic_FFmat', self.FFmat)
                 h5df.addData(self.name, 'pic_SFfreqs', self.SFfreqs)
-                h5df.addData(self.name, 'pic_Wvec', self.Wvec)
-                h5df.addData(self.name, 'pic_Amat', self.Amat)
-                h5df.addData(self.name, 'pic_AGr', self.AGr)
-                h5df.addData(self.name, 'pic_AGF', self.AGF)
-                h5df.addData(self.name, 'pic_AGFF', self.AGFF)
-                h5df.addData(self.name, 'pic_Wovec', self.Wovec)
-                h5df.addData(self.name, 'pic_Aomat', self.Aomat)
-                h5df.addData(self.name, 'pic_AoGr', self.AoGr)
-                h5df.addData(self.name, 'pic_AoGF', self.AoGF)
-                h5df.addData(self.name, 'pic_AoGFF', self.AoGFF)
+
+                if self.twoComponentNoise:
+                    h5df.addData(self.name, 'pic_Wvec', self.Wvec)
+                    h5df.addData(self.name, 'pic_Amat', self.Amat)
+                    h5df.addData(self.name, 'pic_AGr', self.AGr)
+                    h5df.addData(self.name, 'pic_AGF', self.AGF)
+                    h5df.addData(self.name, 'pic_AGFF', self.AGFF)
+                    h5df.addData(self.name, 'pic_Wovec', self.Wovec)
+                    h5df.addData(self.name, 'pic_Aomat', self.Aomat)
+                    h5df.addData(self.name, 'pic_AoGr', self.AoGr)
+                    h5df.addData(self.name, 'pic_AoGF', self.AoGF)
+                    h5df.addData(self.name, 'pic_AoGFF', self.AoGFF)
 
         if likfunc == 'mark10' or write == 'all':
             self.Gr = np.dot(self.Hmat.T, self.residuals)
@@ -2814,44 +2840,45 @@ class ptaPulsar(object):
             
             # For two-component noise
             # Diagonalise GtEfG
-            GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
-            self.Wvec, self.Amat = sl.eigh(GtNeG)
+            if self.twoComponentNoise:
+                GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
+                self.Wvec, self.Amat = sl.eigh(GtNeG)
 
-            self.AGr = np.dot(self.Amat.T, self.Gr)
-            self.AGF = np.dot(self.Amat.T, self.GtF)
+                self.AGr = np.dot(self.Amat.T, self.Gr)
+                self.AGF = np.dot(self.Amat.T, self.GtF)
 
-            self.AGFF = np.dot(self.Amat.T, GtFF)
-            self.AGD = np.dot(self.Amat.T, GtD)
+                self.AGFF = np.dot(self.Amat.T, GtFF)
+                self.AGD = np.dot(self.Amat.T, GtD)
 
-            self.AGE = np.dot(self.Amat.T, GtE)
-            self.AGEE = np.dot(self.Amat.T, GtEE)
+                self.AGE = np.dot(self.Amat.T, GtE)
+                self.AGEE = np.dot(self.Amat.T, GtEE)
 
-            # Diagonalise HotEfHo
-            if self.Homat.shape[1] > 0:
-                HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
-                self.Wovec, self.Aomat = sl.eigh(HotNeHo)
+                # Diagonalise HotEfHo
+                if self.Homat.shape[1] > 0:
+                    HotNeHo = np.dot(self.Homat.T, ((self.toaerrs**2) * self.Homat.T).T)
+                    self.Wovec, self.Aomat = sl.eigh(HotNeHo)
 
-                Hor = np.dot(self.Homat.T, self.residuals)
-                HotF = np.dot(self.Homat.T, self.Fmat)
-                HotFF = np.dot(self.Homat.T, self.FFmat)
-                HotD = np.dot(self.Homat.T, self.DF)
-                HotE = np.dot(self.Homat.T, self.Emat)
-                HotEE = np.dot(self.Homat.T, self.EEmat)
-                self.AoGr = np.dot(self.Aomat.T, Hor)
-                self.AoGF = np.dot(self.Aomat.T, HotF)
-                self.AoGFF = np.dot(self.Aomat.T, HotFF)
-                self.AoGD = np.dot(self.Aomat.T, HotD)
-                self.AoGE = np.dot(self.Aomat.T, HotE)
-                self.AoGEE = np.dot(self.Aomat.T, HotEE)
-            else:
-                self.Wovec = np.zeros(0)
-                self.Aomat = np.zeros((self.Amat.shape[0], 0))
-                self.AoGr = np.zeros((0, self.Gr.shape[0]))
-                self.AoGF = np.zeros((0, self.GtF.shape[1]))
-                self.AoGFF = np.zeros((0, GtFF.shape[1]))
-                self.AoGD = np.zeros((0, GtD.shape[1]))
-                self.AoGE = np.zeros((0, GtE.shape[1]))
-                self.AoGEE = np.zeros((0, GtEE.shape[1]))
+                    Hor = np.dot(self.Homat.T, self.residuals)
+                    HotF = np.dot(self.Homat.T, self.Fmat)
+                    HotFF = np.dot(self.Homat.T, self.FFmat)
+                    HotD = np.dot(self.Homat.T, self.DF)
+                    HotE = np.dot(self.Homat.T, self.Emat)
+                    HotEE = np.dot(self.Homat.T, self.EEmat)
+                    self.AoGr = np.dot(self.Aomat.T, Hor)
+                    self.AoGF = np.dot(self.Aomat.T, HotF)
+                    self.AoGFF = np.dot(self.Aomat.T, HotFF)
+                    self.AoGD = np.dot(self.Aomat.T, HotD)
+                    self.AoGE = np.dot(self.Aomat.T, HotE)
+                    self.AoGEE = np.dot(self.Aomat.T, HotEE)
+                else:
+                    self.Wovec = np.zeros(0)
+                    self.Aomat = np.zeros((self.Amat.shape[0], 0))
+                    self.AoGr = np.zeros((0, self.Gr.shape[0]))
+                    self.AoGF = np.zeros((0, self.GtF.shape[1]))
+                    self.AoGFF = np.zeros((0, GtFF.shape[1]))
+                    self.AoGD = np.zeros((0, GtD.shape[1]))
+                    self.AoGE = np.zeros((0, GtE.shape[1]))
+                    self.AoGEE = np.zeros((0, GtEE.shape[1]))
 
             if write != 'none':
                 # Write all these quantities to the HDF5 file
@@ -2869,22 +2896,24 @@ class ptaPulsar(object):
                 h5df.addData(self.name, 'pic_DFF', self.DFF)
                 h5df.addData(self.name, 'pic_EEmat', self.EEmat)
                 h5df.addData(self.name, 'pic_GGtEE', self.GGtEE)
-                h5df.addData(self.name, 'pic_Wvec', self.Wvec)
-                h5df.addData(self.name, 'pic_Amat', self.Amat)
-                h5df.addData(self.name, 'pic_AGr', self.AGr)
-                h5df.addData(self.name, 'pic_AGF', self.AGF)
-                h5df.addData(self.name, 'pic_AGFF', self.AGFF)
-                h5df.addData(self.name, 'pic_AGD', self.AGD)
-                h5df.addData(self.name, 'pic_AGE', self.AGE)
-                h5df.addData(self.name, 'pic_AGEE', self.AGEE)
-                h5df.addData(self.name, 'pic_Wovec', self.Wovec)
-                h5df.addData(self.name, 'pic_Aomat', self.Aomat)
-                h5df.addData(self.name, 'pic_AoGr', self.AoGr)
-                h5df.addData(self.name, 'pic_AoGF', self.AoGF)
-                h5df.addData(self.name, 'pic_AoGFF', self.AoGFF)
-                h5df.addData(self.name, 'pic_AoGD', self.AoGD)
-                h5df.addData(self.name, 'pic_AoGE', self.AoGE)
-                h5df.addData(self.name, 'pic_AoGEE', self.AoGEE)
+
+                if self.twoComponentNoise:
+                    h5df.addData(self.name, 'pic_Wvec', self.Wvec)
+                    h5df.addData(self.name, 'pic_Amat', self.Amat)
+                    h5df.addData(self.name, 'pic_AGr', self.AGr)
+                    h5df.addData(self.name, 'pic_AGF', self.AGF)
+                    h5df.addData(self.name, 'pic_AGFF', self.AGFF)
+                    h5df.addData(self.name, 'pic_AGD', self.AGD)
+                    h5df.addData(self.name, 'pic_AGE', self.AGE)
+                    h5df.addData(self.name, 'pic_AGEE', self.AGEE)
+                    h5df.addData(self.name, 'pic_Wovec', self.Wovec)
+                    h5df.addData(self.name, 'pic_Aomat', self.Aomat)
+                    h5df.addData(self.name, 'pic_AoGr', self.AoGr)
+                    h5df.addData(self.name, 'pic_AoGF', self.AoGF)
+                    h5df.addData(self.name, 'pic_AoGFF', self.AoGFF)
+                    h5df.addData(self.name, 'pic_AoGD', self.AoGD)
+                    h5df.addData(self.name, 'pic_AoGE', self.AoGE)
+                    h5df.addData(self.name, 'pic_AoGEE', self.AoGEE)
 
 
 
@@ -2942,13 +2971,16 @@ class ptaPulsar(object):
         self.Hocmat = np.array(h5df.getData(self.name, 'pic_Hocmat'))
         self.Gr = np.array(h5df.getData(self.name, 'pic_Gr', dontread=memsave))
         self.GGr = np.array(h5df.getData(self.name, 'pic_GGr', dontread=memsave))
-        self.Wvec = np.array(h5df.getData(self.name, 'pic_Wvec'))
-        self.Wovec = np.array(h5df.getData(self.name, 'pic_Wovec'))
+        self.Wvec = np.array(h5df.getData(self.name, 'pic_Wvec',
+            dontread=(not self.twoComponentNoise)))
+        self.Wovec = np.array(h5df.getData(self.name, 'pic_Wovec',
+            dontread=(not self.twoComponentNoise)))
         self.Amat = np.array(h5df.getData(self.name, 'pic_Amat',
             dontread=(memsave and not self.twoComponentNoise)))
         self.Aomat = np.array(h5df.getData(self.name, 'pic_Aomat',
             dontread=(memsave and not self.twoComponentNoise)))
-        self.AoGr = np.array(h5df.getData(self.name, 'pic_AoGr'))
+        self.AoGr = np.array(h5df.getData(self.name, 'pic_AoGr',
+            dontread=(not self.twoComponentNoise)))
         self.Ffreqs = np.array(h5df.getData(self.name, 'pic_Ffreqs'))
         self.Fdmfreqs = np.array(h5df.getData(self.name, 'pic_Fdmfreqs'))
 
@@ -2966,9 +2998,12 @@ class ptaPulsar(object):
         if likfunc == 'mark1':
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF'))
             self.GtD = np.array(h5df.getData(self.name, 'pic_GtD'))
-            self.AGr = np.array(h5df.getData(self.name, 'pic_AGr', dontread=memsave))
-            self.AGF = np.array(h5df.getData(self.name, 'pic_AGF', dontread=memsave))
-            self.AoGF = np.array(h5df.getData(self.name, 'pic_AoGF', dontread=memsave))
+            self.AGr = np.array(h5df.getData(self.name, 'pic_AGr',
+                dontread=(memsave and not self.twoComponentNoise)))
+            self.AGF = np.array(h5df.getData(self.name, 'pic_AGF',
+                dontread=(memsave and not self.twoComponentNoise)))
+            self.AoGF = np.array(h5df.getData(self.name, 'pic_AoGF',
+                dontread=(memsave and not self.twoComponentNoise)))
             self.Fdmmat = np.array(h5df.getData(self.name, 'pic_Fdmmat', dontread=memsave))
             #self.Dmat = np.array(h5df.getData(self.name, 'pic_Dmat', dontread=memsave))
             self.Dvec = np.array(h5df.getData(self.name, 'pic_Dvec', dontread=memsave))
@@ -2977,23 +3012,30 @@ class ptaPulsar(object):
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
 
         if likfunc == 'mark2':
-            self.AGr = np.array(h5df.getData(self.name, 'pic_AGr'))
+            self.AGr = np.array(h5df.getData(self.name, 'pic_AGr',
+                dontread=(not self.twoComponentNoise)))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
 
         if likfunc == 'mark3' or likfunc == 'mark3fa':
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
-            self.AGr = np.array(h5df.getData(self.name, 'pic_AGr'))
-            self.AGF = np.array(h5df.getData(self.name, 'pic_AGF'))
-            self.AoGF = np.array(h5df.getData(self.name, 'pic_AoGF', dontread=memsave))
+            self.AGr = np.array(h5df.getData(self.name, 'pic_AGr',
+                dontread=(not self.twoComponentNoise)))
+            self.AGF = np.array(h5df.getData(self.name, 'pic_AGF',
+                dontread=(not self.twoComponentNoise)))
+            self.AoGF = np.array(h5df.getData(self.name, 'pic_AoGF',
+                dontread=(memsave and not self.twoComponentNoise)))
             self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat'))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
 
         if likfunc == 'mark4':
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
             self.UtF = np.array(h5df.getData(self.name, 'pic_UtF'))
-            self.AGr = np.array(h5df.getData(self.name, 'pic_AGr'))
-            self.AGU = np.array(h5df.getData(self.name, 'pic_AGU'))
-            self.AoGU = np.array(h5df.getData(self.name, 'pic_AoGU', dontread=memsave))
+            self.AGr = np.array(h5df.getData(self.name, 'pic_AGr',
+                dontread=(not self.twoComponentNoise)))
+            self.AGU = np.array(h5df.getData(self.name, 'pic_AGU',
+                dontread=(not self.twoComponentNoise)))
+            self.AoGU = np.array(h5df.getData(self.name, 'pic_AoGU',
+                dontread=(memsave and not self.twoComponentNoise)))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
             self.Umat = np.array(h5df.getData(self.name, 'pic_Umat'))
             self.Jweight = np.array(h5df.getData(self.name, 'pic_Jweight'))
@@ -3007,9 +3049,12 @@ class ptaPulsar(object):
             self.FFmat = np.array(h5df.getData(self.name, 'pic_FFmat', dontread=memsave))
             self.SFfreqs = np.array(h5df.getData(self.name, 'pic_SFfreqs'))
             self.UtFF = np.array(h5df.getData(self.name, 'pic_UtFF', dontread=memsave))
-            self.AGr = np.array(h5df.getData(self.name, 'pic_AGr'))
-            self.AGU = np.array(h5df.getData(self.name, 'pic_AGU'))
-            self.AoGU = np.array(h5df.getData(self.name, 'pic_AoGU', dontread=memsave))
+            self.AGr = np.array(h5df.getData(self.name, 'pic_AGr',
+                dontread=(not self.twoComponentNoise)))
+            self.AGU = np.array(h5df.getData(self.name, 'pic_AGU',
+                dontread=(not self.twoComponentNoise)))
+            self.AoGU = np.array(h5df.getData(self.name, 'pic_AoGU',
+                dontread=(memsave and not self.twoComponentNoise)))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
             self.Umat = np.array(h5df.getData(self.name, 'pic_Umat'))
             self.Jweight = np.array(h5df.getData(self.name, 'pic_Jweight'))
@@ -3021,13 +3066,20 @@ class ptaPulsar(object):
             self.GGtD = np.array(h5df.getData(self.name, 'pic_GGtD', dontread=memsave))
             self.Emat = np.array(h5df.getData(self.name, 'pic_Emat'))
             self.GGtE = np.array(h5df.getData(self.name, 'pic_GGtE', dontread=memsave))
-            self.AGr = np.array(h5df.getData(self.name, 'pic_AGr'))
-            self.AGF = np.array(h5df.getData(self.name, 'pic_AGF', dontread=memsave))
-            self.AGD = np.array(h5df.getData(self.name, 'pic_AGD', dontread=memsave))
-            self.AGE = np.array(h5df.getData(self.name, 'pic_AGE'))
-            self.AoGF = np.array(h5df.getData(self.name, 'pic_AoGF', dontread=memsave))
-            self.AoGD = np.array(h5df.getData(self.name, 'pic_AoGD', dontread=memsave))
-            self.AoGE = np.array(h5df.getData(self.name, 'pic_AoGE', dontread=memsave))
+            self.AGr = np.array(h5df.getData(self.name, 'pic_AGr',
+                dontread=(not self.twoComponentNoise)))
+            self.AGF = np.array(h5df.getData(self.name, 'pic_AGF',
+                dontread=(memsave and not self.twoComponentNoise)))
+            self.AGD = np.array(h5df.getData(self.name, 'pic_AGD',
+                dontread=(memsave and not self.twoComponentNoise)))
+            self.AGE = np.array(h5df.getData(self.name, 'pic_AGE',
+                dontread=(not self.twoComponentNoise)))
+            self.AoGF = np.array(h5df.getData(self.name, 'pic_AoGF',
+                dontread=(memsave and not self.twoComponentNoise)))
+            self.AoGD = np.array(h5df.getData(self.name, 'pic_AoGD',
+                dontread=(memsave and not self.twoComponentNoise)))
+            self.AoGE = np.array(h5df.getData(self.name, 'pic_AoGE',
+                dontread=(memsave and not self.twoComponentNoise)))
             self.Fdmmat = np.array(h5df.getData(self.name, 'pic_Fdmmat', dontread=memsave))
             #self.Dmat = np.array(h5df.getData(self.name, 'pic_Dmat', dontread=memsave))
             self.Dvec = np.array(h5df.getData(self.name, 'pic_Dvec', dontread=memsave))
@@ -3037,9 +3089,12 @@ class ptaPulsar(object):
 
         if likfunc == 'mark7':
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
-            self.AGr = np.array(h5df.getData(self.name, 'pic_AGr'))
-            self.AGF = np.array(h5df.getData(self.name, 'pic_AGF', dontread=memsave))
-            self.AoGF = np.array(h5df.getData(self.name, 'pic_AoGF', dontread=memsave))
+            self.AGr = np.array(h5df.getData(self.name, 'pic_AGr',
+                dontread=(not self.twoComponentNoise)))
+            self.AGF = np.array(h5df.getData(self.name, 'pic_AGF',
+                dontread=(memsave and not self.twoComponentNoise)))
+            self.AoGF = np.array(h5df.getData(self.name, 'pic_AoGF',
+                dontread=(memsave and not self.twoComponentNoise)))
             self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat'))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
 
@@ -3048,13 +3103,20 @@ class ptaPulsar(object):
             self.GGtD = np.array(h5df.getData(self.name, 'pic_GGtD', dontread=memsave))
             self.Emat = np.array(h5df.getData(self.name, 'pic_Emat', dontread=memsave))
             self.GGtE = np.array(h5df.getData(self.name, 'pic_GGtE', dontread=memsave))
-            self.AGr = np.array(h5df.getData(self.name, 'pic_AGr'))
-            self.AGF = np.array(h5df.getData(self.name, 'pic_AGF', dontread=memsave))
-            self.AGD = np.array(h5df.getData(self.name, 'pic_AGD', dontread=memsave))
-            self.AGE = np.array(h5df.getData(self.name, 'pic_AGE', dontread=memsave))
-            self.AoGF = np.array(h5df.getData(self.name, 'pic_AoGF', dontread=memsave))
-            self.AoGD = np.array(h5df.getData(self.name, 'pic_AoGD', dontread=memsave))
-            self.AoGE = np.array(h5df.getData(self.name, 'pic_AoGE', dontread=memsave))
+            self.AGr = np.array(h5df.getData(self.name, 'pic_AGr',
+                dontread=(not self.twoComponentNoise)))
+            self.AGF = np.array(h5df.getData(self.name, 'pic_AGF',
+                dontread=(memsave and not self.twoComponentNoise)))
+            self.AGD = np.array(h5df.getData(self.name, 'pic_AGD',
+                dontread=(memsave and not self.twoComponentNoise)))
+            self.AGE = np.array(h5df.getData(self.name, 'pic_AGE',
+                dontread=(memsave and not self.twoComponentNoise)))
+            self.AoGF = np.array(h5df.getData(self.name, 'pic_AoGF',
+                dontread=(memsave and not self.twoComponentNoise)))
+            self.AoGD = np.array(h5df.getData(self.name, 'pic_AoGD',
+                dontread=(memsave and not self.twoComponentNoise)))
+            self.AoGE = np.array(h5df.getData(self.name, 'pic_AoGE',
+                dontread=(memsave and not self.twoComponentNoise)))
             self.Fdmmat = np.array(h5df.getData(self.name, 'pic_Fdmmat', dontread=memsave))
             #self.Dmat = np.array(h5df.getData(self.name, 'pic_Dmat'))
             self.Dvec = np.array(h5df.getData(self.name, 'pic_Dvec'))
@@ -3067,11 +3129,16 @@ class ptaPulsar(object):
             self.SFmat = np.array(h5df.getData(self.name, 'pic_SFmat', dontread=memsave))
             self.FFmat = np.array(h5df.getData(self.name, 'pic_FFmat', dontread=memsave))
             self.SFfreqs = np.array(h5df.getData(self.name, 'pic_SFfreqs'))
-            self.AGr = np.array(h5df.getData(self.name, 'pic_AGr'))
-            self.AGF = np.array(h5df.getData(self.name, 'pic_AGF', dontread=memsave))
-            self.AGFF = np.array(h5df.getData(self.name, 'pic_AGFF'))
-            self.AoGF = np.array(h5df.getData(self.name, 'pic_AoGF', dontread=memsave))
-            self.AoGFF = np.array(h5df.getData(self.name, 'pic_AoGFF', dontread=memsave))
+            self.AGr = np.array(h5df.getData(self.name, 'pic_AGr',
+                dontread=(not self.twoComponentNoise)))
+            self.AGF = np.array(h5df.getData(self.name, 'pic_AGF',
+                dontread=(memsave and not self.twoComponentNoise)))
+            self.AGFF = np.array(h5df.getData(self.name, 'pic_AGFF',
+                dontread=(not self.twoComponentNoise)))
+            self.AoGF = np.array(h5df.getData(self.name, 'pic_AoGF',
+                dontread=(memsave and not self.twoComponentNoise)))
+            self.AoGFF = np.array(h5df.getData(self.name, 'pic_AoGFF',
+                dontread=(memsave and not self.twoComponentNoise)))
             self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat'))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
 
@@ -3088,17 +3155,28 @@ class ptaPulsar(object):
             self.DFF = np.array(h5df.getData(self.name, 'pic_DFF'))
             self.EEmat = np.array(h5df.getData(self.name, 'pic_EEmat'))
             self.GGtEE = np.array(h5df.getData(self.name, 'pic_GGtEE'))
-            self.AGr = np.array(h5df.getData(self.name, 'pic_AGr'))
-            self.AGF = np.array(h5df.getData(self.name, 'pic_AGF', dontread=memsave))
-            self.AGFF = np.array(h5df.getData(self.name, 'pic_AGFF'))
-            self.AGD = np.array(h5df.getData(self.name, 'pic_AGD', dontread=memsave))
-            self.AGE = np.array(h5df.getData(self.name, 'pic_AGE'))
-            self.AGEE = np.array(h5df.getData(self.name, 'pic_AGEE'))
-            self.AoGF = np.array(h5df.getData(self.name, 'pic_AoGF', dontread=memsave))
-            self.AoGFF = np.array(h5df.getData(self.name, 'pic_AoGFF', dontread=memsave))
-            self.AoGD = np.array(h5df.getData(self.name, 'pic_AoGD', dontread=memsave))
-            self.AoGE = np.array(h5df.getData(self.name, 'pic_AoGE', dontread=memsave))
-            self.AoGEE = np.array(h5df.getData(self.name, 'pic_AoGEE', dontread=memsave))
+            self.AGr = np.array(h5df.getData(self.name, 'pic_AGr',
+                dontread=(not self.twoComponentNoise)))
+            self.AGF = np.array(h5df.getData(self.name, 'pic_AGF',
+                dontread=(memsave and not self.twoComponentNoise)))
+            self.AGFF = np.array(h5df.getData(self.name, 'pic_AGFF',
+                dontread=(not self.twoComponentNoise)))
+            self.AGD = np.array(h5df.getData(self.name, 'pic_AGD',
+                dontread=(memsave and not self.twoComponentNoise)))
+            self.AGE = np.array(h5df.getData(self.name, 'pic_AGE',
+                dontread=(not self.twoComponentNoise)))
+            self.AGEE = np.array(h5df.getData(self.name, 'pic_AGEE',
+                dontread=(not self.twoComponentNoise)))
+            self.AoGF = np.array(h5df.getData(self.name, 'pic_AoGF',
+                dontread=(memsave and not self.twoComponentNoise)))
+            self.AoGFF = np.array(h5df.getData(self.name, 'pic_AoGFF',
+                dontread=(memsave and not self.twoComponentNoise)))
+            self.AoGD = np.array(h5df.getData(self.name, 'pic_AoGD',
+                dontread=(memsave and not self.twoComponentNoise)))
+            self.AoGE = np.array(h5df.getData(self.name, 'pic_AoGE',
+                dontread=(memsave and not self.twoComponentNoise)))
+            self.AoGEE = np.array(h5df.getData(self.name, 'pic_AoGEE',
+                dontread=(memsave and not self.twoComponentNoise)))
             self.Fdmmat = np.array(h5df.getData(self.name, 'pic_Fdmmat', dontread=memsave))
             #self.Dmat = np.array(h5df.getData(self.name, 'pic_Dmat'))
             self.Dvec = np.array(h5df.getData(self.name, 'pic_Dvec'))
