@@ -293,7 +293,7 @@ class DataFile(object):
         os.chdir(dirname)
 
         # Load pulsar data from the libstempo library
-        t2pulsar = t2.tempopulsar(relparfile, reltimfile)
+        t2pulsar = t2.tempopulsar('./'+relparfile, './'+reltimfile)
 
         # Load the entire par-file into memory, so that we can save it in the
         # HDF5 file
