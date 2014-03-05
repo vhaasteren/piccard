@@ -4909,13 +4909,13 @@ class ptaLikelihood(object):
     Return a list of all efac parameter numbers, their names, and the pulsar
     they belong to
     """
-    def getEfacNumbers(self):
+    def getEfacNumbers(self, stype='efac'):
         parind = []
         psrind = []
         names = []
 
         for ii, m2signal in enumerate(self.ptasignals):
-            if m2signal['stype'] == 'efac' and m2signal['bvary'][0]:
+            if m2signal['stype'] == stype and m2signal['bvary'][0]:
                 parind.append(m2signal['parindex'])
                 psrind.append(m2signal['pulsarind'])
                 names.append(m2signal['flagvalue'])

@@ -776,6 +776,136 @@ def makeresultsplot(likob, chainfilename, outputdir, burnin=0, thin=1):
             plt.savefig(fileout+'.eps')
             plt.close(fig)
 
+
+    # Make a plot of all equad's
+    equadparind, equadpsrind, equadnames = likob.getEfacNumbers('equad')
+    dopar[equadparind] = False
+
+    if len(equadparind) > 1:
+        maxplotpars = 20
+        pages = int(1 + len(equadparind) / maxplotpars)
+        for pp in range(pages):
+            minpar = pp * maxplotpars
+            maxpar = min(len(equadparind), minpar + maxplotpars)
+            fileout = outputdir+'/equad-page-' + str(pp)
+
+            # Create the plotting data for this plot
+            x = np.arange(maxpar-minpar)
+            yval = np.zeros(maxpar-minpar)
+            yerr = np.zeros(maxpar-minpar)
+
+            #for ii in range(maxpar-minpar):
+            for ii in range(minpar, maxpar):
+                fmin, fmax = confinterval(emceechain[:, equadparind[ii]], sigmalevel=1)
+                yval[ii-minpar] = (fmax + fmin) * 0.5
+                yerr[ii-minpar] = (fmax - fmin) * 0.5
+
+            # Now make the plot
+            fig = plt.figure()
+
+            #fig = plt.figure(figsize=(10,6))   # Figure size can be adjusted if it gets big
+            ax = fig.add_subplot(111)
+
+            #plt.subplots_adjust(left=0.075, right=0.95, top=0.9, bottom=0.25)
+            plt.subplots_adjust(left=0.115, right=0.95, top=0.9, bottom=0.25)
+
+            resp = ax.errorbar(x, yval, yerr=yerr, fmt='.', c='blue')
+
+            ax.axis([-1, max(x)+1, 0, max(yval+yerr)+1])
+            ax.xaxis.grid(True, which='major')
+
+            #ax.yaxis.grid(True, linestyle='-', which='major', color='lightgrey',
+            #              alpha=1.0)
+
+            ax.set_xticks(np.arange(maxpar-minpar))
+
+            ax.set_title(r'Efac values, page ' + str(pp))
+            ax.set_ylabel(r'EFAC')
+            #ax.legend(('One', 'Rutger ML', 'Two', 'Three',), shadow=True, fancybox=True, numpoints=1)
+            #ax.set_yscale('log')
+
+            xtickNames = plt.setp(ax, xticklabels=equadnames[minpar:maxpar])
+            #plt.getp(xtickNames)
+            plt.setp(xtickNames, rotation=45, fontsize=8, ha='right')
+
+            equadfileout = open(outputdir+'/equad-page-'+str(pp)+'.txt', 'w')
+            for ii in range(minpar, maxpar):
+                print str(equadnames[ii]) + ":  " + str(yval[ii-minpar]) + " +/- " + str(yerr[ii-minpar])
+                equadfileout.write(str(equadnames[ii]) + "  " + str(yval[ii-minpar]) + \
+                                "  " + str(yerr[ii-minpar]) + "\n")
+
+            equadfileout.close()
+
+            plt.savefig(fileout+'.png')
+            plt.savefig(fileout+'.eps')
+            plt.close(fig)
+
+
+    # Make a plot of all cequad's
+    cequadparind, cequadpsrind, cequadnames = likob.getEfacNumbers('jitter')
+    dopar[cequadparind] = False
+
+    if len(cequadparind) > 1:
+        maxplotpars = 20
+        pages = int(1 + len(cequadparind) / maxplotpars)
+        for pp in range(pages):
+            minpar = pp * maxplotpars
+            maxpar = min(len(cequadparind), minpar + maxplotpars)
+            fileout = outputdir+'/cequad-page-' + str(pp)
+
+            # Create the plotting data for this plot
+            x = np.arange(maxpar-minpar)
+            yval = np.zeros(maxpar-minpar)
+            yerr = np.zeros(maxpar-minpar)
+
+            #for ii in range(maxpar-minpar):
+            for ii in range(minpar, maxpar):
+                fmin, fmax = confinterval(emceechain[:, cequadparind[ii]], sigmalevel=1)
+                yval[ii-minpar] = (fmax + fmin) * 0.5
+                yerr[ii-minpar] = (fmax - fmin) * 0.5
+
+            # Now make the plot
+            fig = plt.figure()
+
+            #fig = plt.figure(figsize=(10,6))   # Figure size can be adjusted if it gets big
+            ax = fig.add_subplot(111)
+
+            #plt.subplots_adjust(left=0.075, right=0.95, top=0.9, bottom=0.25)
+            plt.subplots_adjust(left=0.115, right=0.95, top=0.9, bottom=0.25)
+
+            resp = ax.errorbar(x, yval, yerr=yerr, fmt='.', c='blue')
+
+            ax.axis([-1, max(x)+1, 0, max(yval+yerr)+1])
+            ax.xaxis.grid(True, which='major')
+
+            #ax.yaxis.grid(True, linestyle='-', which='major', color='lightgrey',
+            #              alpha=1.0)
+
+            ax.set_xticks(np.arange(maxpar-minpar))
+
+            ax.set_title(r'Efac values, page ' + str(pp))
+            ax.set_ylabel(r'EFAC')
+            #ax.legend(('One', 'Rutger ML', 'Two', 'Three',), shadow=True, fancybox=True, numpoints=1)
+            #ax.set_yscale('log')
+
+            xtickNames = plt.setp(ax, xticklabels=cequadnames[minpar:maxpar])
+            #plt.getp(xtickNames)
+            plt.setp(xtickNames, rotation=45, fontsize=8, ha='right')
+
+            cequadfileout = open(outputdir+'/cequad-page-'+str(pp)+'.txt', 'w')
+            for ii in range(minpar, maxpar):
+                print str(cequadnames[ii]) + ":  " + str(yval[ii-minpar]) + " +/- " + str(yerr[ii-minpar])
+                cequadfileout.write(str(cequadnames[ii]) + "  " + str(yval[ii-minpar]) + \
+                                "  " + str(yerr[ii-minpar]) + "\n")
+
+            cequadfileout.close()
+
+            plt.savefig(fileout+'.png')
+            plt.savefig(fileout+'.eps')
+            plt.close(fig)
+
+
+
     # Make a plot of the spectra of all pulsars
     spectrumname, spectrumnameshort, spmin, spmax, spfreqs = likob.getSpectraNumbers()
 
