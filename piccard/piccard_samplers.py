@@ -666,7 +666,7 @@ MCMC
 def makeresultsplot(likob, chainfilename, outputdir, burnin=0, thin=1):
     (logpost_long, loglik_long, emceechain_long, labels) = ReadMCMCFile(chainfilename)
     (logpost, loglik, emceechain) = (logpost_long[burnin::thin], \
-            loglik[burnin::thin], emceechain_long[burnin::thin])
+            loglik_long[burnin::thin], emceechain_long[burnin::thin])
     if logpost is None:
         lp = loglik
     else:
