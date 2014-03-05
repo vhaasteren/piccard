@@ -380,10 +380,10 @@ class DataFile(object):
 
             if "group" in flagGroup:
                 efacequad = map('-'.join, zip(pulsarname, flagGroup['group']))
+            elif "f" in flagGroup:
+                efacequad = map('-'.join, zip(pulsarname, flagGroup['f']))
             elif "sys" in flagGroup:
                 efacequad = map('-'.join, zip(pulsarname, flagGroup['sys']))
-            elif "be" in flagGroup:
-                efacequad = map('-'.join, zip(pulsarname, flagGroup['be']))
             else:
                 efacequad = pulsarname
 
