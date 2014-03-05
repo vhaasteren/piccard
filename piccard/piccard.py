@@ -5013,7 +5013,7 @@ class ptaLikelihood(object):
     @param incJitter:   Whether or not to include Jitter in the noise vectort
 
     """
-    def setPsrNoise(self, parameters, selection=None, incJitter=True):
+    def setPsrNoise(self, parameters, selection=None):
         # For every pulsar, set the noise vector to zero
         for m2psr in self.ptapsrs:
             if m2psr.twoComponentNoise:
@@ -5060,18 +5060,7 @@ class ptaLikelihood(object):
                     else:
                         pequadsqr = 10**(2*m2signal['pstart'][0])
 
-                    if incJitter:
-                        """ # No longer do it this way
-
-                        # Need to include it just like the equad (for compresison)
-                        psr.Nvec += m2signal['Nvec'] * psr.Jweight * pequadsqr
-
-
-                        if psr.twoComponentNoise:
-                            psr.Nwvec += pequadsqr
-                            psr.Nwovec += pequadsqr
-                        """
-                        psr.Jvec += m2signal['Jvec'] * pequadsqr
+                    psr.Jvec += m2signal['Jvec'] * pequadsqr
 
 
     """
@@ -5654,7 +5643,7 @@ class ptaLikelihood(object):
 
         # MARK A
 
-        self.setPsrNoise(parameters, incJitter=False)
+        self.setPsrNoise(parameters)
 
         # If this is already evaluated in the likelihood, do not do it here
         if not self.skipUpdateToggle:
@@ -5726,7 +5715,7 @@ class ptaLikelihood(object):
     def mark1loglikelihood(self, parameters):
         npsrs = len(self.ptapsrs)
 
-        self.setPsrNoise(parameters, incJitter=False)
+        self.setPsrNoise(parameters)
 
         self.constructPhiAndTheta(parameters)
 
@@ -6171,7 +6160,7 @@ class ptaLikelihood(object):
 
         # We do noise explicitly
         # Jitter is done here in the likelihood. Do not add to diagonal noise
-        self.setPsrNoise(parameters, incJitter=False)
+        self.setPsrNoise(parameters)
 
         # MARK B
 
@@ -6190,37 +6179,37 @@ class ptaLikelihood(object):
             uindex = np.sum(self.npu[:ii])
             nus = self.npu[ii]
 
-            if self.ptapsrs[ii].twoComponentNoise:
+            if psr.twoComponentNoise:
                 # This is equivalent to np.dot(np.diag(1.0/Nwvec, AGU))
-                NGGU = ((1.0/self.ptapsrs[ii].Nwvec) * self.ptapsrs[ii].AGU.T).T
+                NGGU = ((1.0/psr.Nwvec) * psr.AGU.T).T
 
-                self.rGr[ii] = np.sum(self.ptapsrs[ii].AGr ** 2 / self.ptapsrs[ii].Nwvec)
-                self.rGU[uindex:uindex+nus] = np.dot(self.ptapsrs[ii].AGr, NGGU)
-                self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nwvec))
-                self.UGGNGGU[uindex:uindex+nus, uindex:uindex+nus] = np.dot(self.ptapsrs[ii].AGU.T, NGGU)
+                self.rGr[ii] = np.sum(psr.AGr ** 2 / psr.Nwvec)
+                self.rGU[uindex:uindex+nus] = np.dot(psr.AGr, NGGU)
+                self.GNGldet[ii] = np.sum(np.log(psr.Nwvec))
+                self.UGGNGGU[uindex:uindex+nus, uindex:uindex+nus] = np.dot(psr.AGU.T, NGGU)
             else:
-                Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
-                NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Hcmat.T).T
-                GcNiGc = np.dot(self.ptapsrs[ii].Hcmat.T, NiGc)
-                NiU = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Umat.T).T
-                GcNir = np.dot(NiGc.T, self.ptapsrs[ii].detresiduals)
-                GcNiU = np.dot(NiGc.T, self.ptapsrs[ii].Umat)
+                Nir = psr.detresiduals / psr.Nvec
+                NiGc = ((1.0/psr.Nvec) * psr.Hcmat.T).T
+                GcNiGc = np.dot(psr.Hcmat.T, NiGc)
+                NiU = ((1.0/psr.Nvec) * psr.Umat.T).T
+                GcNir = np.dot(NiGc.T, psr.detresiduals)
+                GcNiU = np.dot(NiGc.T, psr.Umat)
 
                 try:
                     cf = sl.cho_factor(GcNiGc)
-                    self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nvec)) + \
+                    self.GNGldet[ii] = np.sum(np.log(psr.Nvec)) + \
                             2*np.sum(np.log(np.diag(cf[0])))
                     GcNiGcr = sl.cho_solve(cf, GcNir)
                     GcNiGcU = sl.cho_solve(cf, GcNiU)
                 except np.linalg.LinAlgError:
                     print "MAJOR ERROR"
 
-                self.rGr[ii] = np.dot(self.ptapsrs[ii].detresiduals, Nir) \
+                self.rGr[ii] = np.dot(psr.detresiduals, Nir) \
                         - np.dot(GcNir, GcNiGcr)
-                self.rGU[uindex:uindex+nus] = np.dot(self.ptapsrs[ii].detresiduals, NiU) \
+                self.rGU[uindex:uindex+nus] = np.dot(psr.detresiduals, NiU) \
                         - np.dot(GcNir, GcNiGcU)
                 self.UGGNGGU[uindex:uindex+nus, uindex:uindex+nus] = \
-                        np.dot(NiU.T, self.ptapsrs[ii].Umat) - np.dot(GcNiU.T, GcNiGcU)
+                        np.dot(NiU.T, psr.Umat) - np.dot(GcNiU.T, GcNiGcU)
 
 
 
@@ -7516,7 +7505,7 @@ class ptaLikelihood(object):
 
         npsrs = len(self.ptapsrs)
 
-        self.setPsrNoise(parameters, incJitter=False)
+        self.setPsrNoise(parameters)
 
         if self.haveStochSources:
             self.constructPhiAndTheta(parameters)
@@ -7716,7 +7705,7 @@ class ptaLikelihood(object):
 
         npsrs = len(self.ptapsrs)
 
-        self.setPsrNoise(parameters, incJitter=False)
+        self.setPsrNoise(parameters)
 
         if self.haveStochSources:
             self.constructPhiAndTheta(parameters)
@@ -7894,7 +7883,7 @@ class ptaLikelihood(object):
     def calculateAnalyticTMPars(self, mlparameters):
         npsrs = len(self.ptapsrs)
 
-        self.setPsrNoise(mlparameters, incJitter=False)
+        self.setPsrNoise(mlparameters)
 
         self.constructPhiAndTheta(mlparameters)
 

@@ -811,7 +811,8 @@ def makeresultsplot(likob, chainfilename, outputdir, burnin=0, thin=1):
 
             resp = ax.errorbar(x, yval, yerr=yerr, fmt='.', c='blue')
 
-            ax.axis([-1, max(x)+1, 0, max(yval+yerr)+1])
+            #ax.axis([-1, max(x)+1, 0, max(yval+yerr)+1])
+            ax.axis([-1, max(x)+1, min(yval-yerr)-1, max(yval+yerr)+1])
             ax.xaxis.grid(True, which='major')
 
             #ax.yaxis.grid(True, linestyle='-', which='major', color='lightgrey',
@@ -819,8 +820,8 @@ def makeresultsplot(likob, chainfilename, outputdir, burnin=0, thin=1):
 
             ax.set_xticks(np.arange(maxpar-minpar))
 
-            ax.set_title(r'Efac values, page ' + str(pp))
-            ax.set_ylabel(r'EFAC')
+            ax.set_title(r'Equad values, page ' + str(pp))
+            ax.set_ylabel(r'Equad')
             #ax.legend(('One', 'Rutger ML', 'Two', 'Three',), shadow=True, fancybox=True, numpoints=1)
             #ax.set_yscale('log')
 
@@ -875,7 +876,8 @@ def makeresultsplot(likob, chainfilename, outputdir, burnin=0, thin=1):
 
             resp = ax.errorbar(x, yval, yerr=yerr, fmt='.', c='blue')
 
-            ax.axis([-1, max(x)+1, 0, max(yval+yerr)+1])
+            #ax.axis([-1, max(x)+1, 0, max(yval+yerr)+1])
+            ax.axis([-1, max(x)+1, min(yval-yerr)-1, max(yval+yerr)+1])
             ax.xaxis.grid(True, which='major')
 
             #ax.yaxis.grid(True, linestyle='-', which='major', color='lightgrey',
@@ -883,8 +885,8 @@ def makeresultsplot(likob, chainfilename, outputdir, burnin=0, thin=1):
 
             ax.set_xticks(np.arange(maxpar-minpar))
 
-            ax.set_title(r'Efac values, page ' + str(pp))
-            ax.set_ylabel(r'EFAC')
+            ax.set_title(r'Correlated equad values, page ' + str(pp))
+            ax.set_ylabel(r'Correlated equad')
             #ax.legend(('One', 'Rutger ML', 'Two', 'Three',), shadow=True, fancybox=True, numpoints=1)
             #ax.set_yscale('log')
 
