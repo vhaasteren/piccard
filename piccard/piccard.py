@@ -2941,7 +2941,8 @@ class ptaPulsar(object):
     """
     def readPulsarAuxiliaries(self, h5df, Tmax, nfreqs, ndmfreqs, \
             twoComponent=False, nSingleFreqs=0, nSingleDMFreqs=0, \
-            compression='None', likfunc='mark3', memsave=True):
+            compression='None', likfunc='mark3', \
+            evalCompressionComplement=True, memsave=True):
         # TODO: set this parameter in another place?
         if twoComponent:
             self.twoComponentNoise = True
@@ -2967,10 +2968,11 @@ class ptaPulsar(object):
         # G/H compression matrices
         self.Gmat = np.array(h5df.getData(self.name, 'pic_Gmat', dontread=memsave))
         self.Gcmat = np.array(h5df.getData(self.name, 'pic_Gcmat', dontread=memsave))
-        self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat'))
+
         self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat'))
-        self.Homat = np.array(h5df.getData(self.name, 'pic_Homat'))
-        self.Hocmat = np.array(h5df.getData(self.name, 'pic_Hocmat'))
+
+        self.Homat = np.array(h5df.getData(self.name, 'pic_Homat'), dontread=memsave)
+        self.Hocmat = np.array(h5df.getData(self.name, 'pic_Hocmat'), dontread=(not evalCompressionComplement))
         self.Gr = np.array(h5df.getData(self.name, 'pic_Gr', dontread=memsave))
         self.GGr = np.array(h5df.getData(self.name, 'pic_GGr', dontread=memsave))
         self.Wvec = np.array(h5df.getData(self.name, 'pic_Wvec',
@@ -2998,6 +3000,8 @@ class ptaPulsar(object):
             raise ValueError("Uncompressed file detected. Re-calculating all quantities.")
 
         if likfunc == 'mark1':
+            self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat'))
+            self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat'), dontread=memsave)
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF'))
             self.GtD = np.array(h5df.getData(self.name, 'pic_GtD'))
             self.AGr = np.array(h5df.getData(self.name, 'pic_AGr',
@@ -3014,11 +3018,17 @@ class ptaPulsar(object):
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
 
         if likfunc == 'mark2':
+            self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat'), dontread=memsave)
+            self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat'), \
+                    dontread=self.twoComponentNoise)
             self.AGr = np.array(h5df.getData(self.name, 'pic_AGr',
                 dontread=(not self.twoComponentNoise)))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
 
         if likfunc == 'mark3' or likfunc == 'mark3fa':
+            self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat'), dontread=memsave)
+            self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat'), \
+                    dontread=self.twoComponentNoise)
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
             self.AGr = np.array(h5df.getData(self.name, 'pic_AGr',
                 dontread=(not self.twoComponentNoise)))
@@ -3030,6 +3040,9 @@ class ptaPulsar(object):
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
 
         if likfunc == 'mark4':
+            self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat'), dontread=memsave)
+            self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat'), \
+                    dontread=self.twoComponentNoise)
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
             self.UtF = np.array(h5df.getData(self.name, 'pic_UtF'))
             self.AGr = np.array(h5df.getData(self.name, 'pic_AGr',
@@ -3045,6 +3058,9 @@ class ptaPulsar(object):
             self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat', dontread=memsave))
 
         if likfunc == 'mark4ln':
+            self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat'), dontread=memsave)
+            self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat'), \
+                    dontread=self.twoComponentNoise)
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
             self.UtF = np.array(h5df.getData(self.name, 'pic_UtF', dontread=memsave))
             self.SFmat = np.array(h5df.getData(self.name, 'pic_SFmat', dontread=memsave))
@@ -3064,6 +3080,9 @@ class ptaPulsar(object):
             self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat', dontread=memsave))
 
         if likfunc == 'mark6' or likfunc == 'mark6fa':
+            self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat'), dontread=memsave)
+            self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat'), \
+                    dontread=self.twoComponentNoise)
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
             self.GGtD = np.array(h5df.getData(self.name, 'pic_GGtD', dontread=memsave))
             self.Emat = np.array(h5df.getData(self.name, 'pic_Emat'))
@@ -3090,6 +3109,9 @@ class ptaPulsar(object):
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
 
         if likfunc == 'mark7':
+            self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat'), dontread=memsave)
+            self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat'), \
+                    dontread=self.twoComponentNoise)
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
             self.AGr = np.array(h5df.getData(self.name, 'pic_AGr',
                 dontread=(not self.twoComponentNoise)))
@@ -3101,6 +3123,9 @@ class ptaPulsar(object):
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
 
         if likfunc == 'mark8':
+            self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat'), dontread=memsave)
+            self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat'), \
+                    dontread=self.twoComponentNoise)
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
             self.GGtD = np.array(h5df.getData(self.name, 'pic_GGtD', dontread=memsave))
             self.Emat = np.array(h5df.getData(self.name, 'pic_Emat', dontread=memsave))
@@ -3127,6 +3152,9 @@ class ptaPulsar(object):
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
 
         if likfunc == 'mark9':
+            self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat'), dontread=memsave)
+            self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat'), \
+                    dontread=self.twoComponentNoise)
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
             self.SFmat = np.array(h5df.getData(self.name, 'pic_SFmat', dontread=memsave))
             self.FFmat = np.array(h5df.getData(self.name, 'pic_FFmat', dontread=memsave))
@@ -3145,6 +3173,9 @@ class ptaPulsar(object):
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
 
         if likfunc == 'mark10':
+            self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat'), dontread=memsave)
+            self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat'), \
+                    dontread=self.twoComponentNoise)
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
             self.GGtD = np.array(h5df.getData(self.name, 'pic_GGtD', dontread=memsave))
             self.Emat = np.array(h5df.getData(self.name, 'pic_Emat'))
@@ -4705,6 +4736,7 @@ class ptaLikelihood(object):
                         nSingleFreqs=numSingleFreqs[pindex], \
                         nSingleDMFreqs=numSingleDMFreqs[pindex], \
                         likfunc=likfunc, compression=compression, \
+                        evalCompressionComplement=evalCompressionComplement, \
                         memsave=True)
             except (StandardError, ValueError, KeyError, IOError, RuntimeError) as err:
                 # Create the Auxiliaries ourselves
