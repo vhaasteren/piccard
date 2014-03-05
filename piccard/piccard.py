@@ -5919,7 +5919,7 @@ class ptaLikelihood(object):
                 self.FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = \
                         np.dot(psr.AGF.T, NGGF)
             else:
-                if np.sum(psr.Jvec) > 0 and False:
+                if np.sum(psr.Jvec) > 0:
                     Nir = np.zeros(len(psr.detresiduals))
                     NiGc = np.zeros(psr.Hcmat.shape)
                     NiF = np.zeros(psr.Fmat.shape)
