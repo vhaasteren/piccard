@@ -2225,7 +2225,7 @@ class ptaPulsar(object):
         # For creating the auxiliaries it does not really matter: we are now
         # creating all quantities per default
         # TODO: set this parameter in another place?
-        if twoComponent:
+        if twoComponent and likfunc!='mark11':
             self.twoComponentNoise = True
 
         # Before writing anything to file, we need to know right away how many
@@ -3587,6 +3587,9 @@ class ptaLikelihood(object):
         elif signal['stype'] == 'dmfouriermode':
             self.addSignalFourierMode(signal)
             self.ptapsrs[signal['pulsarind']].dmfourierind = index
+        elif signal['stype'] == 'jitterfouriermode':
+            self.addSignalFourierMode(signal)
+            self.ptapsrs[signal['pulsarind']].jitterfourierind = index
         else:
             # Some other unknown signal
             self.ptasignals.append(signal)
@@ -3832,12 +3835,10 @@ class ptaLikelihood(object):
     @param pmax:        Maximum bound of prior domain
     @param pwidth:      Typical width of the parameters (e.g. initial stepsize)
     @param pstart:      Typical start position for the parameters
-    @param parid:       The identifiers (as used in par-file) that identify
-                        which parameters are included
     """
     def addSignalFourierMode(self, signal):
         # Assert that all the correct keys are there...
-        keys = ['pulsarind', 'stype', 'corr', 'bvary', 'parid', \
+        keys = ['pulsarind', 'stype', 'corr', 'bvary', \
                 'pmin', 'pmax', 'pwidth', 'pstart', 'parindex', 'Tmax']
         if not all(k in signal for k in keys):
             raise ValueError("ERROR: Not all signal keys are present in TimingModel signal. Keys: {0}. Required: {1}".format(signal.keys(), keys))
@@ -3939,8 +3940,8 @@ class ptaLikelihood(object):
             if self.likfunc in ['mark4ln', 'mark9', 'mark10']:
                 self.npff[ii] += len(self.ptapsrs[ii].SFfreqs)
 
-            if self.likfunc in ['mark1', 'mark3', 'mark4', 'mark4ln']:
-                self.npu[ii] = len(self.ptapsrs[ii].avetoas)
+            #if self.likfunc in ['mark1', 'mark3', 'mark4', 'mark4ln', 'mark11']:
+            self.npu[ii] = len(self.ptapsrs[ii].avetoas)
 
             if self.likfunc in ['mark1', 'mark4', 'mark4ln', 'mark6', 'mark6fa', 'mark8', 'mark10']:
                 self.npfdm[ii] = len(self.ptapsrs[ii].Fdmfreqs)
@@ -3950,12 +3951,16 @@ class ptaLikelihood(object):
                 self.npffdm[ii] += len(self.ptapsrs[ii].SFdmfreqs)
 
             self.npobs[ii] = len(self.ptapsrs[ii].toas)
-            self.npgs[ii] = self.ptapsrs[ii].Hmat.shape[1]
-            self.npgos[ii] = self.ptapsrs[ii].Homat.shape[1]
             self.ptapsrs[ii].Nvec = np.zeros(len(self.ptapsrs[ii].toas))
             self.ptapsrs[ii].Jvec = np.zeros(len(self.ptapsrs[ii].avetoas))
-            self.ptapsrs[ii].Nwvec = np.zeros(self.ptapsrs[ii].Hmat.shape[1])
-            self.ptapsrs[ii].Nwovec = np.zeros(self.ptapsrs[ii].Homat.shape[1])
+
+            if self.likfunc in ['mark1', 'mark2', 'mark3', 'mark3fa', 'mark4', \
+                    'mark4ln', 'mark6', 'mark6fa', 'mark7', 'mark8', 'mark9', \
+                    'mark10']:
+                self.npgs[ii] = self.ptapsrs[ii].Hmat.shape[1]
+                self.npgos[ii] = self.ptapsrs[ii].Homat.shape[1]
+                self.ptapsrs[ii].Nwvec = np.zeros(self.ptapsrs[ii].Hmat.shape[1])
+                self.ptapsrs[ii].Nwovec = np.zeros(self.ptapsrs[ii].Homat.shape[1])
 
         self.Phi = np.zeros((np.sum(self.npf), np.sum(self.npf)))
         self.Phivec = np.zeros(np.sum(self.npf))
@@ -4176,12 +4181,6 @@ class ptaLikelihood(object):
                         })
                     signals.append(newsignal)
 
-                # If compression 
-                if compression != 'average' and compression != 'avefrequencies' \
-                        and likfunc[:5] != 'mark4' and likfunc[:5] != 'mark1':
-                    print "WARNING: Jitter included, but likelihood function will deal with it as an equad."
-                    print "         Use an adequate compression level, or a 'mark4' likelihood"
-
             if incRedNoise:
                 if noiseModel=='spectrum':
                     nfreqs = numNoiseFreqs[ii]
@@ -4362,7 +4361,7 @@ class ptaLikelihood(object):
                         else:
                             pmin += [-150.0 * tmperrs[jj] + tmpest[jj]]
                             pmax += [150.0 * tmperrs[jj] + tmpest[jj]]
-                            pwidth += [(pmax[-1]-pmin[-1])/20.0]
+                            pwidth += [(pmax[-1]-pmin[-1])/10.0]
                         pstart += [tmpest[jj]]
 
                 if nonLinear:
@@ -4428,8 +4427,30 @@ class ptaLikelihood(object):
                     signals.append(newsignal)
 
                 if incJitter or incCEquad:
-                    # IMPLEMENT THIS TOO!!!
-                    pass
+                    (avetoas, Umat) = dailyaveragequantities(m2psr.toas)
+                    nmodes = len(avetoas)
+                    bvary = [True]*nmodes
+                    pmin = [-1.0e3]*nmodes
+                    pmax = [1.0e3]*nmodes
+                    pstart = [0.0]*nmodes
+                    pwidth = [1.0e-8]*nmodes
+
+                    newsignal = OrderedDict({
+                        "stype":'jitterfouriermode',
+                        "corr":"single",
+                        "pulsarind":ii,
+                        "flagname":"pulsarname",
+                        "flagvalue":m2psr.name,
+                        "bvary":bvary,
+                        "pmin":pmin,
+                        "pmax":pmax,
+                        "pwidth":pwidth,
+                        "pstart":pstart
+                        })
+                    signals.append(newsignal)
+
+                    del avetoas
+                    del Umat
 
         if incGWB:
             if gwbModel=='spectrum':
@@ -4959,6 +4980,21 @@ class ptaLikelihood(object):
                         sig['stype'] == 'nonlineartimingmodel':
                     flagname = sig['stype']
                     flagvalue = sig['parid'][jj]
+                elif sig['stype'] == 'fouriermode':
+                    if jj % 2 == 0:
+                        flagname = 'Fourier-cos'
+                    else:
+                        flagname = 'Fourier-sin'
+                    flagvalue = str(self.ptapsrs[psrindex].Ffreqs[jj])
+                elif sig['stype'] == 'dmfouriermode':
+                    if jj % 2 == 0:
+                        flagname = 'DM-Fourier-cos'
+                    else:
+                        flagname = 'DM-Fourier-sin'
+                    flagvalue = str(self.ptapsrs[psrindex].Fdmfreqs[jj])
+                elif sig['stype'] == 'jitterfouriermode':
+                    flagname = 'Jitter-mode'
+                    flagvalue = str(pic_T0 + self.ptapsrs[psrindex].avetoas[jj] / pic_spy)
                 else:
                     flagname = 'none'
                     flagvalue = 'none'
@@ -5268,7 +5304,7 @@ class ptaLikelihood(object):
                         if phimat:
                             self.Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += pcdoubled
                         else:
-                            self.Phivec[findex:findex+2*nfreq] = 10**pcdoubled
+                            self.Phivec[findex:findex+2*nfreq] = pcdoubled
                     elif m2signal['corr'] in ['gr', 'uniform', 'dipole', 'anisotropicgwb']:
                         freqpy = m2signal['Ffreqs'] * pic_spy
                         pcdoubled = (Amp**2 * pic_spy**3 / (12*np.pi*np.pi * m2signal['Tmax'])) * freqpy ** (-Si)
@@ -5317,7 +5353,7 @@ class ptaLikelihood(object):
                         if phimat:
                             self.Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += pcdoubled
                         else:
-                            self.Phivec[findex:findex+2*nfreq] = 10**pcdoubled
+                            self.Phivec[findex:findex+2*nfreq] = pcdoubled
                     elif m2signal['corr'] in ['gr', 'uniform', 'dipole', 'anisotropicgwb']:
                         freqpy = self.ptapsrs[0].Ffreqs * pic_spy
                         pcdoubled = (Amp * pic_spy**3 / m2signal['Tmax']) / \
@@ -5408,36 +5444,47 @@ class ptaLikelihood(object):
                     ind = []
                     pp = m2signal['pulsarind']
                     newdes = m2signal['parid']
+                    psr = self.ptapsrs[pp]
 
-                    # Create slicing vector (select parameters actually in signal)
-                    for jj, parid in enumerate(self.ptapsrs[pp].ptmdescription):
-                        if parid in newdes:
-                            ind += [True]
-                        else:
-                            ind += [False]
-                    ind = np.array(ind, dtype=np.bool)
+                    if len(newdes) == psr.Mmat.shape[1]:
+                        # This is a speed hack, necessary for mark11
+                        Mmat = psr.Mmat
+                    else:
+                        # Create slicing vector (select parameters actually in signal)
+                        for jj, parid in enumerate(psr.ptmdescription):
+                            if parid in newdes:
+                                ind += [True]
+                            else:
+                                ind += [False]
+                        ind = np.array(ind, dtype=np.bool)
+                        Mmat = psr.Mmat[:,ind]
 
                     # residuals = M * pars
-                    self.ptapsrs[pp].detresiduals -= \
-                            np.dot(self.ptapsrs[pp].Mmat[:,ind], \
+                    psr.detresiduals -= \
+                            np.dot(Mmat, \
                             (sparameters-m2signal['pstart'])) # / m2signal['unitconversion'])
 
                 elif m2signal['stype'] == 'nonlineartimingmodel':
                     # The t2psr libstempo object has to be set. Assume it is.
                     pp = m2signal['pulsarind']
+                    psr = self.ptapsrs[pp]
 
                     # For each varying parameter, update the libstempo object
                     # parameter with the new value
                     pindex = 0
+                    offset = 0
                     for jj in range(m2signal['ntotpars']):
                         if m2signal['bvary'][jj]:
                             # If this parameter varies, update the parameter
-                            self.ptapsrs[pp].t2psr[m2signal['parid'][jj]].val = \
-                                    sparameters[pindex]
+                            if m2signal['parid'][jj] == 'Offset':
+                                offset = sparameters[pindex]
+                            else:
+                                psr.t2psr[m2signal['parid'][jj]].val = \
+                                        sparameters[pindex]
                             pindex += 1
 
                     # Generate the new residuals
-                    self.ptapsrs[pp].detresiduals = np.array(self.ptapsrs[pp].t2psr.residuals(updatebats=True), dtype=np.double)
+                    psr.detresiduals = np.array(psr.t2psr.residuals(updatebats=True), dtype=np.double) + offset
 
         # Loop over all signals, and construct the deterministic signals
         for ss in range(len(self.ptasignals)):
@@ -5461,6 +5508,9 @@ class ptaLikelihood(object):
                 elif m2signal['stype'] == 'dmfouriermode':
                     self.ptapsrs[pp].detresiduals -= \
                             np.dot(self.ptapsrs[pp].DF, sparameters)
+                elif m2signal['stype'] == 'jitterfouriermode':
+                    self.ptapsrs[pp].detresiduals -= \
+                            np.dot(self.ptapsrs[pp].Umat, sparameters)
 
 
         # If necessary, transform these residuals to two-component basis
@@ -6056,12 +6106,26 @@ class ptaLikelihood(object):
 
                     for cc, col in enumerate(psr.Umat.T):
                         u = (col == 1.0)
-                        l = np.sum(u)
                         ji = 1.0 / psr.Jvec[cc]
                         ni = 1.0 / psr.Nvec[u]
                         beta = 1.0 / (np.sum(ni) + ji)
                         Ni = np.diag(ni) - beta * np.outer(ni, ni)
 
+                        Nir[u] = np.dot(Ni, psr.detresiduals[u])
+                        NiGc[u, :] = np.dot(Ni, psr.Hcmat[u, :])
+                        NiF[u, :] = np.dot(Ni, psr.Fmat[u, :])
+                elif np.sum(psr.Jvec) > 0 and False:
+                    # This is a slower alternative for the above
+                    Nir = np.zeros(len(psr.detresiduals))
+                    NiGc = np.zeros(psr.Hcmat.shape)
+                    NiF = np.zeros(psr.Fmat.shape)
+
+                    for cc, col in enumerate(psr.Umat.T):
+                        u = (col == 1.0)
+                        l = np.sum(u)
+                        mat = np.diag(psr.Nvec[u]) + np.ones(l) * psr.Jvec[cc]
+                        cf = sl.cho_factor(mat)
+                        Ni = sl.cho_solve(cf, np.eye(l))
                         Nir[u] = np.dot(Ni, psr.detresiduals[u])
                         NiGc[u, :] = np.dot(Ni, psr.Hcmat[u, :])
                         NiF[u, :] = np.dot(Ni, psr.Fmat[u, :])
@@ -7395,7 +7459,7 @@ class ptaLikelihood(object):
     """
     def mark11loglikelihood(self, parameters):
         # The red signals
-        self.constructPhiAndTheta(parameters)
+        self.constructPhiAndTheta(parameters, phimat=False)
 
         # The white noise
         self.setPsrNoise(parameters)
@@ -7404,39 +7468,42 @@ class ptaLikelihood(object):
         self.updateDetSources(parameters)
 
         for ii, psr in enumerate(self.ptapsrs):
-            self.rGr[ii] = psr.detresiduals**2 / psr.Nvec
+            self.rGr[ii] = np.sum(psr.detresiduals**2 / psr.Nvec)
             self.GNGldet[ii] = np.sum(np.log(psr.Nvec))
 
-            if psr.fourierind != None:
+            if psr.fourierind is not None:
                 findex = np.sum(self.npf[:ii])
                 nfreq = self.npf[ii]
                 ind = psr.fourierind
 
-                self.rGr[ii] += parameters[ind:ind+nfreq]**2 / \
-                    self.Phivec[findex:findex+nfreq]
+                self.rGr[ii] += np.sum(parameters[ind:ind+nfreq]**2 / \
+                    self.Phivec[findex:findex+nfreq])
 
-            if psr.dmfourierind != None:
+                self.GNGldet[ii] += np.sum(np.log(self.Phivec))
+
+            if psr.dmfourierind is not None:
                 fdmindex = np.sum(self.npfdm[:ii])
                 nfreqdm = self.npfdm[ii]
                 ind = psr.fourierind
 
-                self.rGr[ii] += parameters[ind:ind+nfreqdm]**2 / \
-                    self.Thetavec[fdmindex:fdmindex+nfreqdm]
+                self.rGr[ii] += np.sum(parameters[ind:ind+nfreqdm]**2 / \
+                    self.Thetavec[fdmindex:fdmindex+nfreqdm])
 
-            if psr.jitterfourierind != None:
+                self.GNGldet[ii] += np.sum(np.log(self.Thetavec))
+
+            if psr.jitterfourierind is not None:
                 uindex = np.sum(self.npu[:ii])
                 npus = self.npu[ii]
                 ind = psr.jitterfourierind
                 self.Muvec[uindex:uindex+npus] = psr.Jvec
 
-                self.rGr[ii] += parameters[ind:ind+npus]**2 / \
-                    self.Muvec[uindex:uindex+npus]
+                self.rGr[ii] += np.sum(parameters[ind:ind+npus]**2 / \
+                    self.Muvec[uindex:uindex+npus])
+
+                self.GNGldet[ii] += np.sum(np.log(self.Muvec))
 
         return -0.5*np.sum(self.npobs)*np.log(2*np.pi) \
-                -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) \
-                -0.5*np.sum(np.log(self.Phivec)) \
-                -0.5*np.sum(np.log(self.Thetavec)) \
-                -0.5*np.sum(np.log(self.Muvec))
+                -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet)
 
 
 
@@ -7466,6 +7533,10 @@ class ptaLikelihood(object):
                 ll = self.mark8loglikelihood(parameters)
             elif self.likfunc == 'mark9':
                 ll = self.mark9loglikelihood(parameters)
+            elif self.likfunc == 'mark10':
+                ll = self.mark10loglikelihood(parameters)
+            elif self.likfunc == 'mark11':
+                ll = self.mark11loglikelihood(parameters)
 
             if self.evallikcomp:
                 self.skipUpdateToggle = True
@@ -7633,6 +7704,8 @@ class ptaLikelihood(object):
             elif self.likfunc == 'mark8':  # Mark8 ''
                 lp = self.mark8logprior(parameters)
             elif self.likfunc == 'mark9':  # Mark9 ''
+                lp = self.mark9logprior(parameters)
+            elif self.likfunc == 'mark10':  # Mark9 ''
                 lp = self.mark9logprior(parameters)
         else:
             lp = -1e99
