@@ -5848,6 +5848,7 @@ class ptaLikelihood(object):
                     if np.sum(psr.Jvec) > 0:
                         Nir = np.zeros(len(psr.detresiduals))
                         NiGc = np.zeros(psr.Hocmat.shape)
+                        Jldet = 0
 
                         for cc, col in enumerate(psr.Umat.T):
                             u = (col == 1.0)
@@ -5859,15 +5860,20 @@ class ptaLikelihood(object):
 
                             Nir[u] = np.dot(Ni, psr.detresiduals[u])
                             NiGc[u, :] = np.dot(Ni, psr.Hocmat[u, :])
+
+                            Jldet += np.sum(np.log(psr.Nvec[u])) + \
+                                    np.log(psr.Jvec[cc]) - \
+                                    np.log(beta)
                     else:
                         Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
                         NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Hocmat.T).T
+                        Jldet = np.sum(np.log(psr.Nvec))
                     GcNiGc = np.dot(self.ptapsrs[ii].Hocmat.T, NiGc)
                     GcNir = np.dot(NiGc.T, self.ptapsrs[ii].detresiduals)
 
                     try:
                         cf = sl.cho_factor(GcNiGc)
-                        self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nvec)) + \
+                        self.GNGldet[ii] = Jldet + \
                                 2*np.sum(np.log(np.diag(cf[0])))
                         GcNiGcr = sl.cho_solve(cf, GcNir)
                     except np.linalg.LinAlgError:
@@ -6002,6 +6008,7 @@ class ptaLikelihood(object):
                 if np.sum(psr.Jvec) > 0:
                     Nir = np.zeros(len(psr.detresiduals))
                     NiGc = np.zeros(psr.Hcmat.shape)
+                    Jldet = 0
 
                     for cc, col in enumerate(psr.Umat.T):
                         u = (col == 1.0)
@@ -6013,16 +6020,20 @@ class ptaLikelihood(object):
                         Nir[u] = sl.cho_solve(cf, psr.detresiduals[u])
                         NiGc[u, :] = sl.cho_solve(cf, psr.Hcmat[u, :])
 
+                        Jldet += np.sum(np.log(psr.Nvec[u])) + \
+                                np.log(psr.Jvec[cc]) - \
+                                np.log(beta)
                 else:
                     Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
                     NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Hcmat.T).T
+                    Jldet = np.sum(np.log(psr.Nvec))
 
                 GcNiGc = np.dot(self.ptapsrs[ii].Hcmat.T, NiGc)
                 GcNir = np.dot(NiGc.T, self.ptapsrs[ii].detresiduals)
 
                 try:
                     cf = sl.cho_factor(GcNiGc)
-                    self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nvec)) + \
+                    self.GNGldet[ii] = Jldet + \
                             2*np.sum(np.log(np.diag(cf[0])))
                     GcNiGcr = sl.cho_solve(cf, GcNir)
                 except np.linalg.LinAlgError:
@@ -6103,6 +6114,7 @@ class ptaLikelihood(object):
                     Nir = np.zeros(len(psr.detresiduals))
                     NiGc = np.zeros(psr.Hcmat.shape)
                     NiF = np.zeros(psr.Fmat.shape)
+                    Jldet = 0
 
                     for cc, col in enumerate(psr.Umat.T):
                         u = (col == 1.0)
@@ -6114,11 +6126,16 @@ class ptaLikelihood(object):
                         Nir[u] = np.dot(Ni, psr.detresiduals[u])
                         NiGc[u, :] = np.dot(Ni, psr.Hcmat[u, :])
                         NiF[u, :] = np.dot(Ni, psr.Fmat[u, :])
+
+                        Jldet += np.sum(np.log(psr.Nvec[u])) + \
+                                np.log(psr.Jvec[cc]) - \
+                                np.log(beta)
                 elif np.sum(psr.Jvec) > 0 and False:
                     # This is a slower alternative for the above
                     Nir = np.zeros(len(psr.detresiduals))
                     NiGc = np.zeros(psr.Hcmat.shape)
                     NiF = np.zeros(psr.Fmat.shape)
+                    Jldet = 0
 
                     for cc, col in enumerate(psr.Umat.T):
                         u = (col == 1.0)
@@ -6129,29 +6146,32 @@ class ptaLikelihood(object):
                         Nir[u] = np.dot(Ni, psr.detresiduals[u])
                         NiGc[u, :] = np.dot(Ni, psr.Hcmat[u, :])
                         NiF[u, :] = np.dot(Ni, psr.Fmat[u, :])
+                        Jldet += 2*np.sum(np.log(np.diag(cf[0])))
                 else:
                     Nir = psr.detresiduals / psr.Nvec
                     NiGc = ((1.0/psr.Nvec) * psr.Hcmat.T).T
                     NiF = ((1.0/psr.Nvec) * psr.Fmat.T).T
+                    Jldet = np.sum(np.log(psr.Nvec))
+
                 GcNiGc = np.dot(psr.Hcmat.T, NiGc)
                 GcNir = np.dot(NiGc.T, psr.detresiduals)
                 GcNiF = np.dot(NiGc.T, psr.Fmat)
 
                 try:
                     cf = sl.cho_factor(GcNiGc)
-                    self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nvec)) + \
+                    self.GNGldet[ii] = Jldet + \
                             2*np.sum(np.log(np.diag(cf[0])))
                     GcNiGcr = sl.cho_solve(cf, GcNir)
                     GcNiGcF = sl.cho_solve(cf, GcNiF)
                 except np.linalg.LinAlgError:
                     print "MAJOR ERROR"
 
-                self.rGr[ii] = np.dot(self.ptapsrs[ii].detresiduals, Nir) \
+                self.rGr[ii] = np.dot(psr.detresiduals, Nir) \
                         - np.dot(GcNir, GcNiGcr)
-                self.rGF[findex:findex+2*nfreq] = np.dot(self.ptapsrs[ii].detresiduals, NiF) \
+                self.rGF[findex:findex+2*nfreq] = np.dot(psr.detresiduals, NiF) \
                         - np.dot(GcNir, GcNiGcF)
                 self.FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = \
-                        np.dot(NiF.T, self.ptapsrs[ii].Fmat) - np.dot(GcNiF.T, GcNiGcF)
+                        np.dot(NiF.T, psr.Fmat) - np.dot(GcNiF.T, GcNiGcF)
 
 
 
@@ -6243,6 +6263,7 @@ class ptaLikelihood(object):
                     Nir = np.zeros(len(psr.detresiduals))
                     NiGc = np.zeros(psr.Hcmat.shape)
                     NiF = np.zeros(psr.Fmat.shape)
+                    Jldet = 0
 
                     for cc, col in enumerate(psr.Umat.T):
                         u = (col == 1.0)
@@ -6255,10 +6276,15 @@ class ptaLikelihood(object):
                         Nir[u] = np.dot(Ni, psr.detresiduals[u])
                         NiGc[u, :] = np.dot(Ni, psr.Hcmat[u, :])
                         NiF[u, :] = np.dot(Ni, psr.Fmat[u, :])
+
+                        Jldet += np.sum(np.log(psr.Nvec[u])) + \
+                                np.log(psr.Jvec[cc]) - \
+                                np.log(beta)
                 else:
                     Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
                     NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Hcmat.T).T
                     NiF = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Fmat.T).T
+                    Jldet = np.sum(np.log(psr.Nvec))
 
                 GcNiGc = np.dot(self.ptapsrs[ii].Hcmat.T, NiGc)
                 GcNir = np.dot(NiGc.T, self.ptapsrs[ii].detresiduals)
@@ -6266,7 +6292,7 @@ class ptaLikelihood(object):
 
                 try:
                     cf = sl.cho_factor(GcNiGc)
-                    self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nvec)) + \
+                    self.GNGldet[ii] = Jldet + \
                             2*np.sum(np.log(np.diag(cf[0])))
                     GcNiGcr = sl.cho_solve(cf, GcNir)
                     GcNiGcF = sl.cho_solve(cf, GcNiF)
@@ -6658,6 +6684,7 @@ class ptaLikelihood(object):
                     Nir = np.zeros(len(psr.detresiduals))
                     NiGc = np.zeros(psr.Hcmat.shape)
                     NiE = np.zeros(psr.Emat.shape)
+                    Jldet = 0
 
                     for cc, col in enumerate(psr.Umat.T):
                         u = (col == 1.0)
@@ -6670,10 +6697,15 @@ class ptaLikelihood(object):
                         Nir[u] = np.dot(Ni, psr.detresiduals[u])
                         NiGc[u, :] = np.dot(Ni, psr.Hcmat[u, :])
                         NiE[u, :] = np.dot(Ni, psr.Emat[u, :])
+
+                        Jldet += np.sum(np.log(psr.Nvec[u])) + \
+                                np.log(psr.Jvec[cc]) - \
+                                np.log(beta)
                 else:
                     Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
                     NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Hcmat.T).T
                     NiE = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Emat.T).T
+                    Jldet = np.sum(np.log(psr.Nvec))
 
                 GcNiGc = np.dot(self.ptapsrs[ii].Hcmat.T, NiGc)
                 GcNir = np.dot(NiGc.T, self.ptapsrs[ii].detresiduals)
@@ -6681,7 +6713,7 @@ class ptaLikelihood(object):
 
                 try:
                     cf = sl.cho_factor(GcNiGc)
-                    self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nvec)) + \
+                    self.GNGldet[ii] = Jldet + \
                             2*np.sum(np.log(np.diag(cf[0])))
                     GcNiGcr = sl.cho_solve(cf, GcNir)
                     GcNiGcE = sl.cho_solve(cf, GcNiE)
@@ -6815,6 +6847,7 @@ class ptaLikelihood(object):
                     Nir = np.zeros(len(psr.detresiduals))
                     NiGc = np.zeros(psr.Hcmat.shape)
                     NiE = np.zeros(psr.Emat.shape)
+                    Jldet = 0
 
                     for cc, col in enumerate(psr.Umat.T):
                         u = (col == 1.0)
@@ -6827,10 +6860,15 @@ class ptaLikelihood(object):
                         Nir[u] = np.dot(Ni, psr.detresiduals[u])
                         NiGc[u, :] = np.dot(Ni, psr.Hcmat[u, :])
                         NiE[u, :] = np.dot(Ni, psr.Emat[u, :])
+
+                        Jldet += np.sum(np.log(psr.Nvec[u])) + \
+                                np.log(psr.Jvec[cc]) - \
+                                np.log(beta)
                 else:
                     Nir = self.ptapsrs[ii].detresiduals / self.ptapsrs[ii].Nvec
                     NiGc = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Hcmat.T).T
                     NiE = ((1.0/self.ptapsrs[ii].Nvec) * self.ptapsrs[ii].Emat.T).T
+                    Jldet = np.sum(np.log(psr.Nvec))
 
                 GcNiGc = np.dot(self.ptapsrs[ii].Hcmat.T, NiGc)
                 GcNir = np.dot(NiGc.T, self.ptapsrs[ii].detresiduals)
@@ -6838,7 +6876,7 @@ class ptaLikelihood(object):
 
                 try:
                     cf = sl.cho_factor(GcNiGc)
-                    self.GNGldet[ii] = np.sum(np.log(self.ptapsrs[ii].Nvec)) + \
+                    self.GNGldet[ii] = Jldet + \
                             2*np.sum(np.log(np.diag(cf[0])))
                     GcNiGcr = sl.cho_solve(cf, GcNir)
                     GcNiGcE = sl.cho_solve(cf, GcNiE)
