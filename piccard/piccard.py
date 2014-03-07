@@ -4359,9 +4359,10 @@ class ptaLikelihood(object):
                             pmax += [1.0]
                             pwidth += [0.1]
                         else:
-                            pmin += [-150.0 * tmperrs[jj] + tmpest[jj]]
-                            pmax += [150.0 * tmperrs[jj] + tmpest[jj]]
-                            pwidth += [(pmax[-1]-pmin[-1])/10.0]
+                            #tmpest[jj] = 0.0        # DELETE THISS!!!!!
+                            pmin += [-500.0 * tmperrs[jj] + tmpest[jj]]
+                            pmax += [500.0 * tmperrs[jj] + tmpest[jj]]
+                            pwidth += [(pmax[-1]-pmin[-1])/50.0]
                         pstart += [tmpest[jj]]
 
                 if nonLinear:
@@ -4822,7 +4823,9 @@ class ptaLikelihood(object):
                 stype='efac', corr='single')
         numJits = self.getNumberOfSignalsFromDict(signals, \
                 stype='jitter', corr='single')
-        separateEfacs = (numEfacs + numJits) > 1
+        numEquads = self.getNumberOfSignalsFromDict(signals, \
+                stype='equad', corr='single')
+        separateEfacs = (numEfacs + numEquads + numJits) > 1
 
         # Modify design matrices, and create pulsar Auxiliary quantities
         for pindex, m2psr in enumerate(self.ptapsrs):
