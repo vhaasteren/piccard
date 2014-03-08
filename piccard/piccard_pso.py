@@ -75,7 +75,8 @@ class Particle(object):
 
 class Swarm(object):
 
-    def __init__(self, nparticles, xmin, xmax, logp, c1=1.193, c2=1.193, w=0.72):
+    def __init__(self, nparticles, xmin, xmax, logp, \
+            c1=1.193, c2=1.193, w=0.72, bufsize=50):
         if len(xmin) != len(xmax):
             raise ValueError("xmin and xmax not same length")
 
@@ -90,6 +91,12 @@ class Swarm(object):
         self.xmax = np.array(xmax)
         self.bestL = -np.inf
         self.bestx = np.zeros(len(xmin))
+
+        # Chain has indices: (sample index, particle, parameter)
+        self.chain = np.zeros( (bufsize, nparticles, len(xmin)))
+        self.cursample = 0
+        self.fullbuf = False
+        self.bufsize = bufsize
 
         self.swarm = []
 
@@ -114,6 +121,21 @@ class Swarm(object):
             self.bestL = particle.bestL
             self.bestx = particle.bestx.copy()
 
+    def updateChain(self):
+        """
+        Update the chain-buffer, after we have iterated once. The chain buffer
+        keeps track of the last few steps so that we can check convergence
+        """
+        for ii, particle in enumerate(self.swarm):
+            self.chain[self.cursample, ii, :] = particle.x
+
+        self.cursample += 1
+
+        if self.cursample == self.bufsize:
+            self.cursample = 0
+            self.fullbuf = True
+
+
     def iterateOnce(self):
         """
         Evolve all particles one step
@@ -122,53 +144,108 @@ class Swarm(object):
             particle.sample(self.c1, self.c2, self.w, self.bestx)
             self.updateMaxFromParticle(particle)
 
-    """
-    def calcRhat(self, kabuki=True):
+        self.updateChain()
 
-        chain = np.zeros((self.nparticles, len(self.xmin)))
-        for ii, particle in enumerate(self.swarm):
-            chain[:,ii] = particle.x
-        Rhat = 10.0
 
-        if kabuki:
-            Rhat = self.R_hat_kabuki(chain)
-        else:
-            Rhat = self.R_hat_pymc(chain)
+    def Rhat_try1(self):
+        """
+        Does not work
+        """
+        npars = len(self.xmin)
+        Rhat = np.inf * np.ones(npars)
+        n = self.bufsize
 
-    # From kabuki/analyze.py, line 285 ("def R_hat")
-    def R_hat_kabuki(self, samples):
-        #n, num_chains = samples.shape # n=num_samples
-        num_chains, n = samples.shape # CORRECTED
-        chain_means = np.mean(samples, axis=1)
-        # Calculate between-sequence variance
-        between_var = n * np.var(chain_means, ddof=1)
-        chain_var = np.var(samples, axis=1, ddof=1)
-        within_var = np.mean(chain_var) # OK (=pymc)
-        marg_post_var = ((n-1.)/n) * within_var + (1./n) * between_var # = pymc s2
-        R_hat_sqrt = np.sqrt(marg_post_var/within_var)
-        return R_hat_sqrt
+        if self.fullbuf:
+            for pp in range(npars):
+                # chain has order: (sample, particle, parameter)
+                samples = self.chain[:, :, pp]
+                chain_means = np.mean(samples, axis=0)
+                between_var = n * np.var(chain_means, ddof=1)
+                chain_var = np.var(samples, axis=0, ddof=1)
+                within_var = np.mean(chain_var)
 
-    # pymc/diagnostics.py, line 450 ("def gelman_rubin")
-    def R_hat_pymc(self, x):
-        if np.shape(x) < (2,):
-            raise ValueError('Gelman-Rubin diagnostic requires multiple chains.')
-        try:
-            m,n = np.shape(x)
-        except ValueError:
-            return [gelman_rubin(np.transpose(y)) for y in np.transpose(x)]
-        # Calculate between-chain variance
-        B_over_n = np.sum((np.mean(x,1) - np.mean(x))**2)/(m-1)
-        # Calculate within-chain variances
-        W = np.sum([(x[i] - xbar)**2 for i,xbar in enumerate(np.mean(x,1))]) / (m*(n-1)) # OK (=kabuki)
-        # (over) estimate of variance
-        s2 = W*(n-1)/n + B_over_n # = marg_post_var
-        # Pooled posterior variance estimate
-        V = s2 + B_over_n/m
-        V = s2 # CORRECTED
-        # Calculate PSRF
-        R = V/W
-        return R
-    """
+                marg_post_var = ((n-1.0)/n) * within_var + (1.0/n) * between_var
+                Rhat[pp] = np.sqrt(marg_post_var / within_var)
+
+
+        return Rhat
+
+    def Rhat_try2(self):
+        """
+        Same result as above
+        """
+        npars = len(self.xmin)
+        Rhat = np.inf * np.ones(npars)
+        n = self.bufsize
+        M = self.nparticles
+
+        if self.fullbuf:
+            for pp in range(npars):
+                # chain has order: (sample, particle, parameter)
+                samples = self.chain[:, :, pp]
+                mean_theta_m = np.mean(samples, axis=0)
+
+                if len(mean_theta_m) != M:
+                    raise ValueError("FOUT: {0}".format(len(mean_theta_m)))
+
+                mean_theta = np.mean(mean_theta_m)
+                B = (n / (M-1.0)) * np.sum( (mean_theta_m - mean_theta)**2 )
+
+                ssqr_m = (1.0 / (n - 1)) * np.sum( (samples - \
+                        mean_theta_m * np.ones(samples.shape))**2 )
+
+                W = np.mean(ssqr_m)
+
+                Vhat = (n-1.0) * W / n + (M+1) * B / (n*M)
+
+                print "W, B = ", W, B
+
+                Rhat[pp] = np.sqrt(Vhat / W)
+
+        return Rhat
+
+    def Rhat(self):
+        """
+        Calculate the potential scale reduction factor (PSRF)
+
+        Note: why do m and n seem to be swapped? Why does this function work?
+        """
+        npars = len(self.xmin)
+        R_hat = np.inf * np.ones(npars)
+        n = self.bufsize
+        m = self.nparticles
+
+        if self.fullbuf:
+            for pp in range(npars):
+                # chain has order: (sample, particle, parameter)
+                samples = self.chain[:, :, pp]
+
+                # Number of chains (m) and number of samples (n)
+                m, n = np.shape(samples)
+
+                # Chain variance
+                chain_var = np.var(samples, axis=1, ddof=1) # degrees of freedom = n-ddof
+
+                # Within-chain variance (mean of variances of each chain)
+                W = 1./m * np.sum(chain_var)
+
+                # Chain means
+                chain_means = np.mean(samples, axis=1)
+
+                # Variance of chain means
+                chain_means_var = np.var(chain_means, ddof=1)
+
+                # Between-chain variance
+                B = n * chain_means_var
+
+                # Weighted average of within and between variance
+                #(marginal posterior variance)
+                Var_hat = (float(n-1)/n)*W + B/n
+
+                # Potential scale reduction factor
+                R_hat[pp] = np.sqrt(Var_hat / W)
+	
+	return R_hat
 
 
 def loglikelihood(parameters):
@@ -199,8 +276,12 @@ def RunPSO(likob, chainsdir, nparticles=0, iterations=500):
         swarm.iterateOnce()
 
         if ii % 10 == 0:
-            sys.stdout.write("\r {0}: {1}, {2}".format(ii, swarm.bestx[:6], swarm.bestL))
+            sys.stdout.write("\r {0}: {1}, {2}".format(ii, swarm.bestx[:2], swarm.bestL))
             sys.stdout.flush()
+
+        if np.all(swarm.Rhat() < 1.02):
+            sys.stdout.write("\nConverged!\n")
+            break
 
     sys.stdout.write("\nDone\n")
     print swarm.bestx[:10], swarm.bestL
@@ -213,14 +294,14 @@ def RunPSO(likob, chainsdir, nparticles=0, iterations=500):
 
 
 if __name__ == '__main__':
-    ndim = 10
+    ndim = 50
     minx = np.ones(ndim) * -900.0
     maxx = np.ones(ndim) * 900.0
-    nparticles = 100
+    nparticles = 1250
     #w = -0.2089
     #c1 = 1.193
     #c1 = 1.193
-    iterations = 100
+    iterations = 1000
 
     print("Running a PSO in {0} dimensions with {1} particles".format(\
             ndim, nparticles))
@@ -230,10 +311,20 @@ if __name__ == '__main__':
     for ii in range(iterations):
         swarm.iterateOnce()
 
+        Rhat = swarm.Rhat()
+
         if ii % 10 == 0:
-            sys.stdout.write("\r {0}: {1}, {2}".format(ii, swarm.bestx[:4], swarm.bestL))
+            sys.stdout.write("\r {0}: {1}, {2}, {3}".format( \
+                    ii, swarm.bestx[:2], swarm.bestL, np.max(Rhat)))
             sys.stdout.flush()
+
+        if np.all(Rhat < 1.02):
+            sys.stdout.write("\nConverged!")
+            break
 
     sys.stdout.write("\nDone\n")
 
     print swarm.bestx[:10], swarm.bestL
+
+    #print swarm.Rhat2() - swarm.Rhat()
+    print swarm.Rhat()
