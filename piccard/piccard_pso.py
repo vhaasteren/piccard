@@ -265,7 +265,7 @@ def RunPSO(likob, chainsdir, nparticles=0, iterations=500):
     ndim = likob.dimensions
 
     if nparticles == 0:
-        nparticles = ndim * 10
+        nparticles = int(ndim**2/2) + 5*ndim
 
     print("Running a PSO in {0} dimensions with {1} particles".format(\
             ndim, nparticles))
@@ -294,10 +294,10 @@ def RunPSO(likob, chainsdir, nparticles=0, iterations=500):
 
 
 if __name__ == '__main__':
-    ndim = 50
+    ndim = 2
     minx = np.ones(ndim) * -900.0
     maxx = np.ones(ndim) * 900.0
-    nparticles = 1250
+    nparticles = 10
     #w = -0.2089
     #c1 = 1.193
     #c1 = 1.193
