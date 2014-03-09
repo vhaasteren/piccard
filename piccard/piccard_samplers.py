@@ -6,6 +6,7 @@ import scipy.linalg as sl, scipy.special as ss
 import h5py as h5
 import matplotlib.pyplot as plt
 import os as os
+import glob
 import sys
 import json
 import tempfile
@@ -658,10 +659,371 @@ def makefouriermodenumberplot(chainfilename, incDM=True):
     plt.grid(True, which='major')
 
 
+def makeLogLikelihoodPlot(ax, ll, \
+        xlabel="Sample number", ylabel="Log-posterior", title="Log-likelihood"):
+    """
+    Make a plot of the log-likelihood versus sample number
+    """
+    ax.plot(np.arange(len(ll)), ll, 'b-')
+    ax.grid(True)
+    ax.set_label(xlabel)
+    ax.set_ylabel(ylabel)
+
+def makeEfacPage(fig, samples, labels, mlchain, mlpso, txtfilename, \
+        ylabel='EFAC', title='Efac values'):
+    """
+    Make a 1-D plot of all efacs (or equad/jitter)
+
+    TODO: Add ML estimates
+    """
+
+    npars = len(mlchain)
+
+    # Create the plotting data for this plot
+    x = np.arange(npars)
+    yval = np.zeros(npars)
+    yerr = np.zeros(npars)
+
+    #for ii in range(maxpar-minpar):
+    for ii in range(npars):
+        fmin, fmax = confinterval(samples[:, ii], sigmalevel=1)
+        yval[ii] = (fmax + fmin) * 0.5
+        yerr[ii] = (fmax - fmin) * 0.5
+
+    ax = fig.add_subplot(111)
+
+    plt.subplots_adjust(left=0.115, right=0.95, top=0.9, bottom=0.25)
+
+    resp = ax.errorbar(x, yval, yerr=yerr, fmt=None, c='blue')
+    if mlpso is not None:
+        ress = ax.scatter(x, mlpso, s=50, c='r', marker='*')
+    else:
+        ress = ax.scatter(x, mlchain, s=50, c='r', marker='*')
+
+    #ax.axis([-1, max(x)+1, 0, max(yval+yerr)+1])
+    ax.axis([-1, max(x)+1, min(yval-yerr)-1, max(yval+yerr)+1])
+    ax.xaxis.grid(True, which='major')
+
+    ax.set_xticks(np.arange(npars))
+
+    #ax.set_title(r'Efac values, page ' + str(pp))
+    ax.set_title(title)
+    ax.set_ylabel(ylabel)
+
+    xtickNames = plt.setp(ax, xticklabels=labels)
+
+    plt.setp(xtickNames, rotation=45, fontsize=8, ha='right')
+
+    #fileout = open(outputdir+'/efac-page-'+str(pp)+'.txt', 'w')
+    fileout = open(txtfilename, 'w')
+    for ii in range(npars):
+        print str(labels[ii]) + ":  " + str(yval[ii]) + " +/- " + str(yerr[ii])
+        fileout.write(str(labels[ii]) + "  " + str(yval[ii]) + \
+                        "  " + str(yerr[ii]) + "\n")
+    fileout.close()
+
+
+def makeSpectrumPage(ax, samples, freqs, mlchain, mlpso, \
+        xlabel='Frequency [log10(f/Hz)]', ylabel='PSD', \
+        title='Power Spectral Density'):
+    """
+    Make a 1-D plot of the power spectrum
+
+    TODO: Add ML estimates
+    """
+
+    npars = len(mlchain)
+
+    # Create the plotting data for this plot
+    x = np.arange(npars)
+    yval = np.zeros(npars)
+    yerr = np.zeros(npars)
+
+    #for ii in range(maxpar-minpar):
+    for ii in range(npars):
+        fmin, fmax = confinterval(samples[:, ii], sigmalevel=1)
+        yval[ii] = (fmax + fmin) * 0.5
+        yerr[ii] = (fmax - fmin) * 0.5
+
+    resp = ax.errorbar(x, yval, yerr=yerr, fmt='.', c='blue')
+
+    ax.axis([min(x)-0.2, max(x)+0.2, min(yval-yerr)-1, max(yval+yerr)+1])
+
+    ax.set_title(title)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+
+    ax.grid(True)
+
+
+def makeResidualsPlot(ax, toas, residuals, toaerrs, flags, \
+        xlabel=r'TOA [MJD]', \
+        ylabel=r'Residual [$\mu$s]', \
+        title='Timing residuals'):
+    """
+    Plot the timing residuals
+    """
+    becolours = ['b', 'g', 'r', 'c', 'm', 'y', 'k']
+
+    backends = list(set(flags))
+
+    for bb, backend in enumerate(backends):
+        toaind = np.array(np.array(flags) == backend, dtype=np.bool)
+
+        respl = ax.errorbar(toas[toaind], \
+                residuals[toaind]*1e6, \
+                yerr=toaerrs[toaind]*1e6, fmt='.', \
+                c=becolours[bb % len(becolours)])
+
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.set_title(title)
+    ax.grid(True)
+
+
+
+
+
+def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
+        parametersfile=None, sampler='auto'):
+    """
+    Given an MCMC chain file, and an output directory, make all the results
+    plots
+
+    @param chainfile:   name of the MCMC file
+    @param outputdir:   output directory where all the plots will be saved
+    @param burnin:      Number of steps to be considered burn-in
+    @param thin:        Number of steps to skip in between samples (thinning)
+    @param parametersfile:  name of the file with the parameter labels
+    @param sampler:     What method was used to generate the mcmc chain
+                        (auto=autodetect). Options:('emcee', 'MultiNest',
+                        'ptmcmc')
+    """
+    # Read the mcmc chain
+    (llf, lpf, chainf, labels, pulsarid, pulsarname, stype, mlpso, mlpsopars) = \
+            ReadMCMCFile(chainfile, parametersfile=parametersfile, \
+            sampler=sampler, incextra=True)
+
+    # Remove burn-in and thin the chain
+    ll = llf[burnin::thin]
+    lp = lpf[burnin::thin]
+    chain = chainf[burnin::thin, :]
+
+    # Obtain the maximum from the chain
+    mlind = np.argmax(lp)
+    mlchain = lp[mlind]
+    mlchainpars = chain[mlind, :]
+
+    if mlpso is None:
+        ml = mlchain
+        mlpars = mlchainpars
+    else:
+        ml = mlpso
+        mlpars = mlpsopars
+
+    # List all varying parameters
+    dopar = np.array([1]*len(labels), dtype=np.bool)
+
+    # Log-likelihood plot
+    fileout = outputdir+'/logpost'
+    title = "Log-likelihood '{0}'".format(outputdir)
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    makeLogLikelihoodPlot(ax, lp, title=title)
+    plt.savefig(fileout+'.png')
+    plt.savefig(fileout+'.eps')
+    plt.close(fig)
+
+    # Plot the residuals for the pulsars
+    for infile in glob.glob(os.path.join(outputdir+'/', 'residuals-*.txt') ):
+        fileout = infile[:-4]
+        residualsfile = open(infile)
+        lines=[line.strip() for line in residualsfile]
+        toas = []
+        residuals = []
+        toaerrs = []
+        flags = []
+        for ii in range(len(lines)):
+            line = lines[ii].split()
+            toas.append(float(line[0]))
+            residuals.append(float(line[1]))
+            toaerrs.append(float(line[2]))
+            flags.append(line[3])
+
+        toas = np.array(toas)
+        residuals = np.array(residuals)
+        toaerrs = np.array(toaerrs)
+        residualsfile.close()
+
+        title = 'Timing residuals of ' + infile[12:-4]
+
+        fig = plt.figure()
+        ax = fig.add_subplot(111)
+
+        makeResidualsPlot(ax, toas, residuals, toaerrs, flags, title=title)
+
+        plt.savefig(fileout+'.png')
+        plt.savefig(fileout+'.eps')
+        plt.close(fig)
+
+    # Plot the efacs on pages
+    efacparind = (np.array(stype) == 'efac')
+    numefacs = np.sum(efacparind)
+    if numefacs > 1:
+        # With more than one efac, we'll make a separate efac page
+        dopar[efacparind] = False
+
+        maxplotpars = 20
+        pages = int(1 + numefacs / maxplotpars)
+        for pp in range(pages):
+            minpar = pp * maxplotpars
+            maxpar = min(numefacs, minpar + maxplotpars)
+            fileout = outputdir+'/efac-page-' + str(pp)
+
+            efacchain = chain[:, efacparind][:, minpar:maxpar]
+            efacnames = np.array(labels)[efacparind][minpar:maxpar]
+            efacmlchain = mlchainpars[efacparind][minpar:maxpar]
+            if mlpsopars is not None:
+                efacmlpso = mlpsopars[efacparind][minpar:maxpar]
+            else:
+                efacmlpso = None
+
+            fig = plt.figure()
+            #ax = fig.add_subplot(111)
+            makeEfacPage(fig, efacchain, efacnames, efacmlchain, efacmlpso, \
+                    fileout + '.txt', 'EFAC', \
+                    'Efac values {0}, page {1}'.format(pulsarname[pp], pp))
+
+            plt.savefig(fileout+'.png')
+            plt.savefig(fileout+'.eps')
+            plt.close(fig)
+
+    # Plot the equads on pages
+    equadparind = (np.array(stype) == 'equad')
+    numequads = np.sum(equadparind)
+    if numequads > 1:
+        # With more than one equad, we'll make a separate equad page
+        dopar[equadparind] = False
+
+        maxplotpars = 20
+        pages = int(1 + numequads / maxplotpars)
+        for pp in range(pages):
+            minpar = pp * maxplotpars
+            maxpar = min(numequads, minpar + maxplotpars)
+            fileout = outputdir+'/equad-page-' + str(pp)
+
+            equadchain = chain[:, equadparind][:, minpar:maxpar]
+            equadnames = np.array(labels)[equadparind][minpar:maxpar]
+            equadmlchain = mlchainpars[equadparind][minpar:maxpar]
+            if mlpsopars is not None:
+                equadmlpso = mlpsopars[equadparind][minpar:maxpar]
+            else:
+                equadmlpso = None
+
+            fig = plt.figure()
+            #ax = fig.add_subplot(111)
+            makeEfacPage(fig, equadchain, equadnames, equadmlchain, equadmlpso, \
+                    fileout + '.txt', 'Equad', \
+                    'Equad values {0}, page {1}'.format(pulsarname[pp], pp))
+
+            plt.savefig(fileout+'.png')
+            plt.savefig(fileout+'.eps')
+            plt.close(fig)
+
+    # Plot the jitters on pages
+    jitterparind = (np.array(stype) == 'jitter')
+    numjitters = np.sum(jitterparind)
+    if numjitters > 1:
+        # With more than one jitter, we'll make a separate jitter page
+        dopar[jitterparind] = False
+
+        maxplotpars = 20
+        pages = int(1 + numjitters / maxplotpars)
+        for pp in range(pages):
+            minpar = pp * maxplotpars
+            maxpar = min(numjitters, minpar + maxplotpars)
+            fileout = outputdir+'/jitter-page-' + str(pp)
+
+            jitterchain = chain[:, jitterparind][:, minpar:maxpar]
+            jitternames = np.array(labels)[jitterparind][minpar:maxpar]
+            jittermlchain = mlchainpars[jitterparind][minpar:maxpar]
+            if mlpsopars is not None:
+                jittermlpso = mlpsopars[jitterparind][minpar:maxpar]
+            else:
+                jittermlpso = None
+
+            fig = plt.figure()
+            #ax = fig.add_subplot(111)
+            makeEfacPage(fig, jitterchain, jitternames, jittermlchain, jittermlpso, \
+                    fileout + '.txt', 'Correlated Equad', \
+                    'Correlated Equad values {0}, page {1}'. \
+                    format(pulsarname[pp], pp))
+
+            plt.savefig(fileout+'.png')
+            plt.savefig(fileout+'.eps')
+            plt.close(fig)
+
+    # Plot power-spectra here
+    for psr in list(set(pulsarid)):
+        for signal in ['spectrum', 'dmspectrum']:
+            sigind = (np.array(stype) == signal)
+            psrind = (np.array(pulsarid) == psr)
+            ind = np.logical_and(sigind, psrind)
+
+            if np.sum(ind) > 0:
+                fileout = outputdir+'/'+pulsarname[ind[0]]+'-'+signal
+
+                dopar[jitterparind] = False
+                freqs = np.log10(np.float(np.array(labels[ind])))
+                spectrumchain = chain[:, ind]
+                spectrummlchain = mlchainpars[ind]
+                if mlpsopars is not None:
+                    spectrummlpso = mlpsopars[ind]
+                else:
+                    spectrummlpso = None
+
+                if signal == 'spectrum':
+                    title = 'Power Spectral Density noise {0}'.format(\
+                            pulsarname[ind[0]])
+                elif signal == 'dmspectrum':
+                    title = 'Power Spectral Density DM variations {0}'.format(\
+                            pulsarname[ind[0]])
+
+                fig = plt.figure()
+                ax = fig.add_subplot(111)
+                makeSpectrumPage(ax, spectrumchain, freqs, spectrummlchain, \
+                        spectrummlpso, title=title)
+
+
+
+    # Make a triplot of all the other parameters
+    if np.sum(dopar) > 1:
+        indices = np.flatnonzero(np.array(dopar == True))
+        fileout = outputdir+'/triplot'
+        triplot(chain, parlabels=labels, plotparameters=indices, ml=mlpars)
+        plt.savefig(fileout+'.png')
+        plt.savefig(fileout+'.eps')
+        plt.close(fig)
+
+    if np.sum(dopar) == 1:
+        # Make a single plot
+        indices = np.flatnonzero(np.array(dopar == True))
+        f, axarr = plt.subplots(nrows=1, ncols=1)
+        makesubplot1d(axarr, emceechain[:,indices[0]])
+        fileout = outputdir+'/triplot'
+        plt.savefig(fileout+'.png')
+        plt.savefig(fileout+'.eps')
+        plt.close(fig)
+
+
+
+
 """
 Given a likelihood object, a 'normal' MCMC chain file, and an output directory,
 this function spits out a lot of plots summarising all relevant results of the
 MCMC
+
+Note: will be deprecated some next version
 """
 def makeresultsplot(likob, chainfilename, outputdir, burnin=0, thin=1):
     (logpost_long, loglik_long, emceechain_long, labels) = ReadMCMCFile(chainfilename)
@@ -715,9 +1077,9 @@ def makeresultsplot(likob, chainfilename, outputdir, burnin=0, thin=1):
 
     # Make a plot of all efac's
     efacparind, efacpsrind, efacnames = likob.getEfacNumbers()
-    dopar[efacparind] = False
 
     if len(efacparind) > 0:
+        dopar[efacparind] = False
         maxplotpars = 20
         pages = int(1 + len(efacparind) / maxplotpars)
         for pp in range(pages):
@@ -1476,14 +1838,21 @@ Obtain the MCMC chain as a numpy array, and a list of parameter indices
 @param mcmctype: what method was used to generate the mcmc chain (auto=autodetect)
                     other options are: 'emcee', 'MultiNest', 'ptmcmc'
 @param nolabels: set to true if ok to print without labels
+@param incextra:    Whether or not we need to return the stype, pulsar, and
+                    pso ML as well
 
 @return: logposterior (1D), loglikelihood (1D), parameter-chain (2D), parameter-labels(1D)
 """
-def ReadMCMCFile(chainfile, parametersfile=None, sampler='auto', nolabels=False):
+def ReadMCMCFile(chainfile, parametersfile=None, sampler='auto', nolabels=False,
+        incextra=False):
     parametersfile = chainfile+'.parameters.txt'
     mnparametersfile = chainfile+'.mnparameters.txt'
     mnparametersfile2 = chainfile+'post_equal_weights.dat.mnparameters.txt'
     ptparametersfile = chainfile+'/ptparameters.txt'
+    psofile = chainfile + '/pso.txt'
+
+    if not os.path.exists(psofile):
+        psofile = None
 
     if sampler.lower() == 'auto':
         # Auto-detect the sampler
@@ -1554,21 +1923,43 @@ def ReadMCMCFile(chainfile, parametersfile=None, sampler='auto', nolabels=False)
             parfile = open(parametersfile)
             lines=[line.strip() for line in parfile]
             parlabels=[]
+            stypes=[]
+            pulsars=[]
+            pulsarnames=[]
             for i in range(len(lines)):
                 lines[i]=lines[i].split()
 
                 if int(lines[i][0]) >= 0:
                     # If the parameter has an index
                     parlabels.append(lines[i][5])
+                    stypes.append(lines[i][2])
+                    pulsars.append(int(lines[i][1]))
+
+                    if len(lines[i]) > 6:
+                        pulsarnames.append(lines[i][6])
+                    else:
+                        pulsarnames.append("Pulsar {0}".format(lines[i][1]))
+
+            parfile.close()
         else:
             raise IOError, "No valid parameters file found!"
     else:
         parlabels = None
+        stypes = []
+        pulsars = []
 
     if os.path.exists(parametersfile):
         chain = np.loadtxt(chainfile)
     else:
         raise IOError, "No valid chain-file found!"
+
+    if psofile is not None:
+        mldat = np.loadtxt(psofile)
+        mlpso = mldat[0]
+        mlpsopars = mldat[1:]
+    else:
+        mlpso = None
+        mlpsopars = None
 
     if sampler.lower() == 'emcee':
         logpost = chain[:,1]
@@ -1583,5 +1974,10 @@ def ReadMCMCFile(chainfile, parametersfile=None, sampler='auto', nolabels=False)
         loglik = chain[:,1]
         samples = chain[:,3:]
 
+    if incextra:
+        retvals = (logpost, loglik, samples, parlabels, \
+                pulsars, pulsarnames, stypes, mlpso, mlpsopars)
+    else:
+        retvals = (logpost, loglik, samples, parlabels)
 
-    return (logpost, loglik, samples, parlabels)
+    return retvals

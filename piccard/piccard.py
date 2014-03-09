@@ -4359,7 +4359,7 @@ class ptaLikelihood(object):
                             pmax += [1.0]
                             pwidth += [0.1]
                         else:
-                            #tmpest[jj] = 0.0        # DELETE THISS!!!!!
+                            tmpest[jj] = 0.0        # DELETE THISS!!!!!
                             pmin += [-500.0 * tmperrs[jj] + tmpest[jj]]
                             pmax += [500.0 * tmperrs[jj] + tmpest[jj]]
                             pwidth += [(pmax[-1]-pmin[-1])/50.0]
@@ -5002,10 +5002,13 @@ class ptaLikelihood(object):
                     flagname = 'none'
                     flagvalue = 'none'
 
+                pulsarname = self.ptapsrs[psrindex].name
+
                 pardes.append(\
                         {'index': index, 'pulsar': psrindex, 'sigindex': ii, \
                             'sigtype': sig['stype'], 'correlation': sig['corr'], \
-                            'name': flagname, 'id': flagvalue})
+                            'name': flagname, 'id': flagvalue, 'pulsarname': \
+                            pulsarname})
 
         return pardes
 
@@ -5036,15 +5039,36 @@ class ptaLikelihood(object):
         fil = open(filename, "w")
 
         for ii in range(len(self.pardes)):
-            fil.write("{0:d} \t{1:d} \t{2:s} \t{3:s} \t{4:s} \t{5:s}\n".format(\
+            fil.write("{0:d} \t{1:d} \t{2:s} \t{3:s} \t{4:s} \t{5:s} \t{6:s}\n".format(\
                     self.pardes[ii]['index'],
                     self.pardes[ii]['pulsar'],
                     self.pardes[ii]['sigtype'],
                     self.pardes[ii]['correlation'],
                     self.pardes[ii]['name'],
-                    self.pardes[ii]['id']))
+                    self.pardes[ii]['id'],
+                    self.pardes[ii]['pulsarname']))
 
-        fil.close
+        fil.close()
+
+
+    def saveResiduals(self, outputdir):
+        """
+        Save the residuals of all pulsars to text files
+
+        @param outputdir:   Directory where the txt files will be saved
+        """
+
+        for pp, psr in enumerate(self.ptapsrs):
+            filename = outputdir + '/residuals-' + psr.name + '.txt'
+
+            fil = open(filename, "w")
+            for ii in range(len(psr.toas)):
+                fil.write("{0} \t{1} \t{2} \t{3}\n".format(\
+                        pic_T0 + psr.toas[ii]/pic_spd, \
+                        psr.residuals[ii], \
+                        psr.toaerrs[ii], \
+                        psr.flags[ii]))
+        fil.close()
 
     """
     Re-calculate the number of varying parameters per signal, and the number of
@@ -5100,7 +5124,7 @@ class ptaLikelihood(object):
     Return a list of all spectrum signals: signal name, start-par, stop-par, and
     the actual frequencies
 
-    TODO: parameters can be non-varying. Take that into accoutn as well
+    TODO: parameters can be non-varying. Take that into account as well
     """
     def getSpectraNumbers(self):
         signame = []
