@@ -1275,6 +1275,100 @@ class aniCorrelations(object):
 
         return corrreturn
 
+def AntennaPatternPC(rajp, decjp, raj, decj):
+    """
+    Return the x,+ polarisation antenna pattern for a given source position and
+    polsar position
+
+    @param rajp:    Right ascension pulsar
+    @param decj:    Declination pulsar
+    @param raj:     Right ascension source
+    @param dec:     Declination source
+    """
+    Omega = np.array([-np.cos(decj)*np.cos(raj), \
+                      -np.cos(decj)*np.sin(raj), \
+                      np.sin(decj)])
+    
+    mhat = np.array([-np.sin(raj), np.cos(raj), 0])
+    nhat = np.array([-np.cos(raj)*np.sin(decj), \
+                     -np.sin(decj)*np.sin(raj), \
+                     np.cos(decj)])
+
+    p = np.array([np.cos(rajp)*np.cos(decj), \
+                  np.sin(rajp)*np.cos(decj), \
+                  np.sin(decj)])
+
+    Fp = 0.5 * (np.dot(mhat, p)**2 - np.dot(nhat, p)**2) / (1 + np.dot(Omega, p))
+    Fc = np.dot(mhat, p) * np.dot(nhat, p) / (1 + np.dot(Omega, p))
+
+    return Fp, Fc
+
+
+# The GWB general anisotropic correlations in the pixel-basis
+class pixelCorrelations(object):
+    phiarr = None           # The phi pulsar position parameters
+    thetaarr = None         # The theta pulsar position parameters
+    cmat = None             # The correlation matrix
+    Fp = None               # Plus antenna pattern
+    Fc = None               # Cross antenna pattern
+    npixels = 4
+
+    def __init__(self, psrs=None, npixels=4):
+        # If we have a pulsars object, initialise the angular quantities
+        if psrs != None:
+            self.setmatrices(psrs, npixels)
+            self.npixels = npixels
+        else:
+            self.phiarr = None           # The phi pulsar position parameters
+            self.thetaarr = None         # The theta pulsar position parameters
+            self.cmat = None
+            self.Fp = None
+            self.Fc = None
+
+    def setmatrices(self, psrs, npixels=4):
+        # First set all the pulsar positions
+        self.phiarr = np.zeros(len(psrs))
+        self.thetaarr = np.zeros(len(psrs))
+        self.cmat = np.zeros((len(psrs), len(psrs)))
+        self.Fp = np.zeros((len(psrs), npixels))
+        self.Fc = np.zeros((len(psrs), npixels))
+        self.npixels = npixels
+
+        for ii in range(len(psrs)):
+            self.phiarr[ii] = psrs[ii].raj
+            self.thetaarr[ii] = 0.5*np.pi - psrs[ii].decj
+
+    # Return the full correlation matrix that depends on the gwb direction
+    def corrmat(self, pixpars):
+        """
+        pixpars[0]: right ascension source
+        pixpars[1]: declination source
+        ... etc.
+        """
+        for ii in range(len(self.phiarr)):
+            for pp in range(self.npixels):
+                self.Fp[ii, pp], self.Fc[ii, pp] = AntennaPatternPC( \
+                        self.phiarr[ii], 0.5*np.pi - self.thetaarr[ii], \
+                        pixpars[2*pp], pixpars[1+2*pp])
+
+        for ii in range(len(self.phiarr)):
+            for jj in range(ii, len(self.phiarr)):
+                self.cmat[ii, jj] = 0.0
+                for pp in range(self.npixels):
+                    if ii == jj:
+                        self.cmat[ii, jj] += 0.5*self.Fp[ii, pp]**2 + \
+                                            0.5*self.Fc[ii, pp]**2
+                    else:
+                        self.cmat[ii, jj] += 0.5*self.Fp[ii, pp]*self.Fp[jj, pp] + \
+                                            0.5*self.Fc[ii, pp]*self.Fc[jj, pp]
+                        self.cmat[jj, ii] = self.cmat[ii, jj]
+
+        return self.cmat / self.npixels
+
+
+
+
+
 """
 Function that calculates the earth-term gravitational-wave burst-with-memory
 signal, as described in:
@@ -3714,6 +3808,9 @@ class ptaLikelihood(object):
         if 'stype' == 'anisotropicgwb':
             if not 'lAniGWB' in signal:
                 raise ValueError("ERROR: Missing lAniGWB key in signal")
+        elif 'stype' == 'pixelgwb':
+            if not 'npixels' in signal:
+                raise ValueError("ERROR: Missing npixels key in signal")
 
         if signal['corr'] == 'gr':
             # Correlated with the Hellings \& Downs matrix
@@ -3727,6 +3824,9 @@ class ptaLikelihood(object):
         elif signal['corr'] == 'anisotropicgwb':
             # Anisotropic GWB correlations
             signal['aniCorr'] = aniCorrelations(self.ptapsrs, signal['lAniGWB'])
+        elif signal['corr'] == 'pixelgwb':
+            # Pixel based anisotropic GWB correlations
+            signal['aniCorr'] = pixelCorrelations(self.ptapsrs, signal['npixels'])
 
         if signal['corr'] != 'single':
             # Also fill the Ffreqs array, since we are dealing with correlations
@@ -4038,6 +4138,7 @@ class ptaLikelihood(object):
             incGWB=False, gwbModel='powerlaw', \
             incDipole=False, dipoleModel='powerlaw', \
             incAniGWB=False, anigwbModel='powerlaw', lAniGWB=1, \
+            incPixelGWB=False, pixelgwbModel='powerlaw', npixels=4, \
             incBWM=False, \
             incTimingModel=False, nonLinear=False, \
             varyEfac=True, incEquad=False, \
@@ -4580,6 +4681,37 @@ class ptaLikelihood(object):
                 })
             signals.append(newsignal)
 
+        if incPixelGWB:
+            if pixelgwbModel=='spectrum':
+                nfreqs = np.max(numNoiseFreqs)
+                bvary = [True]*(nfreqs + 2*npixels)
+                pmin = [-18.0]*nfreqs + [0, -0.5*np.pi] * npixels
+                pmax = [-7.0]*nfreqs + [2*np.pi, 0.5*np.pi] * npixels
+                pstart = [-10.0]*nfreqs + [0.0, 0.0] * npixels
+                pwidth = [0.1]*nfreqs + [0.1, 0.1] * npixels
+            elif anigwbModel=='powerlaw':
+                bvary = [True, True, False] + [True, True] * npixels
+                pmin = [-17.0, 1.02, 1.0e-11] + [0.0, -0.5*np.pi] * npixels
+                pmax = [-10.0, 6.98, 3.0e-9] + [2*np.pi, 0.5*np.pi] * npixels
+                pstart = [-15.0, 2.01, 1.0e-10] + [0.0, 0.0] * npixels
+                pwidth = [0.1, 0.1, 5.0e-11] + [0.1, 0.1] * npixels
+            else:
+                raise ValueError("ERROR: option {0} not known".
+                        format(anigwbModel))
+
+            newsignal = OrderedDict({
+                "stype":anigwbModel,
+                "corr":"pixelgwb",
+                "pulsarind":-1,
+                "bvary":bvary,
+                "pmin":pmin,
+                "pmax":pmax,
+                "pwidth":pwidth,
+                "pstart":pstart,
+                "npixels":npixels
+                })
+            signals.append(newsignal)
+
         if incBWM:
             toamax = self.ptapsrs[0].toas[0]
             toamin = self.ptapsrs[0].toas[0]
@@ -4933,7 +5065,10 @@ class ptaLikelihood(object):
 
                     # If there are more parameters than frequencies, this is an
                     # anisotropic background
-                    if jj >= len(self.ptapsrs[psrindex].Ffreqs)/2:
+                    if jj >= len(self.ptapsrs[psrindex].Ffreqs)/2 and sig['corr'] == 'pixelgwb':
+                        ind = (jj - len(self.ptapsrs[psrindex].Ffreqs)/2) % 2
+                        flagvalue = ['GWB-RA', 'GWB-DEC'][ind]
+                    elif jj >= len(self.ptapsrs[psrindex].Ffreqs)/2:
                         # clmind is index of clm's, plus one, since we do not
                         # model the c_00 term explicitly like that (it is the
                         # amplitude)
@@ -4952,13 +5087,22 @@ class ptaLikelihood(object):
                 elif sig['stype'] == 'powerlaw':
                     flagname = 'powerlaw'
 
-                    if jj < 3:
+                    if jj < 3 or sig['corr'] == 'pixelgwb':
                         if sig['corr'] == 'gr':
                             flagvalue = ['GWB-Amplitude', 'GWB-spectral-index', 'low-frequency-cutoff'][jj]
                         elif sig['corr'] == 'uniform':
                             flagvalue = ['CLK-Amplitude', 'CLK-spectral-index', 'low-frequency-cutoff'][jj]
                         elif sig['corr'] == 'dipole':
                             flagvalue = ['DIP-Amplitude', 'DIP-spectral-index', 'low-frequency-cutoff'][jj]
+                        elif sig['corr'] == 'anisotropicgwb':
+                            flagvalue = ['GWB-Amplitude', 'GWB-spectral-index', 'low-frequency-cutoff'][jj]
+                        elif sig['corr'] == 'pixelgwb':
+                            if jj > 4:
+                                ind = 3 + ((jj-3) % 2)
+                            else:
+                                ind = jj
+                            flagvalue = ['GWB-Amplitude', 'GWB-spectral-index', 'low-frequency-cutoff', \
+                                         'GWB-RA', 'GWB-DEC'][ind]
                         else:
                             flagvalue = ['RN-Amplitude', 'RN-spectral-index', 'low-frequency-cutoff'][jj]
                     else:
@@ -5154,6 +5298,9 @@ class ptaLikelihood(object):
                     signame.append('Anisotropy spectrum')
                     signameshort.append('anisotropyspectrum')
                     freqs.append(np.sort(np.array(list(set(self.ptapsrs[0].Ffreqs)))))
+                elif m2signal['stype'] == 'spectrum' and m2signal['corr'] == 'pixelgwb':
+                    signame.append('Pixel-based gwb spectrum')
+                    signameshort.append('pixelgwbspectrum')
                 elif m2signal['stype'] == 'dmspectrum':
                     signame.append('DM variation ' + self.ptapsrs[m2signal['pulsarind']].name)
                     signameshort.append('dmspectrum-' + self.ptapsrs[m2signal['pulsarind']].name)
@@ -5278,7 +5425,8 @@ class ptaLikelihood(object):
                             self.Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += 10**pcdoubled
                         else:
                             self.Phivec[findex:findex+2*nfreq] = 10**pcdoubled
-                    elif m2signal['corr'] in ['gr', 'uniform', 'dipole', 'anisotropicgwb']:
+                    elif m2signal['corr'] in ['gr', 'uniform', 'dipole', \
+                                              'anisotropicgwb', 'pixelgwb']:
                         nfreq = m2signal['npars']
 
                         if m2signal['corr'] in ['gr', 'uniform', 'dipole']:
@@ -5286,11 +5434,16 @@ class ptaLikelihood(object):
                             corrmat = m2signal['corrmat']
                         elif m2signal['corr'] == 'anisotropicgwb':
                             nclm = m2signal['aniCorr'].clmlength()
+                            # These indices do not seem right at all!
                             pcdoubled = np.array([\
                                     sparameters[:-nclm],\
                                     sparameters[:-nclm]]).T.flatten()
                             clm = sparameters[-nclm:]
                             corrmat = m2signal['aniCorr'].corrmat(clm)
+                        elif m2signal['corr'] == 'pixelgwb':
+                            npixels = m2signal['aniCorr'].npixels
+                            pixpars = sparameters[-2*npixels:]
+                            corrmat = m2signal['aniCorr'].corrmat(pixpars)
 
                         indexa = 0
                         indexb = 0
@@ -5332,7 +5485,8 @@ class ptaLikelihood(object):
                             self.Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += pcdoubled
                         else:
                             self.Phivec[findex:findex+2*nfreq] = pcdoubled
-                    elif m2signal['corr'] in ['gr', 'uniform', 'dipole', 'anisotropicgwb']:
+                    elif m2signal['corr'] in ['gr', 'uniform', 'dipole', \
+                                              'anisotropicgwb', 'pixelgwb']:
                         freqpy = m2signal['Ffreqs'] * pic_spy
                         pcdoubled = (Amp**2 * pic_spy**3 / (12*np.pi*np.pi * m2signal['Tmax'])) * freqpy ** (-Si)
                         nfreq = len(freqpy)
@@ -5343,6 +5497,9 @@ class ptaLikelihood(object):
                             nclm = m2signal['aniCorr'].clmlength()
                             clm = sparameters[-nclm:]
                             corrmat = m2signal['aniCorr'].corrmat(clm)
+                        elif m2signal['corr'] == 'pixelgwb':
+                            pixpars = sparameters[3:]
+                            corrmat = m2signal['aniCorr'].corrmat(pixpars)
 
                         indexa = 0
                         indexb = 0
@@ -5381,7 +5538,8 @@ class ptaLikelihood(object):
                             self.Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += pcdoubled
                         else:
                             self.Phivec[findex:findex+2*nfreq] = pcdoubled
-                    elif m2signal['corr'] in ['gr', 'uniform', 'dipole', 'anisotropicgwb']:
+                    elif m2signal['corr'] in ['gr', 'uniform', 'dipole', \
+                                              'anisotropicgwb', 'pixelgwb']:
                         freqpy = self.ptapsrs[0].Ffreqs * pic_spy
                         pcdoubled = (Amp * pic_spy**3 / m2signal['Tmax']) / \
                                 ((1 + (freqpy/fc)**2)**(-0.5*alpha))
@@ -5391,8 +5549,12 @@ class ptaLikelihood(object):
                             corrmat = m2signal['corrmat']
                         elif m2signal['corr'] == 'anisotropicgwb':
                             nclm = m2signal['aniCorr'].clmlength()
+                            # These indices don't seem right. Check the -nclm part
                             clm = sparameters[-nclm:m2signal['parindex']+m2signal['npars']]
                             corrmat = m2signal['aniCorr'].corrmat(clm)
+                        elif m2signal['corr'] == 'pixelgwb':
+                            pixpars = sparameters[3:]
+                            corrmat = m2signal['aniCorr'].corrmat(pixpars)
 
                         indexa = 0
                         indexb = 0
@@ -6212,17 +6374,20 @@ class ptaLikelihood(object):
             Phiinv = np.diag(1.0 / np.diag(self.Phi))
         else:
             try:
-                cf = sl.cho_factor(self.Phi)
+                cf = sl.cho_factor(self.Phi + 1.0e-20*np.eye(self.Phi.shape[0]))
                 PhiLD = 2*np.sum(np.log(np.diag(cf[0])))
                 Phiinv = sl.cho_solve(cf, np.identity(self.Phi.shape[0]))
             except np.linalg.LinAlgError:
-                U, s, Vh = sl.svd(self.Phi)
-                if not np.all(s > 0):
-                    raise ValueError("ERROR: Phi singular according to SVD")
-                PhiLD = np.sum(np.log(s))
-                Phiinv = np.dot(Vh.T, np.dot(np.diag(1.0/s), U.T))
+                try:
+                    U, s, Vh = sl.svd(self.Phi)
+                    if not np.all(s > 0):
+                        raise ValueError("ERROR: Phi singular according to SVD")
+                    PhiLD = np.sum(np.log(s))
+                    Phiinv = np.dot(Vh.T, np.dot(np.diag(1.0/s), U.T))
+                except np.linalg.LinAlgError:
+                    return -np.inf
 
-                print "Fallback to SVD for Phi"
+                #print "Fallback to SVD for Phi"
 
         # MARK E
 
@@ -6233,11 +6398,14 @@ class ptaLikelihood(object):
             SigmaLD = 2*np.sum(np.log(np.diag(cf[0])))
             rGSigmaGr = np.dot(self.rGF, sl.cho_solve(cf, self.rGF))
         except np.linalg.LinAlgError:
-            U, s, Vh = sl.svd(self.Sigma)
-            if not np.all(s > 0):
-                raise ValueError("ERROR: Sigma singular according to SVD")
-            SigmaLD = np.sum(np.log(s))
-            rGSigmaGr = np.dot(self.rGF, np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, self.rGF))))
+            try:
+                U, s, Vh = sl.svd(self.Sigma)
+                if not np.all(s > 0):
+                    raise ValueError("ERROR: Sigma singular according to SVD")
+                SigmaLD = np.sum(np.log(s))
+                rGSigmaGr = np.dot(self.rGF, np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, self.rGF))))
+            except np.linalg.LinAlgError:
+                return -np.inf
 
         # Mark F
         #print np.sum(self.npgs), -0.5*np.sum(self.rGr), -0.5*np.sum(self.GNGldet)
@@ -6520,13 +6688,16 @@ class ptaLikelihood(object):
             SigmaLD = 2*np.sum(np.log(np.diag(cf[0])))
             rGSigmaGr = np.dot(self.rGU, sl.cho_solve(cf, self.rGU))
         except np.linalg.LinAlgError:
-            U, s, Vh = sl.svd(self.Sigma)
-            if not np.all(s > 0):
-                raise ValueError("ERROR: Sigma singular according to SVD")
-            SigmaLD = np.sum(np.log(s))
-            rGSigmaGr = np.dot(self.rGU, np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, self.rGU))))
+            try:
+                U, s, Vh = sl.svd(self.Sigma)
+                if not np.all(s > 0):
+                    raise ValueError("ERROR: Sigma singular according to SVD")
+                SigmaLD = np.sum(np.log(s))
+                rGSigmaGr = np.dot(self.rGU, np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, self.rGU))))
+            except np.linalg.LinAlgError:
+                return -np.inf
 
-            #print "Fallback to SVD for Sigma", parameters
+                #print "Fallback to SVD for Sigma", parameters
         # Mark F
 
         # Now we are ready to return the log-likelihood
@@ -6623,11 +6794,14 @@ class ptaLikelihood(object):
                 PhiLD = 2*np.sum(np.log(np.diag(cf[0])))
                 Phiinv = sl.cho_solve(cf, np.identity(Phi.shape[0]))
             except np.linalg.LinAlgError:
-                U, s, Vh = sl.svd(Phi)
-                if not np.all(s > 0):
-                    raise ValueError("ERROR: Phi singular according to SVD")
-                PhiLD = np.sum(np.log(s))
-                Phiinv = np.dot(Vh.T, np.dot(np.diag(1.0/s), U.T))
+                try:
+                    U, s, Vh = sl.svd(Phi)
+                    if not np.all(s > 0):
+                        raise ValueError("ERROR: Phi singular according to SVD")
+                    PhiLD = np.sum(np.log(s))
+                    Phiinv = np.dot(Vh.T, np.dot(np.diag(1.0/s), U.T))
+                except np.linalg.LinAlgError:
+                    return -np.inf
 
                 #print "Fallback to SVD for Phi"
         """
