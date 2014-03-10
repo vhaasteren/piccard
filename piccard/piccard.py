@@ -4964,7 +4964,7 @@ class ptaLikelihood(object):
             # If we model DM variations, we will need to include QSD
             # marginalisation for DM. Modify design matrix accordingly
             #if dmModel[pindex] != 'None':
-            if numDMFreqs[pindex] > 0:
+            if numDMFreqs[pindex] > 0 and False:
                 m2psr.addDMQuadratic()
 
             tmsigpars = None
