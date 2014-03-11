@@ -4926,6 +4926,8 @@ class ptaLikelihood(object):
         if 'Tmax' in fullmodel:
             if fullmodel['Tmax'] is not None:
                 Tmax = fullmodel['Tmax']
+            else:
+                Tmax = None
         else:
             Tmax = None
 
