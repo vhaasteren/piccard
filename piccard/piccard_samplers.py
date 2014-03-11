@@ -785,7 +785,7 @@ def makeResidualsPlot(ax, toas, residuals, toaerrs, flags, \
 
 
 def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
-        parametersfile=None, sampler='auto'):
+        parametersfile=None, sampler='auto', make1dplots=True):
     """
     Given an MCMC chain file, and an output directory, make all the results
     plots
@@ -816,10 +816,12 @@ def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
 
     if mlpso is None:
         ml = mlchain
-        mlpars = mlchainpars
+        mlpars = None
+        mlpars2 = mlchainpars
     else:
         ml = mlpso
         mlpars = mlpsopars
+        mlpars2 = mlchainpars
 
     # List all varying parameters
     dopar = np.array([1]*len(labels), dtype=np.bool)
@@ -869,7 +871,7 @@ def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
     # Plot the efacs on pages
     efacparind = (np.array(stype) == 'efac')
     numefacs = np.sum(efacparind)
-    if numefacs > 1:
+    if numefacs > 1 and make1dplots:
         # With more than one efac, we'll make a separate efac page
         dopar[efacparind] = False
 
@@ -901,7 +903,7 @@ def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
     # Plot the equads on pages
     equadparind = (np.array(stype) == 'equad')
     numequads = np.sum(equadparind)
-    if numequads > 1:
+    if numequads > 1 and make1dplots:
         # With more than one equad, we'll make a separate equad page
         dopar[equadparind] = False
 
@@ -933,7 +935,7 @@ def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
     # Plot the jitters on pages
     jitterparind = (np.array(stype) == 'jitter')
     numjitters = np.sum(jitterparind)
-    if numjitters > 1:
+    if numjitters > 1 and make1dplots:
         # With more than one jitter, we'll make a separate jitter page
         dopar[jitterparind] = False
 
@@ -1000,7 +1002,8 @@ def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
     if np.sum(dopar) > 1:
         indices = np.flatnonzero(np.array(dopar == True))
         fileout = outputdir+'/triplot'
-        triplot(chain, parlabels=labels, plotparameters=indices, ml=mlpars)
+        triplot(chain, parlabels=labels, plotparameters=indices, ml=mlpars,
+                ml2=mlpars2)
         plt.savefig(fileout+'.png')
         plt.savefig(fileout+'.eps')
         plt.close(fig)

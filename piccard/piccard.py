@@ -1532,6 +1532,7 @@ class ptaPulsar(object):
     ptmdescription = []
     flags = None
     name = "J0000+0000"
+    Tmax = None
 
     # The auxiliary quantities
     Fmat = None
@@ -1620,6 +1621,7 @@ class ptaPulsar(object):
         self.ptmdescription = []
         self.flags = None
         self.name = "J0000+0000"
+        self.Tmax = None
 
         self.Fmat = None
         self.SFmat = None
@@ -2315,7 +2317,7 @@ class ptaPulsar(object):
     def createPulsarAuxiliaries(self, h5df, Tmax, nfreqs, ndmfreqs, \
             twoComponent=False, nSingleFreqs=0, nSingleDMFreqs=0, \
             compression='None', likfunc='mark3', write='likfunc', \
-            tmsigpars=None):
+            tmsigpars=None, noGmatWrite=False):
         # For creating the auxiliaries it does not really matter: we are now
         # creating all quantities per default
         # TODO: set this parameter in another place?
@@ -2329,6 +2331,8 @@ class ptaPulsar(object):
             nf = nfreqs
         if ndmfreqs is not None and ndmfreqs != 0:
             ndmf = ndmfreqs
+
+        self.Tmax = Tmax
 
         # Write these numbers to the HDF5 file
         if write != 'no':
@@ -2347,7 +2351,7 @@ class ptaPulsar(object):
                 pass
 
             h5df.addData(self.name, 'pic_modelFrequencies', modelFrequencies)
-            h5df.addData(self.name, 'pic_Tmax', [Tmax])
+            h5df.addData(self.name, 'pic_Tmax', [self.Tmax])
 
         # Create the Fourier design matrices for noise
         if nf > 0:
@@ -2408,12 +2412,14 @@ class ptaPulsar(object):
             self.constructCompressionMatrix(compression, nfmodes=2*nf,
                     ndmodes=2*ndmf, threshold=1.0, tmpars=tmpars)
             if write != 'no':
-                h5df.addData(self.name, 'pic_Gmat', self.Gmat)
-                h5df.addData(self.name, 'pic_Gcmat', self.Gcmat)
-                h5df.addData(self.name, 'pic_Hmat', self.Hmat)
                 h5df.addData(self.name, 'pic_Hcmat', self.Hcmat)
-                h5df.addData(self.name, 'pic_Homat', self.Homat)
-                h5df.addData(self.name, 'pic_Hocmat', self.Hocmat)
+
+                if not noGmatWrite:
+                    h5df.addData(self.name, 'pic_Gmat', self.Gmat)
+                    h5df.addData(self.name, 'pic_Gcmat', self.Gcmat)
+                    h5df.addData(self.name, 'pic_Hmat', self.Hmat)
+                    h5df.addData(self.name, 'pic_Homat', self.Homat)
+                    h5df.addData(self.name, 'pic_Hocmat', self.Hocmat)
 
 
 
@@ -3069,6 +3075,8 @@ class ptaPulsar(object):
         if file_Tmax != Tmax or not np.all(np.array(file_freqs) == \
                 np.array([nf, ndmf, nsf, nsdmf])):
             raise ValueError("File frequencies are not compatible with model frequencies")
+        else:
+            self.Tmax = Tmax
         # Ok, this model seems good to go. Let's start
 
         # G/H compression matrices
@@ -4132,6 +4140,7 @@ class ptaLikelihood(object):
     @param dmnfreqmodes:    blah
     """
     def makeModelDict(self,  nfreqs=20, ndmfreqs=None, \
+            Tmax=None, \
             incRedNoise=False, noiseModel='powerlaw', fc=None, \
             incDM=False, dmModel='powerlaw', \
             incClock=False, clockModel='powerlaw', \
@@ -4460,7 +4469,7 @@ class ptaLikelihood(object):
                             pmax += [1.0]
                             pwidth += [0.1]
                         else:
-                            tmpest[jj] = 0.0        # DELETE THISS!!!!!
+                            # tmpest[jj] = 0.0        # DELETE THISS!!!!!
                             pmin += [-500.0 * tmperrs[jj] + tmpest[jj]]
                             pmax += [500.0 * tmperrs[jj] + tmpest[jj]]
                             pwidth += [(pmax[-1]-pmin[-1])/50.0]
@@ -4744,6 +4753,7 @@ class ptaLikelihood(object):
             "orderFrequencyLines":orderFrequencyLines,
             "evalCompressionComplement":evalCompressionComplement,
             "likfunc":likfunc,
+            "Tmax":Tmax,
             "signals":signals
             })
 
@@ -4903,7 +4913,8 @@ class ptaLikelihood(object):
                                 from the HDF5 file
     @param verbose:             Give some extra information about progress
     """
-    def initModel(self, fullmodel, fromFile=True, verbose=False):
+    def initModel(self, fullmodel, fromFile=True, verbose=False, \
+                  noGmatWrite=False):
         numNoiseFreqs = fullmodel['numNoiseFreqs']
         numDMFreqs = fullmodel['numDMFreqs']
         compression = fullmodel['compression']
@@ -4911,6 +4922,12 @@ class ptaLikelihood(object):
         orderFrequencyLines = fullmodel['orderFrequencyLines']
         likfunc = fullmodel['likfunc']
         signals = fullmodel['signals']
+
+        if 'Tmax' in fullmodel:
+            if fullmodel['Tmax'] is not None:
+                Tmax = fullmodel['Tmax']
+        else:
+            Tmax = None
 
         if len(self.ptapsrs) < 1:
             raise IOError, "No pulsars loaded"
@@ -4931,7 +4948,9 @@ class ptaLikelihood(object):
         for m2psr in self.ptapsrs:
             Tstart = np.min([np.min(m2psr.toas), Tstart])
             Tfinish = np.max([np.max(m2psr.toas), Tfinish])
-        Tmax = Tfinish - Tstart
+
+        if Tmax is None:
+            Tmax = Tfinish - Tstart
 
         # If the compressionComplement is defined, overwrite the default
         if evalCompressionComplement != 'None':
@@ -5010,7 +5029,8 @@ class ptaLikelihood(object):
                                 nSingleFreqs=numSingleFreqs[pindex], \
                                 nSingleDMFreqs=numSingleDMFreqs[pindex], \
                                 likfunc=likfunc, compression=compression, \
-                                write='likfunc', tmsigpars=tmsigpars)
+                                write='likfunc', tmsigpars=tmsigpars, \
+                                noGmatWrite=noGmatWrite)
 
             # When selecting Fourier modes, like in mark7/mark8, the binclude vector
             # indicates whether or not a frequency is included in the likelihood. By
@@ -6374,7 +6394,8 @@ class ptaLikelihood(object):
             Phiinv = np.diag(1.0 / np.diag(self.Phi))
         else:
             try:
-                cf = sl.cho_factor(self.Phi + 1.0e-20*np.eye(self.Phi.shape[0]))
+                #cf = sl.cho_factor(self.Phi + 1.0e-20*np.eye(self.Phi.shape[0]))
+                cf = sl.cho_factor(self.Phi)
                 PhiLD = 2*np.sum(np.log(np.diag(cf[0])))
                 Phiinv = sl.cho_solve(cf, np.identity(self.Phi.shape[0]))
             except np.linalg.LinAlgError:
@@ -8805,8 +8826,6 @@ class ptaLikelihood(object):
 
 
 
-
-
     """
     Test anisotropy code
     """
@@ -8959,4 +8978,129 @@ def simulateFullSet(parlist, timlist, simlist, parameters, h5file, **kwargs):
 
         print "Writing mock TOAs of ", parlist[ii], "/", likob.ptapsrs[ii].name, \
                 " to ", simlist[ii]
+
+
+def crossPower(likobs, mlpars):
+    """
+    Calculate the cross-power spectrum from a series of single-pulsar likelihood
+    objects, and their maximum-likelihood parameters
+
+    @param likobs:  list of likelihood objects
+    @param mlpars:  list of ML parameters
+
+    The cross-power of pulsar a and b is defined as: num / den
+    num = residuals_a * C_a^{-1} * Cgw_ab * C_b^{-1} * residuals_b
+    den = Trace( C_a^{-1} * Cgw_{ab} * C_b^{-1} * Cgw_{ba} )
+
+    err = 1.0 / sqrt(den)
+    """
+    npsrs = len(likobs)
+    if npsrs != len(mlpars):
+        raise ValueError("# of likelihood objects not equal to # of mlpars")
+
+    npf = np.zeros(npsrs, dtype=np.int)
+    npfdm = np.zeros(npsrs, dtype=np.int)
+    npu = np.zeros(npsrs, dtype=np.int)
+
+    pairs = int(0.5 * npsrs * (npsrs - 1))
+    crosspower = np.zeros(pairs)
+    crosspowererr = np.zeros(pairs)
+    hdcoeff = np.zeros(pairs)
+    angle = np.zeros(pairs)
+
+    for oo, likob in enumerate(likobs):
+        if len(likob.ptapsrs) > 1:
+            raise ValueError("# of pulsars for likob {0} > 1".format(oo))
+
+        # For all the pulsars, calculate the single-pulsar likelhood once first.
+        # This calculates all the necessary auxiliaries correctly
+        likob.logposterior(mlpars[oo])
+
+        npf[oo] = likob.npf[0]
+        npfdm[oo] = likob.npfdm[0]
+        npu[oo] = likob.npu[0]
+
+        # We'll work in the basis of mark6 (with DM). If we do not have DM as in
+        # mark3, create the correct auxiliary references
+        if likob.likfunc[:5] == 'mark3':
+            likob.rGE = likob.rGF
+            likob.EGGNGGE = likob.FGGNGGF
+        elif likob.likfunc[:5] == 'mark6':
+            pass
+        elif likob.likfunc[:5] == 'mark4':
+            likob.rGE = likob.rGU
+            likob.EGGNGGE = likob.UGGNGGU
+
+
+        try:
+            likob.Sigcf = sl.cho_factor(likob.Sigma)
+            likob.SEGE = sl.cho_solve(likob.Sigcf, likob.EGGNGGE)
+        except np.linalg.LinAlgError:
+            raise
+            try:
+                U, s, Vh = sl.svd(likob.Sigma)
+                if not np.all(s > 0):
+                    raise ValueError("ERROR: Sigma singular according to SVD")
+                likob.SEGE = np.dot(Vh.T, np.dot(np.diag(1.0/s), \
+                        np.dot(U.T, likob.EGGNGGE)))
+            except np.linalg.LinAlgError:
+                raise ValueError("SVD did not converge?")
+
+        likob.OSr = likob.rGE - np.dot(likob.SEGE.T, likob.rGE)
+        likob.OSE = likob.EGGNGGE - np.dot(likob.EGGNGGE, likob.SEGE)
+
+        # Construct the position vector
+        psr = likob.ptapsrs[0]
+        likob.pos = np.array([np.cos(psr.decj)*np.cos(psr.raj),
+                              np.cos(psr.decj)*np.sin(psr.raj),
+                              np.sin(psr.decj)])
+
+    # Figure out how many frequency components we have for each pulsar
+    #totfreqs = np.sum(npf) + np.sum(npfdm)
+    #PhiTheta = np.zeros((totfreqs, totfreqs))
+
+    # Calculate the cross-power
+    ind = 0
+    for pa, likoba in enumerate(likobs):
+        for pb in range(pa+1, len(likobs)):
+            likobb = likobs[pb]
+
+            PhiTheta = np.zeros((npf[pa]+npfdm[pa], npf[pb]+npfdm[pb]))
+            nfreqs = np.min([npf[pa], npf[pb]])
+            freqpy = likoba.ptapsrs[0].Ffreqs[:nfreqs] * pic_spy
+            Tmax = likoba.ptapsrs[0].Tmax
+            pcdoubled = (pic_spy**3 / (12*np.pi*np.pi * Tmax)) * freqpy ** (-4.33)
+
+            di = np.diag_indices(nfreqs)
+            PhiTheta[di] = pcdoubled
+
+            if likoba.likfunc[:5] == 'mark4':
+                tempPT = np.dot(likoba.UtF[:,:nfreqs], PhiTheta[:nfreqs,:])
+            else:
+                tempPT = PhiTheta
+
+            if likobb.likfunc[:5] == 'mark4':
+                PT = np.dot(tempPT[:,:nfreqs], likobb.UtF[:,:nfreqs].T)
+            else:
+                PT = tempPT
+
+            num = np.dot(likoba.OSr, np.dot(PT, likobb.OSr))
+
+            den = np.trace(np.dot(likoba.OSE, np.dot(PT, \
+                    np.dot(likob.OSE, PT.T))))
+
+            # Construct position vector and H&D coeff
+            angle[ind] = np.arccos(np.sum(likoba.pos * likobb.pos))
+            xp = 0.5 * (1 - np.sum(likoba.pos * likobb.pos))
+            logxp = 1.5 * xp * np.log(xp)
+            hdcoeff[ind] = logxp - 0.25 * xp + 0.5
+
+            # Crosspower and uncertainty
+            crosspower[ind] = num / den
+            crosspowererr[ind] = 1.0 / np.sqrt(den)
+
+            ind += 1
+
+    return (angle, hdcoeff, crosspower, crosspowererr)
+
 

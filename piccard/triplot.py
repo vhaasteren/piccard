@@ -112,7 +112,7 @@ def makesubplot2d(ax, samples1, samples2, weights=None):
             colors=contourcolors, linestyles=contourlinestyles, \
             linewidths=contourlinewidths, zorder=2)
 
-def makesubplot2denh(ax, samples1, samples2, weights=None, ml=None):
+def makesubplot2denh(ax, samples1, samples2, weights=None, ml=None, ml2=None):
     bins = 50
 
     xmin = np.min(samples1)
@@ -145,6 +145,9 @@ def makesubplot2denh(ax, samples1, samples2, weights=None, ml=None):
     if ml is not None:
         ax.scatter([ml[0]], [ml[1]], s=100, c='b', marker='*', zorder=1)
 
+    if ml2 is not None:
+        ax.scatter([ml2[0]], [ml2[1]], s=100, c='r', marker='*', zorder=1)
+
     #plt.hold(False)
 
     
@@ -176,7 +179,7 @@ Make a tri-plot of an MCMC chain.
 
 Writes an eps and a png file as well
 """
-def triplot(chain, parlabels=None, plotparameters=None, name=None, ml=None):
+def triplot(chain, parlabels=None, plotparameters=None, name=None, ml=None, ml2=None):
     # Need chain, and parlabels
 
     # Figure out which parameters to plot
@@ -227,8 +230,13 @@ def triplot(chain, parlabels=None, plotparameters=None, name=None, ml=None):
                     else:
                         sml = None
 
+                    if ml2 is not None:
+                        sml2 = np.array([ml2[parameters[ii]], ml2[parameters[jj]]])
+                    else:
+                        sml2 = None
+
                     makesubplot2denh(axarr[jj][ii], samples[:,parameters[ii]], \
-                            samples[:,parameters[jj]], ml=sml)
+                            samples[:,parameters[jj]], ml=sml, ml2=sml2)
 
                 axarr[jj][ii].xaxis.set_major_locator(xmajorLocator)
                 axarr[jj][ii].yaxis.set_major_locator(ymajorLocator)
