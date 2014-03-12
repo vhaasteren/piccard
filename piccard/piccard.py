@@ -2369,7 +2369,7 @@ class ptaPulsar(object):
             self.DF = (self.Dvec * self.Fdmmat.T).T
         else:
             self.Fdmmat = np.zeros((len(self.freqs), 0))
-            self.Fdmfreqs = np.zeros(0)
+            self.Fdmfreqs = np.zeros((len(self.toas), 0))
             #self.Dmat = np.diag(pic_DMk / (self.freqs**2))
             self.Dvec = pic_DMk / (self.freqs**2)
             self.DF = np.zeros((len(self.freqs), 0))
@@ -2591,6 +2591,7 @@ class ptaPulsar(object):
                 h5df.addData(self.name, 'pic_GGr', self.GGr)
                 h5df.addData(self.name, 'pic_GtF', self.GtF)
                 h5df.addData(self.name, 'pic_UtF', self.UtF)
+                h5df.addData(self.name, 'pic_UtD', self.UtD)
 
                 if self.twoComponentNoise:
                     h5df.addData(self.name, 'pic_Wvec', self.Wvec)
@@ -2651,6 +2652,7 @@ class ptaPulsar(object):
                 h5df.addData(self.name, 'pic_GGr', self.GGr)
                 h5df.addData(self.name, 'pic_GtF', self.GtF)
                 h5df.addData(self.name, 'pic_UtF', self.UtF)
+                h5df.addData(self.name, 'pic_UtD', self.UtD)
                 h5df.addData(self.name, 'pic_SFmat', self.SFmat)
                 h5df.addData(self.name, 'pic_FFmat', self.FFmat)
                 h5df.addData(self.name, 'pic_SFfreqs', self.SFfreqs)
@@ -3105,18 +3107,23 @@ class ptaPulsar(object):
         self.AoGr = np.array(h5df.getData(self.name, 'pic_AoGr',
             dontread=(not self.twoComponentNoise)))
         self.Ffreqs = np.array(h5df.getData(self.name, 'pic_Ffreqs'))
-        self.Fdmfreqs = np.array(h5df.getData(self.name, 'pic_Fdmfreqs'))
+
+        if ndmf > 0:
+            self.Fdmfreqs = np.array(h5df.getData(self.name, 'pic_Fdmfreqs'))
+        else:
+            self.Fdmfreqs = np.zeros((len(self.toas), 0))
 
         # If compression is not done, but Hmat represents a compression matrix,
         # we need to re-evaluate the lot. Raise an error
-        if (compression == 'None' or compression is None) and \
-                h5df.getShape(self.name, 'pic_Gmat')[1] != \
-                h5df.getShape(self.name, 'pic_Hmat')[1]:
-            raise ValueError("Compressed file detected. Re-calculating all quantities.")
-        elif (compression != 'None' and compression != None) and \
-                h5df.getShape(self.name, 'pic_Gmat')[1] == \
-                h5df.getShape(self.name, 'pic_Hmat')[1]:
-            raise ValueError("Uncompressed file detected. Re-calculating all quantities.")
+        if not noGmat:
+            if (compression == 'None' or compression is None) and \
+                    h5df.getShape(self.name, 'pic_Gmat')[1] != \
+                    h5df.getShape(self.name, 'pic_Hmat')[1]:
+                raise ValueError("Compressed file detected. Re-calculating all quantities.")
+            elif (compression != 'None' and compression != None) and \
+                    h5df.getShape(self.name, 'pic_Gmat')[1] == \
+                    h5df.getShape(self.name, 'pic_Hmat')[1]:
+                raise ValueError("Uncompressed file detected. Re-calculating all quantities.")
 
         if likfunc == 'mark1':
             self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat', dontread=noGmat))
@@ -3167,6 +3174,7 @@ class ptaPulsar(object):
                     dontread=self.twoComponentNoise))
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
             self.UtF = np.array(h5df.getData(self.name, 'pic_UtF'))
+            self.UtD = np.array(h5df.getData(self.name, 'pic_UtD', dontread=memsave))
             self.AGr = np.array(h5df.getData(self.name, 'pic_AGr',
                 dontread=(not self.twoComponentNoise)))
             self.AGU = np.array(h5df.getData(self.name, 'pic_AGU',
@@ -3186,6 +3194,7 @@ class ptaPulsar(object):
                     dontread=self.twoComponentNoise))
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
             self.UtF = np.array(h5df.getData(self.name, 'pic_UtF', dontread=memsave))
+            self.UtD = np.array(h5df.getData(self.name, 'pic_UtD'))
             self.SFmat = np.array(h5df.getData(self.name, 'pic_SFmat', dontread=memsave))
             self.FFmat = np.array(h5df.getData(self.name, 'pic_FFmat', dontread=memsave))
             self.SFfreqs = np.array(h5df.getData(self.name, 'pic_SFfreqs'))
@@ -4061,7 +4070,7 @@ class ptaLikelihood(object):
         self.npobs = np.zeros(npsrs, dtype=np.int)
         self.npgs = np.zeros(npsrs, dtype=np.int)
         self.npgos = np.zeros(npsrs, dtype=np.int)
-        for ii in range(npsrs):
+        for ii, psr in enumerate(self.ptapsrs):
             if not self.likfunc in ['mark2']:
                 self.npf[ii] = len(self.ptapsrs[ii].Ffreqs)
                 self.npff[ii] = self.npf[ii]
@@ -4073,8 +4082,8 @@ class ptaLikelihood(object):
             self.npu[ii] = len(self.ptapsrs[ii].avetoas)
 
             if self.likfunc in ['mark1', 'mark4', 'mark4ln', 'mark6', 'mark6fa', 'mark8', 'mark10']:
-                self.npfdm[ii] = len(self.ptapsrs[ii].Fdmfreqs)
-                self.npffdm[ii] = len(self.ptapsrs[ii].Fdmfreqs)
+                self.npfdm[ii] = psr.Fdmfreqs.shape[1]
+                self.npffdm[ii] = psr.Fdmfreqs.shape[1]
 
             if self.likfunc in ['mark10']:
                 self.npffdm[ii] += len(self.ptapsrs[ii].SFdmfreqs)
@@ -6690,7 +6699,7 @@ class ptaLikelihood(object):
             # Quick and dirty:
             #PhiU = ( * self.ptapsrs[ii].AGU.T).T
 
-            ThetaLD = np.sum(np.log(self.Thetavec))
+            # ThetaLD = np.sum(np.log(self.Thetavec))
 
 
             UPhiU = np.dot(self.ptapsrs[0].UtF, np.dot(self.Phi, self.ptapsrs[0].UtF.T))
