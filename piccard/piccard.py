@@ -4082,7 +4082,7 @@ class ptaLikelihood(object):
             self.npu[ii] = len(self.ptapsrs[ii].avetoas)
 
             if self.likfunc in ['mark1', 'mark4', 'mark4ln', 'mark6', 'mark6fa', 'mark8', 'mark10']:
-                self.npfdm[ii] = psr.Fdmfreqs
+                self.npfdm[ii] = len(psr.Fdmfreqs)
                 self.npffdm[ii] = len(psr.Fdmfreqs)
 
             if self.likfunc in ['mark10']:
