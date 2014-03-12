@@ -3075,6 +3075,9 @@ class ptaPulsar(object):
 
         if file_Tmax != Tmax or not np.all(np.array(file_freqs) == \
                 np.array([nf, ndmf, nsf, nsdmf])):
+            print "file_Tmax, Tmax = {0}, {1}".format(file_Tmax, Tmax)
+            print "nf, ndmf, nsf, nsdmf = {0}, {1}, {2}, {3}".format( \
+                    nf, ndmf, nsf, nsdmf)
             raise ValueError("File frequencies are not compatible with model frequencies")
         else:
             self.Tmax = Tmax
@@ -3449,6 +3452,7 @@ class ptaLikelihood(object):
     npgs = None     # Number of non-projected observations per pulsar (columns Hmat)
     npgos = None    # Number of orthogonal non-projected observations per pulsar (columns Homat)
     npu = None      # Number of avetoas per pulsar
+    Tmax = None     # One Tmax to rule them all...
 
     # The Phi, Theta, and Sigma matrices
     Phi = None          # mark1, mark3, mark?, mark6
@@ -3482,7 +3486,7 @@ class ptaLikelihood(object):
                             WARNING: duplicates are _not_ checked for.
     """
     def __init__(self, h5filename=None, jsonfilename=None, pulsars='all', \
-                 auxFromFile=True, noGmat=False, verbose=False):
+                 auxFromFile=True, noGmat=False, verbose=False, noCreate=False):
         self.clear()
 
         if h5filename is not None:
@@ -3490,7 +3494,8 @@ class ptaLikelihood(object):
 
             if jsonfilename is not None:
                 self.initModelFromFile(jsonfilename, auxFromFile=auxFromFile, \
-                                       noGmat=noGmat, verbose=verbose)
+                                       noGmat=noGmat, verbose=verbose, \
+                                       noCreate=noCreate)
 
     """
     Clear all the structures present in the object
@@ -4819,6 +4824,7 @@ class ptaLikelihood(object):
             "orderFrequencyLines":self.orderFrequencyLines,
             "evalCompressionComplement":self.evallikcomp,
             "likfunc":self.likfunc,
+            "Tmax":self.Tmax,
             "signals":signals
             })
 
@@ -4831,11 +4837,11 @@ class ptaLikelihood(object):
     @param filename:    Filename of the json file with the model
     """
     def initModelFromFile(self, filename, auxFromFile=True, noGmat=False,
-            verbose=False):
+            verbose=False, noCreate=False):
         with open(filename) as data_file:
             model = OrderedDict(json.load(data_file))
         self.initModel(model, fromFile=auxFromFile, noGmatWrite=noGmat,
-                verbose=verbose)
+                verbose=verbose, noCreate=noCreate)
 
     """
     Write the model to a json file
@@ -4929,7 +4935,7 @@ class ptaLikelihood(object):
     @param verbose:             Give some extra information about progress
     """
     def initModel(self, fullmodel, fromFile=True, verbose=False, \
-                  noGmatWrite=False):
+                  noGmatWrite=False, noCreate=False):
         numNoiseFreqs = fullmodel['numNoiseFreqs']
         numDMFreqs = fullmodel['numDMFreqs']
         compression = fullmodel['compression']
@@ -4940,11 +4946,11 @@ class ptaLikelihood(object):
 
         if 'Tmax' in fullmodel:
             if fullmodel['Tmax'] is not None:
-                Tmax = fullmodel['Tmax']
+                self.Tmax = fullmodel['Tmax']
             else:
-                Tmax = None
+                self.Tmax = None
         else:
-            Tmax = None
+            self.Tmax = None
 
         if len(self.ptapsrs) < 1:
             raise IOError, "No pulsars loaded"
@@ -4966,8 +4972,8 @@ class ptaLikelihood(object):
             Tstart = np.min([np.min(m2psr.toas), Tstart])
             Tfinish = np.max([np.max(m2psr.toas), Tfinish])
 
-        if Tmax is None:
-            Tmax = Tfinish - Tstart
+        if self.Tmax is None:
+            self.Tmax = Tfinish - Tstart
 
         # If the compressionComplement is defined, overwrite the default
         if evalCompressionComplement != 'None':
@@ -5025,7 +5031,7 @@ class ptaLikelihood(object):
                 # Read Auxiliaries
                 if verbose:
                     print "Reading Auxiliaries for {0}".format(m2psr.name)
-                m2psr.readPulsarAuxiliaries(self.h5df, Tmax, \
+                m2psr.readPulsarAuxiliaries(self.h5df, self.Tmax, \
                         numNoiseFreqs[pindex], \
                         numDMFreqs[pindex], not separateEfacs[pindex], \
                         nSingleFreqs=numSingleFreqs[pindex], \
@@ -5041,7 +5047,13 @@ class ptaLikelihood(object):
                 if verbose:
                     print str(err)
                     print "Creating Auxiliaries for {0}".format(m2psr.name)
-                m2psr.createPulsarAuxiliaries(self.h5df, Tmax, numNoiseFreqs[pindex], \
+
+                # If we are not allowed to overwrite file stuff, raise an
+                # exception
+                if noCreate:
+                    raise RuntimeError("Not allowed to create auxiliaries")
+
+                m2psr.createPulsarAuxiliaries(self.h5df, self.Tmax, numNoiseFreqs[pindex], \
                         numDMFreqs[pindex], not separateEfacs[pindex], \
                                 nSingleFreqs=numSingleFreqs[pindex], \
                                 nSingleDMFreqs=numSingleDMFreqs[pindex], \
@@ -5060,7 +5072,7 @@ class ptaLikelihood(object):
         self.ptasignals = []
         index = 0
         for ii, signal in enumerate(signals):
-            self.addSignal(signal, index, Tmax)
+            self.addSignal(signal, index, self.Tmax)
             index += self.ptasignals[-1]['npars']
 
         self.allocateLikAuxiliaries()
