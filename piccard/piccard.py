@@ -3637,13 +3637,16 @@ class ptaLikelihood(object):
             raise ValueError("ERROR: Not all signal keys are present in signal. Keys: {0}. Required: {1}".format(signal.keys(), keys))
 
         # Determine the time baseline of the array of pulsars
-        if not 'Tmax' in signal:
+        if not 'Tmax' in signal and Tmax is None:
             Tstart = np.min(self.ptapsrs[0].toas)
             Tfinish = np.max(self.ptapsrs[0].toas)
             for m2psr in self.ptapsrs:
                 Tstart = np.min([np.min(m2psr.toas), Tstart])
                 Tfinish = np.max([np.max(m2psr.toas), Tfinish])
             Tmax = Tfinish - Tstart
+        elif 'Tmax' in signal:
+            Tmax = signal['Tmax']
+            
 
         # Adjust some basic details about the signal
         signal['Tmax'] = Tmax
