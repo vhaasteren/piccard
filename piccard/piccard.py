@@ -2368,8 +2368,8 @@ class ptaPulsar(object):
             #self.DF = np.dot(self.Dmat, self.Fdmmat)
             self.DF = (self.Dvec * self.Fdmmat.T).T
         else:
-            self.Fdmmat = np.zeros((len(self.freqs), 0))
-            self.Fdmfreqs = np.zeros((len(self.toas), 0))
+            self.Fdmmat = np.zeros(0)
+            self.Fdmfreqs = np.zeros(0)
             #self.Dmat = np.diag(pic_DMk / (self.freqs**2))
             self.Dvec = pic_DMk / (self.freqs**2)
             self.DF = np.zeros((len(self.freqs), 0))
@@ -3111,7 +3111,7 @@ class ptaPulsar(object):
         if ndmf > 0:
             self.Fdmfreqs = np.array(h5df.getData(self.name, 'pic_Fdmfreqs'))
         else:
-            self.Fdmfreqs = np.zeros((len(self.toas), 0))
+            self.Fdmfreqs = np.zeros(0)
 
         # If compression is not done, but Hmat represents a compression matrix,
         # we need to re-evaluate the lot. Raise an error
@@ -4082,8 +4082,8 @@ class ptaLikelihood(object):
             self.npu[ii] = len(self.ptapsrs[ii].avetoas)
 
             if self.likfunc in ['mark1', 'mark4', 'mark4ln', 'mark6', 'mark6fa', 'mark8', 'mark10']:
-                self.npfdm[ii] = psr.Fdmfreqs.shape[1]
-                self.npffdm[ii] = psr.Fdmfreqs.shape[1]
+                self.npfdm[ii] = psr.Fdmfreqs
+                self.npffdm[ii] = len(psr.Fdmfreqs)
 
             if self.likfunc in ['mark10']:
                 self.npffdm[ii] += len(self.ptapsrs[ii].SFdmfreqs)
