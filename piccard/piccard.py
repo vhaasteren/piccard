@@ -4951,7 +4951,8 @@ class ptaLikelihood(object):
     @param verbose:             Give some extra information about progress
     """
     def initModel(self, fullmodel, fromFile=True, verbose=False, \
-                  noGmatWrite=False, noCreate=False):
+                  noGmatWrite=False, noCreate=False, \
+                  addDMQSD=False):
         numNoiseFreqs = fullmodel['numNoiseFreqs']
         numDMFreqs = fullmodel['numDMFreqs']
         compression = fullmodel['compression']
@@ -5022,7 +5023,7 @@ class ptaLikelihood(object):
             # If we model DM variations, we will need to include QSD
             # marginalisation for DM. Modify design matrix accordingly
             #if dmModel[pindex] != 'None':
-            if numDMFreqs[pindex] > 0 and False:
+            if numDMFreqs[pindex] > 0 and addDMQSD:
                 m2psr.addDMQuadratic()
 
             tmsigpars = None
