@@ -143,10 +143,16 @@ def makesubplot2denh(ax, samples1, samples2, weights=None, ml=None, ml2=None):
     ax.contour(xs,ys,H.T,levels,colors='k',linestyles=('-','--','-.'),linewidths=2)
 
     if ml is not None:
-        ax.scatter([ml[0]], [ml[1]], s=100, c='b', marker='*', zorder=1)
+        try:
+            ax.scatter([ml[0]], [ml[1]], s=100, c='b', marker='*', zorder=1)
+        except ValueError:
+            ax.scatter([ml[0]], [ml[1]], s=100, c='b', marker='x', zorder=1)
 
     if ml2 is not None:
-        ax.scatter([ml2[0]], [ml2[1]], s=100, c='r', marker='*', zorder=1)
+        try:
+            ax.scatter([ml2[0]], [ml2[1]], s=100, c='r', marker='*', zorder=1)
+        except ValueError:
+            ax.scatter([ml2[0]], [ml2[1]], s=100, c='r', marker='x', zorder=1)
 
     #plt.hold(False)
 

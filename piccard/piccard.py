@@ -5025,6 +5025,7 @@ class ptaLikelihood(object):
             #if dmModel[pindex] != 'None':
             if numDMFreqs[pindex] > 0 and addDMQSD:
                 m2psr.addDMQuadratic()
+                print "WARNING: DMQSD not saved to HDF5 file (auxiliaries are...)"
 
             tmsigpars = None
             if compression == 'timingmodel':

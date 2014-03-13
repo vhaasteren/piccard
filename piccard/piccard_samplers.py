@@ -696,9 +696,15 @@ def makeEfacPage(fig, samples, labels, mlchain, mlpso, txtfilename, \
 
     resp = ax.errorbar(x, yval, yerr=yerr, fmt=None, c='blue')
     if mlpso is not None:
-        ress = ax.scatter(x, mlpso, s=50, c='r', marker='*')
+        try:
+            ress = ax.scatter(x, mlpso, s=50, c='r', marker='*')
+        except ValueError:
+            ress = ax.scatter(x, mlpso, s=50, c='r', marker='x')
     else:
-        ress = ax.scatter(x, mlchain, s=50, c='r', marker='*')
+        try:
+            ress = ax.scatter(x, mlchain, s=50, c='r', marker='*')
+        except ValueError:
+            ress = ax.scatter(x, mlchain, s=50, c='r', marker='x')
 
     #ax.axis([-1, max(x)+1, 0, max(yval+yerr)+1])
     ax.axis([-1, max(x)+1, min(yval-yerr)-1, max(yval+yerr)+1])
