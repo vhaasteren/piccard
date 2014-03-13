@@ -152,7 +152,7 @@ def makesubplot2denh(ax, samples1, samples2, weights=None, ml=None, ml2=None):
         try:
             ax.scatter([ml2[0]], [ml2[1]], s=100, c='r', marker='*', zorder=1)
         except ValueError:
-            ax.scatter([ml2[0]], [ml2[1]], s=100, c='r', marker='x', zorder=1)
+            ax.scatter([ml2[0]], [ml2[1]], s=100, c='r', marker='+', zorder=1)
 
     #plt.hold(False)
 
