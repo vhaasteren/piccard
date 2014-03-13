@@ -3127,8 +3127,8 @@ class ptaPulsar(object):
 
         if likfunc == 'mark1':
             self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat', dontread=noGmat))
-            self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat',
-                dontread=memsave))
+            #self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat',
+            #    dontread=memsave))
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF'))
             self.GtD = np.array(h5df.getData(self.name, 'pic_GtD'))
             self.AGr = np.array(h5df.getData(self.name, 'pic_AGr',
@@ -3146,8 +3146,8 @@ class ptaPulsar(object):
 
         if likfunc == 'mark2':
             self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat', dontread=memsave))
-            self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
-                    dontread=self.twoComponentNoise))
+            #self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
+            #        dontread=self.twoComponentNoise))
             self.AGr = np.array(h5df.getData(self.name, 'pic_AGr',
                 dontread=(not self.twoComponentNoise)))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
@@ -3155,8 +3155,8 @@ class ptaPulsar(object):
         if likfunc == 'mark3' or likfunc == 'mark3fa':
             self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat',
                 dontread=memsave))
-            self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
-                    dontread=self.twoComponentNoise))
+            #self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
+            #        dontread=self.twoComponentNoise))
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
             self.AGr = np.array(h5df.getData(self.name, 'pic_AGr',
                 dontread=(not self.twoComponentNoise)))
@@ -3170,8 +3170,8 @@ class ptaPulsar(object):
         if likfunc == 'mark4':
             self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat',
                 dontread=memsave))
-            self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
-                    dontread=self.twoComponentNoise))
+            #self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
+            #        dontread=self.twoComponentNoise))
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
             self.UtF = np.array(h5df.getData(self.name, 'pic_UtF'))
             self.UtD = np.array(h5df.getData(self.name, 'pic_UtD', dontread=memsave))
@@ -3190,8 +3190,8 @@ class ptaPulsar(object):
         if likfunc == 'mark4ln':
             self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat',
                 dontread=memsave))
-            self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
-                    dontread=self.twoComponentNoise))
+            #self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
+            #        dontread=self.twoComponentNoise))
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
             self.UtF = np.array(h5df.getData(self.name, 'pic_UtF', dontread=memsave))
             self.UtD = np.array(h5df.getData(self.name, 'pic_UtD'))
@@ -3214,8 +3214,8 @@ class ptaPulsar(object):
         if likfunc == 'mark6' or likfunc == 'mark6fa':
             self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat',
                 dontread=memsave))
-            self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
-                    dontread=self.twoComponentNoise))
+            #self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
+            #        dontread=self.twoComponentNoise))
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
             #self.GGtD = np.array(h5df.getData(self.name, 'pic_GGtD', dontread=memsave))
             self.Emat = np.array(h5df.getData(self.name, 'pic_Emat'))
@@ -3244,8 +3244,8 @@ class ptaPulsar(object):
         if likfunc == 'mark7':
             self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat',
                 dontread=memsave))
-            self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
-                    dontread=self.twoComponentNoise))
+            #self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
+            #        dontread=self.twoComponentNoise))
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
             self.AGr = np.array(h5df.getData(self.name, 'pic_AGr',
                 dontread=(not self.twoComponentNoise)))
@@ -3259,8 +3259,8 @@ class ptaPulsar(object):
         if likfunc == 'mark8':
             self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat',
                 dontread=memsave))
-            self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
-                    dontread=self.twoComponentNoise))
+            #self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
+            #        dontread=self.twoComponentNoise))
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
             #self.GGtD = np.array(h5df.getData(self.name, 'pic_GGtD', dontread=memsave))
             self.Emat = np.array(h5df.getData(self.name, 'pic_Emat', dontread=memsave))
@@ -3289,8 +3289,8 @@ class ptaPulsar(object):
         if likfunc == 'mark9':
             self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat',
                 dontread=memsave))
-            self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
-                    dontread=self.twoComponentNoise))
+            #self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
+            #        dontread=self.twoComponentNoise))
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
             self.SFmat = np.array(h5df.getData(self.name, 'pic_SFmat', dontread=memsave))
             self.FFmat = np.array(h5df.getData(self.name, 'pic_FFmat', dontread=memsave))
@@ -3311,8 +3311,8 @@ class ptaPulsar(object):
         if likfunc == 'mark10':
             self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat',
                 dontread=memsave))
-            self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
-                    dontread=self.twoComponentNoise))
+            #self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
+            #        dontread=self.twoComponentNoise))
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
             #self.GGtD = np.array(h5df.getData(self.name, 'pic_GGtD', dontread=memsave))
             self.Emat = np.array(h5df.getData(self.name, 'pic_Emat'))
@@ -3784,14 +3784,18 @@ class ptaLikelihood(object):
 
         psr = self.ptapsrs[signal['pulsarind']]
         signal['Nvec'] = np.ones(len(psr.toaerrs))
-        signal['Jvec'] = np.ones(psr.Umat.shape[1])
+
+        if signal['stype'] == 'jitter':
+            signal['Jvec'] = np.ones(len(psr.avetoas))
 
         if signal['flagname'] != 'pulsarname':
             # This equad only applies to some TOAs, not all of 'm
             ind = np.array(psr.flags) != signal['flagvalue']
             signal['Nvec'][ind] = 0.0
-            signal['Jvec']= selection_to_dselection(signal['Nvec'],
-                    psr.Umat)
+
+            if signal['stype'] == 'jitter':
+                signal['Jvec']= selection_to_dselection(signal['Nvec'],
+                        psr.Umat)
 
         self.ptasignals.append(signal.copy())
 
@@ -4086,19 +4090,19 @@ class ptaLikelihood(object):
                 self.npffdm[ii] = len(psr.Fdmfreqs)
 
             if self.likfunc in ['mark10']:
-                self.npffdm[ii] += len(self.ptapsrs[ii].SFdmfreqs)
+                self.npffdm[ii] += len(psr.SFdmfreqs)
 
-            self.npobs[ii] = len(self.ptapsrs[ii].toas)
-            self.ptapsrs[ii].Nvec = np.zeros(len(self.ptapsrs[ii].toas))
-            self.ptapsrs[ii].Jvec = np.zeros(len(self.ptapsrs[ii].avetoas))
+            self.npobs[ii] = len(psr.toas)
+            psr.Nvec = np.zeros(len(psr.toas))
+            psr.Jvec = np.zeros(len(psr.avetoas))
 
             if self.likfunc in ['mark1', 'mark2', 'mark3', 'mark3fa', 'mark4', \
                     'mark4ln', 'mark6', 'mark6fa', 'mark7', 'mark8', 'mark9', \
                     'mark10']:
-                self.npgs[ii] = len(self.ptapsrs[ii].toas) - self.ptapsrs[ii].Hcmat.shape[1]
-                self.npgos[ii] = len(self.ptapsrs[ii].toas) - self.npgs[ii]
-                self.ptapsrs[ii].Nwvec = np.zeros(self.npgs[ii])
-                self.ptapsrs[ii].Nwovec = np.zeros(self.npgos[ii])
+                self.npgs[ii] = len(psr.toas) - psr.Hcmat.shape[1]
+                self.npgos[ii] = len(psr.toas) - self.npgs[ii]
+                psr.Nwvec = np.zeros(self.npgs[ii])
+                psr.Nwovec = np.zeros(self.npgos[ii])
 
         self.Phi = np.zeros((np.sum(self.npf), np.sum(self.npf)))
         self.Phivec = np.zeros(np.sum(self.npf))
@@ -5413,7 +5417,9 @@ class ptaLikelihood(object):
 
                     if psr.twoComponentNoise:
                         psr.Nwvec += psr.Wvec * pefac**2
-                        psr.Nwovec += psr.Wovec * pefac**2
+
+                        if len(psr.Wovec) > 0:
+                            psr.Nwovec += psr.Wovec * pefac**2
 
                     psr.Nvec += m2signal['Nvec'] * pefac**2
 
@@ -7015,7 +7021,7 @@ class ptaLikelihood(object):
 
         # Construct Sigma (needs to be written out because of the ordering of
         # the phi/theta matrices)
-        self.Sigma = self.EGGNGGE
+        self.Sigma = self.EGGNGGE.copy()
         for ii in range(npsrs):
             inda = np.sum(self.npf[:ii]) + np.sum(self.npfdm[:ii])
             indaph = np.sum(self.npf[:ii])
@@ -9109,11 +9115,14 @@ def crossPower(likobs, mlpars):
             PhiTheta = np.zeros((npf[pa]+npfdm[pa], npf[pb]+npfdm[pb]))
             nfreqs = np.min([npf[pa], npf[pb]])
             freqpy = likoba.ptapsrs[0].Ffreqs[:nfreqs] * pic_spy
-            Tmax = likoba.ptapsrs[0].Tmax
+            # Tmax = likoba.ptapsrs[0].Tmax
+            Tmax = likoba.Tmax
             pcdoubled = (pic_spy**3 / (12*np.pi*np.pi * Tmax)) * freqpy ** (-4.33)
 
             di = np.diag_indices(nfreqs)
             PhiTheta[di] = pcdoubled
+            #pcc = np.append(pcdoubled, 0.0*pcdoubled)
+            #PhiTheta = np.diag(pcc)
 
             if likoba.likfunc[:5] == 'mark4':
                 tempPT = np.dot(likoba.ptapsrs[0].UtF[:,:nfreqs], PhiTheta[:nfreqs,:])
