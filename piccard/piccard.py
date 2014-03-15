@@ -3435,8 +3435,6 @@ class ptaLikelihood(object):
     pmax = None
     pstart = None
     pwidth = None
-    pamplitudeind = None
-    initialised = False
     pardes = None
     haveStochSources = False
     haveDetSources = False
@@ -3520,8 +3518,6 @@ class ptaLikelihood(object):
         self.pmax = None
         self.pstart = None
         self.pwidth = None
-        self.pamplitudeind = None
-        self.initialised = False
         self.likfunc = 'mark3'
         self.orderFrequencyLines = False
         self.haveStochSources = False
@@ -4830,7 +4826,7 @@ class ptaLikelihood(object):
             #    signals[-1]['unitconversion'] = map(float, signals[-1]['unitconversion'])
 
         modeldict = OrderedDict({
-            "file version":2013.12,
+            "file version":2014.03,
             "author":"piccard-makeModel",
             "numpulsars":len(self.ptapsrs),
             "pulsarnames":[self.ptapsrs[ii].name for ii in range(len(self.ptapsrs))],
@@ -4941,6 +4937,19 @@ class ptaLikelihood(object):
                 nmd['signals'].append(newsignal)
 
         return nmd
+
+    def setDictStartPars(self, startpars):
+        """
+        Given an array of varying start-parameters, set the start-parameters in
+        the model dictionary
+        """
+        for ss, signal in enumerate(self.ptasignals):
+            parindex = signal['parindex']
+            pp = 0
+            for ii in range(signal['ntotpars']):
+                if signal['bvary'][ii]:
+                    signal['pstart'][ii] = startpars[parindex+pp]
+                    pp = pp + 1
 
 
     """
@@ -6732,22 +6741,51 @@ class ptaLikelihood(object):
                 Phiinv = np.dot(Vh.T, np.dot(np.diag(1.0/s), U.T))
 
                 #print "Fallback to SVD for Phi", parameters
-
-        """
         else:
-            try:
-                cf = sl.cho_factor(Phi)
-                PhiLD = 2*np.sum(np.log(np.diag(cf[0])))
-                Phiinv = sl.cho_solve(cf, np.identity(Phi.shape[0]))
-            except np.linalg.LinAlgError:
-                U, s, Vh = sl.svd(Phi)
-                if not np.all(s > 0):
-                    raise ValueError("ERROR: Phi singular according to SVD")
-                PhiLD = np.sum(np.log(s))
-                Phiinv = np.dot(Vh.T, np.dot(np.diag(1.0/s), U.T))
+            # Do it for multiple pulsars
+            UPhiU = np.zeros(self.UGGNGGU.shape)
+            for ii, psri in enumerate(self.ptapsrs):
+                uindexi = np.sum(self.npu[:ii])
+                nusi = self.npu[ii]
+                findexi = np.sum(self.npf[:ii])
+                nfreqi = int(self.npf[ii])
+                findexdmi = np.sum(self.npfdm[:ii])
+                nfreqdmi = int(self.npfdm[ii])
+                for jj in range(ii, len(self.ptapsrs)):
+                    uindexj = np.sum(self.npu[:jj])
+                    nusj = self.npu[jj]
+                    psrj = self.ptapsrs[jj]
+                    findexj = np.sum(self.npf[:jj])
+                    nfreqj = int(self.npf[jj])
 
-                print "Fallback to SVD for Phi"
-        """
+                    UPhiU[uindexi:uindexi+nusi, uindexj:uindexj+nusj] = \
+                            np.dot(psri.UtF, np.dot( \
+                            self.Phi[findexi:findexi+nfreqi, findexj:findexj+nfreqj], \
+                                        psrj.UtF.T))
+
+                    if ii == jj:
+                        di = np.diag_indices(min(nusi, nusj))
+                        UPhiU[uindexi:uindexi+nusi, uindexj:uindexj+nusj][di] += \
+                            self.ptapsrs[ii].Jvec
+                    else:
+                        UPhiU[uindexj:uindexj+nusj, uindexi:uindexi+nusi] = \
+                            UPhiU[uindexi:uindexi+nusi, uindexj:uindexj+nusj].T
+
+                    if len(self.Thetavec) > 0 and ii == jj:
+                        UTU = np.dot(psri.UtD, (self.Thetavec[findexdmi:findexdmi+nfreqdmi] * psrj.UtD).T)
+                        UPhiU[uindexi:uindexi+nusi, uindexj:uindexj+nusj] += UTU
+
+            try:
+                cf = sl.cho_factor(UPhiU)
+                PhiLD = 2*np.sum(np.log(np.diag(cf[0])))
+                Phiinv = sl.cho_solve(cf, np.identity(UPhiU.shape[0]))
+            except np.linalg.LinAlgError:
+                U, s, Vh = sl.svd(UPhiU)
+                if not np.all(s > 0):
+                    raise ValueError("ERROR: UPhiU singular according to SVD")
+                PhiLD = np.sum(np.log(s))
+                Phiinv = np.dot(Vh.T, ((1.0/s) * U).T)
+
 
         # MARK E
 
@@ -9155,4 +9193,271 @@ def crossPower(likobs, mlpars):
 
     return (angle, hdcoeff, crosspower, crosspowererr)
 
+
+def fitCrossPower(hdcoeff, crosspower, crosspowererr):
+    """
+    Fit the results of the optimal statistic crossPower to the Hellings and
+    Downs correlation function, and return the A^2 and \delta A^2
+
+    @param hdcoeff:         Array of H&D coefficients for all the pulsar pairs
+    @param crosspower:      Array of cross-power measured for all the pulsars
+    @param crosspowererr:   Array of the error of the cross-power measurements
+    """
+    hc_sqr = np.sum(crosspower*hdcoeff / (crosspowererr*crosspowererr)) / np.sum(hdcoeff*hdcoeff / (crosspowererr*crosspowererr))
+    hc_sqrerr = 1.0 / np.sqrt(np.sum(hdcoeff * hdcoeff / (crosspowererr * crosspowererr)))
+    return hc_sqr, hc_sqrerr
+
+
+def prepPsrForTeststat(likob, mlpar, mlNoise=False):
+    """
+    This function creates some Auxiliary quantities for use in the Shannonensque
+    test statistic
+    """
+    if len(likob.ptapsrs) > 1:
+        raise ValueError("# of pulsars for likob {0} > 1".format(oo))
+
+    psr = likob.ptapsrs[0]
+
+    # We'll work in the basis of mark6 (with DM). If we do not have DM as in
+    # mark3, create the correct auxiliary references
+    if likob.likfunc[:5] == 'mark3':
+        psr.newEmat = psr.Fmat
+    elif likob.likfunc[:5] == 'mark6':
+        psr.newEmat = psr.Emat
+        nfreqs = len(psr.Ffreqs)
+        psr.Fmat = psr.Emat[:,:nfreqs]
+    elif likob.likfunc[:5] == 'mark4':
+        psr.newEmat = psr.Umat
+        nfreqs = len(psr.Ffreqs)
+        #psr.Fmat = psr.Emat[:,:nfreqs]
+        psr.Fmat, temp = fourierdesignmatrix(psr.toas, nfreqs, likob.Tmax)
+        if not np.all(psr.Ffreqs == temp):
+            raise ValueError("Not all frequencies the same for {0}".format(psr.name))
+
+    Nvec = psr.toaerrs
+    MtM = np.dot(psr.Mmat.T, psr.Mmat)
+    try:
+        cf = sl.cho_factor(MtM)
+        psr.MtMM = sl.cho_solve(cf, psr.Mmat.T)
+    except np.linalg.LinAlgError:
+        U, s, Vh = sl.svd(MtM)
+        if not np.all(s >= 0):
+            raise ValueError("MtM singular according to SVD")
+        s[s!=0] = 1.0 / s[s!=0]
+        psr.MtMM = np.dot(np.dot(Vh.T, np.dot(np.diag(s), U.T)), psr.Mmat.T)
+
+    psr.MtMN = (psr.MtMM * Nvec)
+    psr.MTMMF = np.dot(psr.MtMN, psr.Fmat)
+    psr.NiE = ((1.0/Nvec) * psr.newEmat.T).T
+    psr.MtMMNE = np.dot(psr.MtMM, psr.NiE)
+
+    pars = likob.pstart.copy()
+
+    for pd in likob.pardes:
+        if pd['index'] >= 0:
+            if pd['sigtype'] == 'efac':
+                if mlNoise:
+                    pars[pd['index']] = mlpar[pd['index']]
+                else:
+                    pars[pd['index']] = 1.0
+            elif pd['sigtype'] == 'equad':
+                if mlNoise:
+                    pars[pd['index']] = mlpar[pd['index']]
+                else:
+                    pars[pd['index']] = likob.pmin[pd['index']]
+            elif pd['sigtype'] == 'jitter':
+                if mlNoise:
+                    pars[pd['index']] = mlpar[pd['index']]
+                else:
+                    pars[pd['index']] = likob.pmin[pd['index']]
+            elif pd['sigtype'] == 'powerlaw':
+                if pd['id'] == 'RN-Amplitude':
+                    pars[pd['index']] = likob.pmin[pd['index']]
+                elif pd['id'] == 'RN-Spectral-index':
+                    pars[pd['index']] = 3.1
+            elif pd['sigtype'] == 'dmpowerlaw':
+                if pd['id'] == 'DM-Amplitude':
+                    pars[pd['index']] = mlpar[pd['index']]
+                elif pd['id'] == 'DM-Spectral-index':
+                    pars[pd['index']] = mlpar[pd['index']]
+
+    likob.logposterior(pars)
+
+    # We'll work in the basis of mark6 (with DM). If we do not have DM as in
+    # mark3, create the correct auxiliary references
+    if likob.likfunc[:5] == 'mark3':
+        likob.rGE = likob.rGF
+        likob.EGGNGGE = likob.FGGNGGF
+    elif likob.likfunc[:5] == 'mark6':
+        pass
+    elif likob.likfunc[:5] == 'mark4':
+        likob.rGE = likob.rGU
+        likob.EGGNGGE = likob.UGGNGGU
+
+
+    try:
+        likob.Sigcf = sl.cho_factor(likob.Sigma)
+        likob.SEGE = sl.cho_solve(likob.Sigcf, likob.EGGNGGE)
+    except np.linalg.LinAlgError:
+        raise
+        try:
+            U, s, Vh = sl.svd(likob.Sigma)
+            if not np.all(s > 0):
+                raise ValueError("ERROR: Sigma singular according to SVD")
+            likob.SEGE = np.dot(Vh.T, np.dot(np.diag(1.0/s), \
+                    np.dot(U.T, likob.EGGNGGE)))
+        except np.linalg.LinAlgError:
+            raise ValueError("SVD did not converge?")
+
+    likob.OSr = likob.rGE - np.dot(likob.SEGE.T, likob.rGE)
+    likob.OSE = likob.EGGNGGE - np.dot(likob.EGGNGGE, likob.SEGE)
+
+    # Construct the position vector
+    psr = likob.ptapsrs[0]
+    likob.pos = np.array([np.cos(psr.decj)*np.cos(psr.raj),
+                          np.cos(psr.decj)*np.sin(psr.raj),
+                          np.sin(psr.decj)])
+
+def genFakeSet(likob, gwAmp):
+    psr = likob.ptapsrs[0]
+
+    Tmax = likob.Tmax
+    freqpy = psr.Ffreqs * pic_spy
+    pcdoubled = (gwAmp**2 * pic_spy**3 / (12*np.pi*np.pi * Tmax)) * freqpy ** (-4.33)
+    pc = np.sqrt(pcdoubled)
+
+    nphi = psr.Fmat.shape[1]
+    n = len(psr.toas)
+    xi = np.random.randn(nphi)
+    chi = np.random.randn(n)
+
+    r = np.dot(psr.Fmat, pc * xi) - \
+        np.dot(psr.Mmat, np.dot(psr.MTMMF, pc * xi)) + \
+        psr.toaerrs * chi - \
+        np.dot(psr.Mmat, np.dot(psr.MtMN,  chi))
+
+    return r
+
+def rGE(psr, r):
+    """
+    get rGE = r G (G^{T} N G) G^{T} newEmat = \
+            r Ni newEmat - r Ni Mmat ( Mmat^{T} Mmat)^{-1} Mmat^{T} Ni newEmat
+    """
+    #psr.NiE = ((1.0/Nvec) * psr.newEmat.T).T
+    #psr.MtMMNE = np.dot(MtMM, psr.NiE)
+
+    return np.dot(r, psr.NiE) - np.dot(np.dot(r,  psr.Mmat), psr.MtMMNE)
+
+def testStat(likobs, datasets):
+    """
+    Calculate an equivalent of the PPTA teststat
+    """
+    tstat_num = []
+    tstat_den = []
+    tstat = []
+    for ii, likob in enumerate(likobs):
+        psr = likob.ptapsrs[0]
+
+        likob.rGE = rGE(psr, datasets[ii])
+        likob.OSr = likob.rGE - np.dot(likob.SEGE.T, likob.rGE)
+
+        freqpy = psr.Ffreqs * pic_spy
+        Tmax = likob.Tmax
+        pcdoubled = (pic_spy**3 / (12*np.pi*np.pi * Tmax)) * freqpy ** (-4.33)
+
+        nfreqs = psr.Fmat.shape[1]
+
+        if likob.likfunc[:5] == 'mark4':
+            PhiTheta = np.zeros((nfreqs, nfreqs))
+        else:
+            PhiTheta = np.zeros((len(likob.OSr), len(likob.OSr)))
+
+        di = np.diag_indices(nfreqs)
+        PhiTheta[di] = pcdoubled
+
+        if likob.likfunc[:5] == 'mark4':
+            #PT = np.dot(np.dot(psr.UtF, PhiTheta), psr.UtF.T)
+            PT = np.dot(psr.UtF, np.dot(PhiTheta, psr.UtF.T))
+        else:
+            PT = PhiTheta
+
+        tstat_num.append(np.dot(likob.OSr, np.dot(PT, likob.OSr)))
+        tstat_den.append(np.trace(np.dot(likob.OSE, np.dot(PT, \
+                np.dot(likob.OSE, PT.T)))))
+        tstat.append(tstat_num[-1] / tstat_den[-1])
+        #tstat_den.append(1.0)
+
+    return np.sum(tstat_num) / np.sum(tstat_den), np.sum(tstat)
+
+def teststatBoundCheck(likobs, mlpars, bins=20, N=400, loggwmin=-15.3, loggwmax=-14.3):
+    """
+    Do the frequencies auto-term upper-bound
+    """
+    for ii, likob in enumerate(likobs):
+        prepPsrForTeststat(likob, mlpars[ii])
+
+    logamps = np.linspace(loggwmin, loggwmax, bins)
+    passtest = np.zeros(bins)
+    passtest2 = np.zeros(bins)
+
+    datasets = [likobs[ii].ptapsrs[0].residuals for ii in range(len(likobs))]
+
+    teststat, teststat2 = testStat(likobs, datasets)
+
+    for ii, loggwamp in enumerate(logamps):
+        # Loop over amplitudes (bins)
+        gwamp = 10 ** loggwamp
+
+        tstat = np.zeros(N)
+        tstat2 = np.zeros(N)
+        for jj in range(N):
+            # Loop over number of trials
+
+            dataset_test = []
+            for ll, likob in enumerate(likobs):
+                dataset_test.append(genFakeSet(likob, gwamp))
+
+            tstat[jj], tstat2[jj] = testStat(likobs, dataset_test)
+
+        passtest[ii] = np.sum(tstat > teststat)
+        passtest2[ii] = np.sum(tstat2 > teststat2)
+
+    return logamps, passtest, passtest2
+
+
+def teststatBound(likobs, mlpars, bins=20, N=400, loggwmin=-15.3, \
+                  loggwmax=-14.3, mlNoise=False):
+    """
+    Do the frequencies auto-term upper-bound
+    """
+    for ii, likob in enumerate(likobs):
+        prepPsrForTeststat(likob, mlpars[ii], mlNoise=mlNoise)
+
+    logamps = np.linspace(loggwmin, loggwmax, bins)
+    passtest = np.zeros(bins)
+    passtest2 = np.zeros(bins)
+
+    datasets = [likobs[ii].ptapsrs[0].residuals for ii in range(len(likobs))]
+
+    teststat, teststat2 = testStat(likobs, datasets)
+
+    for ii, loggwamp in enumerate(logamps):
+        # Loop over amplitudes (bins)
+        gwamp = 10 ** loggwamp
+
+        tstat = np.zeros(N)
+        tstat2 = np.zeros(N)
+        for jj in range(N):
+            # Loop over number of trials
+
+            dataset_test = []
+            for ll, likob in enumerate(likobs):
+                dataset_test.append(genFakeSet(likob, gwamp))
+
+            tstat[jj], tstat2[jj] = testStat(likobs, dataset_test)
+
+        passtest[ii] = np.sum(tstat > teststat)
+        passtest2[ii] = np.sum(tstat2 > teststat2)
+
+    return logamps, passtest
 
