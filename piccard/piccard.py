@@ -6734,11 +6734,14 @@ class ptaLikelihood(object):
                 PhiLD = 2*np.sum(np.log(np.diag(cf[0])))
                 Phiinv = sl.cho_solve(cf, np.identity(Phi.shape[0]))
             except np.linalg.LinAlgError:
-                U, s, Vh = sl.svd(Phi)
-                if not np.all(s > 0):
-                    raise ValueError("ERROR: Phi singular according to SVD")
-                PhiLD = np.sum(np.log(s))
-                Phiinv = np.dot(Vh.T, np.dot(np.diag(1.0/s), U.T))
+                try:
+                    U, s, Vh = sl.svd(Phi)
+                    if not np.all(s > 0):
+                        raise ValueError("ERROR: Phi singular according to SVD")
+                    PhiLD = np.sum(np.log(s))
+                    Phiinv = np.dot(Vh.T, np.dot(np.diag(1.0/s), U.T))
+                except np.linalg.LinAlgError:
+                    return -np.inf
 
                 #print "Fallback to SVD for Phi", parameters
         else:
@@ -6780,11 +6783,14 @@ class ptaLikelihood(object):
                 PhiLD = 2*np.sum(np.log(np.diag(cf[0])))
                 Phiinv = sl.cho_solve(cf, np.identity(UPhiU.shape[0]))
             except np.linalg.LinAlgError:
-                U, s, Vh = sl.svd(UPhiU)
-                if not np.all(s > 0):
-                    raise ValueError("ERROR: UPhiU singular according to SVD")
-                PhiLD = np.sum(np.log(s))
-                Phiinv = np.dot(Vh.T, ((1.0/s) * U).T)
+                try:
+                    U, s, Vh = sl.svd(UPhiU)
+                    if not np.all(s > 0):
+                        raise ValueError("ERROR: UPhiU singular according to SVD")
+                    PhiLD = np.sum(np.log(s))
+                    Phiinv = np.dot(Vh.T, ((1.0/s) * U).T)
+                except np.linalg.LinAlgError:
+                    return -np.inf
 
 
         # MARK E
