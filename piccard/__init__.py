@@ -2,6 +2,7 @@ from __future__ import print_function
 from .piccard import *
 from .piccard_samplers import *
 from .piccard_pso import *
+from .piccard_freqstat import *
 
 __version__ = 2014.03
 
