@@ -1561,6 +1561,7 @@ class ptaPulsar(object):
     Fdmfreqs = None
     Emat = None
     EEmat = None
+    Zmat = None         # For the Gibbs sampling, this is the Fmat/Emat
     Gr = None
     GGr = None
     GtF = None
@@ -3033,6 +3034,15 @@ class ptaPulsar(object):
             # No need to write anything just yet?
             pass
 
+        if likfunc == 'gibbs1' or write == 'all':
+            # DM + Red noise stuff (mark6 needs this)
+            self.Zmat = np.append(self.Mmat, self.Fmat, axis=1)
+
+            if write != 'none':
+                # Write all these quantities to the HDF5 file
+                h5df.addData(self.name, 'pic_Zmat', self.Zmat)
+
+
 
     """
     For every pulsar, quite a few Auxiliary quantities (like GtF etc.) are
@@ -3354,6 +3364,9 @@ class ptaPulsar(object):
             self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat'))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
 
+        if likfunc == 'gibbs1':
+            self.Zmat = np.array(h5df.getData(self.name, 'pic_Zmat'))
+
 
 
     # When doing Fourier mode selection, like in mark7/mark8, we need an adjusted
@@ -3459,6 +3472,7 @@ class ptaLikelihood(object):
     npgs = None     # Number of non-projected observations per pulsar (columns Hmat)
     npgos = None    # Number of orthogonal non-projected observations per pulsar (columns Homat)
     npu = None      # Number of avetoas per pulsar
+    npm = None      # Number of columns of design matrix (full design matrix)
     Tmax = None     # One Tmax to rule them all...
 
     # The Phi, Theta, and Sigma matrices
@@ -3474,8 +3488,10 @@ class ptaLikelihood(object):
     avec = None         # mark1
     rGF = None          #        mark3, mark?
     rGE = None          #                      mark6
+    rGZ = None          #                              gibbs
     FGGNGGF = None      #        mark3, mark?
     EGGNGGE = None      #                      mark6
+    ZGGNGGZ = None      #                              gibbs
     NGGF = None         #        mark3, mark?  mark6
 
     # Whether we have already called the likelihood in one call, so we can skip
@@ -4070,6 +4086,7 @@ class ptaLikelihood(object):
         self.npobs = np.zeros(npsrs, dtype=np.int)
         self.npgs = np.zeros(npsrs, dtype=np.int)
         self.npgos = np.zeros(npsrs, dtype=np.int)
+        self.npm = np.zeros(npsrs, dtype=np.int)
         for ii, psr in enumerate(self.ptapsrs):
             if not self.likfunc in ['mark2']:
                 self.npf[ii] = len(self.ptapsrs[ii].Ffreqs)
@@ -4081,7 +4098,8 @@ class ptaLikelihood(object):
             #if self.likfunc in ['mark1', 'mark3', 'mark4', 'mark4ln', 'mark11']:
             self.npu[ii] = len(self.ptapsrs[ii].avetoas)
 
-            if self.likfunc in ['mark1', 'mark4', 'mark4ln', 'mark6', 'mark6fa', 'mark8', 'mark10']:
+            if self.likfunc in ['mark1', 'mark4', 'mark4ln', 'mark6', \
+                    'mark6fa', 'mark8', 'mark10', 'gibbs1']:
                 self.npfdm[ii] = len(psr.Fdmfreqs)
                 self.npffdm[ii] = len(psr.Fdmfreqs)
 
@@ -4094,11 +4112,14 @@ class ptaLikelihood(object):
 
             if self.likfunc in ['mark1', 'mark2', 'mark3', 'mark3fa', 'mark4', \
                     'mark4ln', 'mark6', 'mark6fa', 'mark7', 'mark8', 'mark9', \
-                    'mark10']:
-                self.npgs[ii] = len(psr.toas) - psr.Hcmat.shape[1]
+                    'mark10', 'gibbs1']:
+                self.npgs[ii] = len(psr.toas) - psr.Hcmat.shape[1] # (Hc = orth(M) )
                 self.npgos[ii] = len(psr.toas) - self.npgs[ii]
                 psr.Nwvec = np.zeros(self.npgs[ii])
                 psr.Nwovec = np.zeros(self.npgos[ii])
+
+            if self.likfunc[:5] in ['gibbs']:
+                psr.npm[ii] = psr.Mmat.shape[1]
 
         self.Phi = np.zeros((np.sum(self.npf), np.sum(self.npf)))
         self.Phivec = np.zeros(np.sum(self.npf))
@@ -4156,9 +4177,18 @@ class ptaLikelihood(object):
             self.rGE = np.zeros(np.sum(self.npff)+np.sum(self.npffdm))
             self.EGGNGGE = np.zeros((np.sum(self.npff)+np.sum(self.npffdm), \
                     np.sum(self.npff)+np.sum(self.npffdm)))
-        if self.likfunc == 'mark11':
+        elif self.likfunc == 'mark11':
             self.GNGldet = np.zeros(npsrs)
             self.rGr = np.zeros(npsrs)
+        elif self.likfunc == 'gibbs1':
+            zlen = np.sum(self.npm) + np.sum(self.npf)
+            self.Sigma = np.zeros((zlen, zlen))
+            self.GNGldet = np.zeros(npsrs)
+            self.Thetavec = np.zeros(np.sum(self.npfdm))
+            self.rGZ = np.zeros(zlen)
+
+            self.rGr = np.zeros(npsrs)
+            self.ZGGNGGZ = np.zeros((zlen, zlen))
 
 
     """
@@ -5035,6 +5065,7 @@ class ptaLikelihood(object):
             if numDMFreqs[pindex] > 0 and addDMQSD:
                 m2psr.addDMQuadratic()
                 print "WARNING: DMQSD not saved to HDF5 file (auxiliaries are...)"
+                print "         DM1 and DM2 better added to par-file"
 
             tmsigpars = None
             if compression == 'timingmodel':
