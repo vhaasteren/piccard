@@ -700,11 +700,13 @@ def makeEfacPage(fig, samples, labels, mlchain, mlpso, txtfilename, \
             ress = ax.scatter(x, mlpso, s=50, c='r', marker='*')
         except ValueError:
             ress = ax.scatter(x, mlpso, s=50, c='r', marker='x')
+        ml = mlpso
     else:
         try:
             ress = ax.scatter(x, mlchain, s=50, c='r', marker='*')
         except ValueError:
             ress = ax.scatter(x, mlchain, s=50, c='r', marker='+')
+        ml = mlchain
 
     #ax.axis([-1, max(x)+1, 0, max(yval+yerr)+1])
     ax.axis([-1, max(x)+1, min(yval-yerr)-1, max(yval+yerr)+1])
@@ -725,7 +727,7 @@ def makeEfacPage(fig, samples, labels, mlchain, mlpso, txtfilename, \
     for ii in range(npars):
         print str(labels[ii]) + ":  " + str(yval[ii]) + " +/- " + str(yerr[ii])
         fileout.write(str(labels[ii]) + "  " + str(yval[ii]) + \
-                        "  " + str(yerr[ii]) + "\n")
+                        "  " + str(yerr[ii]) + "  " + str(ml[ii]) + "\n")
     fileout.close()
 
 
