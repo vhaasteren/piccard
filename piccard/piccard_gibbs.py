@@ -22,6 +22,12 @@ except ImportError:
     emcee = mcmchammer
 
 
+# We need a global interpolation technique for the inverse CDF of the scaled
+# inverse chi-sqr distribution
+def get_ics_func():
+    pass
+
+
 def gibbs_sample_a(self):
     """
     Assume that all the noise parameters have been set (N, Phi, Theta). Given
