@@ -9082,6 +9082,7 @@ def crossPower(likobs, mlpars):
     @param mlpars:  list of ML parameters
 
     The cross-power of pulsar a and b is defined as: num / den
+
     num = residuals_a * C_a^{-1} * Cgw_ab * C_b^{-1} * residuals_b
     den = Trace( C_a^{-1} * Cgw_{ab} * C_b^{-1} * Cgw_{ba} )
 
@@ -9214,7 +9215,7 @@ def fitCrossPower(hdcoeff, crosspower, crosspowererr):
     return hc_sqr, hc_sqrerr
 
 
-def prepPsrForTeststat(likob, mlpar, mlNoise=False):
+def prepPsrForTeststat(likob, mlpar, mlNoise=False, mlWhiteNoise=False):
     """
     This function creates some Auxiliary quantities for use in the Shannonensque
     test statistic
@@ -9262,25 +9263,31 @@ def prepPsrForTeststat(likob, mlpar, mlNoise=False):
     for pd in likob.pardes:
         if pd['index'] >= 0:
             if pd['sigtype'] == 'efac':
-                if mlNoise:
+                if not mlWhiteNoise:
                     pars[pd['index']] = mlpar[pd['index']]
                 else:
                     pars[pd['index']] = 1.0
             elif pd['sigtype'] == 'equad':
-                if mlNoise:
+                if not mlWhiteNoise:
                     pars[pd['index']] = mlpar[pd['index']]
                 else:
                     pars[pd['index']] = likob.pmin[pd['index']]
             elif pd['sigtype'] == 'jitter':
-                if mlNoise:
+                if not mlWhiteNoise:
                     pars[pd['index']] = mlpar[pd['index']]
                 else:
                     pars[pd['index']] = likob.pmin[pd['index']]
             elif pd['sigtype'] == 'powerlaw':
                 if pd['id'] == 'RN-Amplitude':
-                    pars[pd['index']] = likob.pmin[pd['index']]
+                    if mlNoise:
+                        pars[pd['index']] = mlpar[pd['index']]
+                    else:
+                        pars[pd['index']] = likob.pmin[pd['index']]
                 elif pd['id'] == 'RN-Spectral-index':
-                    pars[pd['index']] = 3.1
+                    if mlNoise:
+                        pars[pd['index']] = mlpar[pd['index']]
+                    else:
+                        pars[pd['index']] = 3.1
             elif pd['sigtype'] == 'dmpowerlaw':
                 if pd['id'] == 'DM-Amplitude':
                     pars[pd['index']] = mlpar[pd['index']]
@@ -9354,13 +9361,15 @@ def rGE(psr, r):
 
     return np.dot(r, psr.NiE) - np.dot(np.dot(r,  psr.Mmat), psr.MtMMNE)
 
-def testStat(likobs, datasets):
+def autoPower(likobs, datasets):
     """
     Calculate an equivalent of the PPTA teststat
     """
-    tstat_num = []
-    tstat_den = []
-    tstat = []
+    #tstat_num = []
+    #tstat_den = []
+    #tstat = []
+    auto_power = []
+    auto_powererr = []
     for ii, likob in enumerate(likobs):
         psr = likob.ptapsrs[0]
 
@@ -9386,73 +9395,88 @@ def testStat(likobs, datasets):
             PT = np.dot(psr.UtF, np.dot(PhiTheta, psr.UtF.T))
         else:
             PT = PhiTheta
+            
+        num = np.dot(likob.OSr, np.dot(PT, likob.OSr))
+        #den = np.trace(np.dot(likob.OSE, np.dot(PT, \
+        #        np.dot(likob.OSE, PT.T))))
+        auto_power.append(num / likob.consDen)
+        auto_powererr.append(1.0 / np.sqrt(likob.mlDen))
 
-        tstat_num.append(np.dot(likob.OSr, np.dot(PT, likob.OSr)))
-        tstat_den.append(np.trace(np.dot(likob.OSE, np.dot(PT, \
-                np.dot(likob.OSE, PT.T)))))
-        tstat.append(tstat_num[-1] / tstat_den[-1])
-        #tstat_den.append(1.0)
+    # np.sum(tstat_num) / np.sum(tstat_den), np.sum(tstat)
+    return np.array(auto_power), np.array(auto_powererr)
 
-    return np.sum(tstat_num) / np.sum(tstat_den), np.sum(tstat)
 
-def teststatBoundCheck(likobs, mlpars, bins=20, N=400, loggwmin=-15.3, loggwmax=-14.3):
+def statDen(likob):
     """
-    Do the frequencies auto-term upper-bound
+    Calculate the denominator of the autoPower term. This term is independent of
+    the data, and hence only needs to be calculated once
     """
-    for ii, likob in enumerate(likobs):
-        prepPsrForTeststat(likob, mlpars[ii])
+    psr = likob.ptapsrs[0]
 
-    logamps = np.linspace(loggwmin, loggwmax, bins)
-    passtest = np.zeros(bins)
-    passtest2 = np.zeros(bins)
+    freqpy = psr.Ffreqs * pic_spy
+    Tmax = likob.Tmax
+    pcdoubled = (pic_spy**3 / (12*np.pi*np.pi * Tmax)) * freqpy ** (-4.33)
 
-    datasets = [likobs[ii].ptapsrs[0].residuals for ii in range(len(likobs))]
+    nfreqs = psr.Fmat.shape[1]
 
-    teststat, teststat2 = testStat(likobs, datasets)
+    if likob.likfunc[:5] == 'mark4':
+        PhiTheta = np.zeros((nfreqs, nfreqs))
+    else:
+        PhiTheta = np.zeros((len(likob.OSr), len(likob.OSr)))
 
-    for ii, loggwamp in enumerate(logamps):
-        # Loop over amplitudes (bins)
-        gwamp = 10 ** loggwamp
+    di = np.diag_indices(nfreqs)
+    PhiTheta[di] = pcdoubled
 
-        tstat = np.zeros(N)
-        tstat2 = np.zeros(N)
-        for jj in range(N):
-            # Loop over number of trials
+    if likob.likfunc[:5] == 'mark4':
+        #PT = np.dot(np.dot(psr.UtF, PhiTheta), psr.UtF.T)
+        PT = np.dot(psr.UtF, np.dot(PhiTheta, psr.UtF.T))
+    else:
+        PT = PhiTheta
+        
+    return np.trace(np.dot(likob.OSE, np.dot(PT, \
+            np.dot(likob.OSE, PT.T))))
 
-            dataset_test = []
-            for ll, likob in enumerate(likobs):
-                dataset_test.append(genFakeSet(likob, gwamp))
 
-            tstat[jj], tstat2[jj] = testStat(likobs, dataset_test)
+def testStat(likobs, datasets):
+    """
+    Perform a least-squares fit to the GW amplitude, based on the auto-power of
+    the data
+    """
+    auto_power, auto_powererr = autoPower(likobs, datasets)
 
-        passtest[ii] = np.sum(tstat > teststat)
-        passtest2[ii] = np.sum(tstat2 > teststat2)
+    hc_sqr = np.sum(auto_power / (auto_powererr**2)) / \
+            np.sum(1.0 / (auto_powererr**2))
 
-    return logamps, passtest, passtest2
+    hc_sqrerr = 1.0 / np.sqrt(np.sum(1.0 / (auto_powererr**2)))
+
+    return hc_sqr, hc_sqrerr
 
 
 def teststatBound(likobs, mlpars, bins=20, N=400, loggwmin=-15.3, \
-                  loggwmax=-14.3, mlNoise=False):
+                  loggwmax=-14.3, mlNoise=True):
     """
     Do the frequencies auto-term upper-bound
     """
     for ii, likob in enumerate(likobs):
+        #prepPsrForTeststat(likob, mlpars[ii], mlNoise=False)
         prepPsrForTeststat(likob, mlpars[ii], mlNoise=mlNoise)
+        likob.consDen = statDen(likob)
+        prepPsrForTeststat(likob, mlpars[ii], mlNoise=mlNoise)
+        likob.mlDen = statDen(likob)
 
     logamps = np.linspace(loggwmin, loggwmax, bins)
     passtest = np.zeros(bins)
-    passtest2 = np.zeros(bins)
 
     datasets = [likobs[ii].ptapsrs[0].residuals for ii in range(len(likobs))]
 
-    teststat, teststat2 = testStat(likobs, datasets)
+    teststat, teststat_err = testStat(likobs, datasets)
 
     for ii, loggwamp in enumerate(logamps):
         # Loop over amplitudes (bins)
         gwamp = 10 ** loggwamp
 
         tstat = np.zeros(N)
-        tstat2 = np.zeros(N)
+        tstat_err = np.zeros(N)
         for jj in range(N):
             # Loop over number of trials
 
@@ -9460,10 +9484,9 @@ def teststatBound(likobs, mlpars, bins=20, N=400, loggwmin=-15.3, \
             for ll, likob in enumerate(likobs):
                 dataset_test.append(genFakeSet(likob, gwamp))
 
-            tstat[jj], tstat2[jj] = testStat(likobs, dataset_test)
+            tstat[jj], tstat_err[jj] = testStat(likobs, dataset_test)
 
         passtest[ii] = np.sum(tstat > teststat)
-        passtest2[ii] = np.sum(tstat2 > teststat2)
 
     return logamps, passtest
 
