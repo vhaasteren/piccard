@@ -744,6 +744,7 @@ def makeSpectrumPage(ax, samples, freqs, mlchain, mlpso, \
 
     # Create the plotting data for this plot
     x = np.arange(npars)
+    x = freqs
     yval = np.zeros(npars)
     yerr = np.zeros(npars)
 
@@ -983,8 +984,9 @@ def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
             if np.sum(ind) > 0:
                 fileout = outputdir+'/'+pulsarname[ind[0]]+'-'+signal
 
-                dopar[jitterparind] = False
-                freqs = np.log10(np.float(np.array(labels[ind])))
+                dopar[ind] = False
+                #freqs = np.log10(np.float(np.array(labels)[ind]))
+                freqs = [np.log10(np.float(np.array(labels)[ind][iii])) for iii in range(np.sum(ind))]
                 spectrumchain = chain[:, ind]
                 spectrummlchain = mlchainpars[ind]
                 if mlpsopars is not None:
@@ -1003,6 +1005,9 @@ def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
                 ax = fig.add_subplot(111)
                 makeSpectrumPage(ax, spectrumchain, freqs, spectrummlchain, \
                         spectrummlpso, title=title)
+
+                plt.savefig(fileout+'.png')
+                plt.savefig(fileout+'.eps')
 
 
 
