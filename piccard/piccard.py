@@ -1522,6 +1522,8 @@ class ptaPulsar(object):
     prefitresiduals = None
     residuals = None
     detresiduals = None     # Residuals after subtraction of deterministic sources
+    gibbsresiduals = None     # Residuals used in Gibbs sampling  (QUESTION: why no parameter?)
+    gibbscoefficients = None    # Coefficients used in Gibbs sampling  (QUESTION: why no parameter?)
     freqs = None
     #unitconversion = None
     Gmat = None
@@ -4119,7 +4121,7 @@ class ptaLikelihood(object):
                 psr.Nwovec = np.zeros(self.npgos[ii])
 
             if self.likfunc[:5] in ['gibbs']:
-                psr.npm[ii] = psr.Mmat.shape[1]
+                self.npm[ii] = psr.Mmat.shape[1]
 
         self.Phi = np.zeros((np.sum(self.npf), np.sum(self.npf)))
         self.Phivec = np.zeros(np.sum(self.npf))
@@ -5448,7 +5450,7 @@ class ptaLikelihood(object):
 
         # Loop over all white noise signals, and fill the pulsar Nvec
         for ss, m2signal in enumerate(self.ptasignals):
-            m2signal = self.ptasignals[ss]
+            #m2signal = self.ptasignals[ss]
             psr = self.ptapsrs[m2signal['pulsarind']]
             if selection[ss]:
                 if m2signal['stype'] == 'efac':

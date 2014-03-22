@@ -36,7 +36,7 @@ class PTSampler(object):
     """
 
     def __init__(self, ndim, logl, logp, cov, comm=MPI.COMM_WORLD, \
-                 outDir='./chains', verbose=True):
+                 outDir='./chains', verbose=True, nowrite=False):
 
         # MPI initialization
         self.comm = comm
@@ -48,6 +48,7 @@ class PTSampler(object):
         self.logp = logp
         self.outDir = outDir
         self.verbose = verbose
+        self.nowrite = nowrite
 
         # setup output file
         if not os.path.exists(self.outDir):
@@ -153,8 +154,9 @@ class PTSampler(object):
 
         # set up output file
         fname = self.outDir + '/chain_{0}.txt'.format(self.temp)
-        self._chainfile = open(fname, 'w')
-        self._chainfile.close()
+        if not self.nowrite:
+            self._chainfile = open(fname, 'w')
+            self._chainfile.close()
 
         self.comm.barrier()
 
@@ -322,7 +324,8 @@ class PTSampler(object):
 
             # write to file
             if iter % isave == 0:
-                self._writeToFile(fname, iter, isave, thin)
+                if not self.nowrite:
+                    self._writeToFile(fname, iter, isave, thin)
                 if self.MPIrank == 0 and self.verbose:
                     sys.stdout.write('\r')
                     sys.stdout.write('Finished %2.2f percent in %f s Acceptance rate = %g'\
