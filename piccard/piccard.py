@@ -8954,6 +8954,137 @@ class ptaLikelihood(object):
         return recsig, np.diag(recsigCov)
 
 
+    """
+    Same as the original, but also calculates the TMPs
+
+    TODO: Gr does not include detresiduals!!!! FIX THIS
+    """
+    def mlPredictionFilter3(self, mlparameters, signum=None, selection=None):
+        npsrs = len(self.ptapsrs)
+
+        if signum is not None:
+            selection = np.array([0]*len(self.ptasignals), dtype=np.bool)
+            selection[signum] = True
+        elif selection is None:
+            # Make a prediction for _all_ signals (i.e. true residuals with
+            # timing model paramers correctly removed)
+            selection = np.array([1]*len(self.ptasignals), dtype=np.bool)
+
+        # The full covariance matrix components
+        self.constructPhiAndTheta(mlparameters)
+        allPhi = self.Phi.copy()
+        allThetavec = self.Thetavec.copy()
+
+        # The covariance matrix components of the prediction signal
+        self.constructPhiAndTheta(mlparameters, selection)
+        predPhi = self.Phi.copy()
+        predThetavec = self.Thetavec.copy()
+
+        # The white noise
+        self.setPsrNoise(mlparameters)
+
+        GCGfull = np.zeros((np.sum(self.npgs), np.sum(self.npgs)))
+        Cfull = np.zeros((np.sum(self.npobs), np.sum(self.npobs)))
+        Cpred = np.zeros((np.sum(self.npobs), np.sum(self.npobs)))
+        
+        totGF = np.zeros((np.sum(self.npgs), np.sum(self.npf)))
+        totF = np.zeros((np.sum(self.npobs), np.sum(self.npf)))
+        totG = np.zeros((np.sum(self.npobs), np.sum(self.npgs)))
+        totGr = np.zeros(np.sum(self.npgs))
+        totDvec = np.zeros(np.sum(self.npobs))
+
+        # Construct the full covariance matrices
+        for ii, psr in enumerate(self.ptapsrs):
+            findex = np.sum(self.npf[:ii])
+            fdmindex = np.sum(self.npfdm[:ii])
+            nfreq = int(self.npf[ii]/2)
+            nfreqdm = int(self.npfdm[ii]/2)
+            gindex = np.sum(self.npgs[:ii])
+            ngs = self.npgs[ii]
+            nindex = np.sum(self.npobs[:ii])
+            nobs = self.npobs[ii]
+
+            # Start with the white noise
+            if self.ptapsrs[ii].twoComponentNoise:
+                GCGfull[gindex:gindex+ngs, gindex:gindex+ngs] = \
+                        np.dot(self.ptapsrs[ii].Amat.T, \
+                        (self.ptapsrs[ii].Nwvec * self.ptapsrs[ii].Amat.T).T)
+            else:
+                GCGfull[gindex:gindex+ngs, gindex:gindex+ngs] = \
+                        np.dot(self.ptapsrs[ii].Gmat.T, \
+                        (self.ptapsrs[ii].Nvec * self.ptapsrs[ii].Gmat.T).T)
+
+            Cfull[nindex:nindex+nobs,nindex:nindex+nobs] = \
+                    np.diag(psr.Nvec)
+
+            # The Phi we cannot add yet. There can be cross-pulsar correlations.
+            # Construct a total F-matrix
+            totGF[gindex:gindex+ngs, findex:findex+2*nfreq] = \
+                    np.dot(self.ptapsrs[ii].Gmat.T, self.ptapsrs[ii].Fmat)
+            totF[nindex:nindex+nobs, findex:findex+2*nfreq] = \
+                    self.ptapsrs[ii].Fmat
+            totG[nindex:nindex+nobs, gindex:gindex+ngs] = self.ptapsrs[ii].Gmat
+            totGr[gindex:gindex+ngs] = self.ptapsrs[ii].Gr
+            totDvec[nindex:nindex+nobs] = self.ptapsrs[ii].Dvec
+
+            DF = self.ptapsrs[ii].DF
+            GDF = np.dot(self.ptapsrs[ii].Gmat.T, self.ptapsrs[ii].DF)
+
+            # Add the dispersion measure variations
+            GCGfull[gindex:gindex+ngs, gindex:gindex+ngs] += \
+                    np.dot(GDF, (allThetavec[fdmindex:fdmindex+2*nfreqdm] * GDF).T)
+            Cpred[nindex:nindex+nobs, nindex:nindex+nobs] += \
+                    np.dot(DF, (predThetavec[fdmindex:fdmindex+2*nfreqdm] * DF).T)
+
+            Cfull[nindex:nindex+nobs,nindex:nindex+nobs] += \
+                    np.dot(DF, (allThetavec[fdmindex:fdmindex+2*nfreqdm] * DF).T)
+
+        # Now add the red signals, too
+        GCGfull += np.dot(totGF, np.dot(allPhi, totGF.T))
+        Cpred += np.dot(totF, np.dot(predPhi, totF.T))
+        GtCpred = np.dot(totG.T, Cpred)
+        Cfull += np.dot(totF, np.dot(allPhi, totF.T))
+
+        # Re-construct the DM variations, and the signal
+        try:
+            cf = sl.cho_factor(GCGfull)
+            GCGr = sl.cho_solve(cf, totGr)
+            GCGCp = sl.cho_solve(cf, GtCpred)
+        except np.linalg.LinAlgError:
+            U, s, Vh = sl.svd(GCGfull)
+            if not np.all(s > 0):
+                raise ValueError("ERROR: GCGr singular according to SVD")
+            GCGr = np.dot(Vh.T, np.dot(((1.0/s)*U).T, totGr))
+            GCGCp = np.dot(Vh.T, np.dot(((1.0/s)*U).T, GtCpred))
+
+        # Calculate the ML TMPs
+        try:
+            if len(self.ptapsrs) > 1:
+                raise ValueError("ERROR: too many pulsars!")
+            psr = self.ptapsrs[0]
+
+            cf = sl.cho_factor(Cfull)
+            Ci = sl.cho_solve(cf, np.eye(Cfull.shape[0]))
+            MCM = np.dot(psr.Mmat.T, np.dot(Ci, psr.Mmat))
+            cf = sl.cho_factor(MCM)
+
+            MCx = np.dot(psr.Mmat.T, np.dot(Ci, psr.prefitresiduals))
+            MCMi = sl.cho_solve(cf, np.eye(MCM.shape[0]))
+            chiML = np.dot(MCMi, MCx)
+            chiMLerr = np.sqrt(np.diag(MCMi))
+        except np.linalg.LinAlgError:
+            raise ValueError("ERROR: C not Cholesky-factorisable")
+
+        Cti = np.dot(totG, GCGr)
+        recsig = np.dot(Cpred, Cti)
+
+        CtGCp = np.dot(Cpred, np.dot(totG, GCGCp))
+        recsigCov = Cpred - CtGCp
+
+        return recsig, np.sqrt(np.diag(recsigCov)), chiML, chiMLerr
+
+
+
 
 
 

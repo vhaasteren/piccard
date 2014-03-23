@@ -700,11 +700,13 @@ def makeEfacPage(fig, samples, labels, mlchain, mlpso, txtfilename, \
             ress = ax.scatter(x, mlpso, s=50, c='r', marker='*')
         except ValueError:
             ress = ax.scatter(x, mlpso, s=50, c='r', marker='x')
+        ml = mlpso
     else:
         try:
             ress = ax.scatter(x, mlchain, s=50, c='r', marker='*')
         except ValueError:
             ress = ax.scatter(x, mlchain, s=50, c='r', marker='+')
+        ml = mlchain
 
     #ax.axis([-1, max(x)+1, 0, max(yval+yerr)+1])
     ax.axis([-1, max(x)+1, min(yval-yerr)-1, max(yval+yerr)+1])
@@ -725,7 +727,7 @@ def makeEfacPage(fig, samples, labels, mlchain, mlpso, txtfilename, \
     for ii in range(npars):
         print str(labels[ii]) + ":  " + str(yval[ii]) + " +/- " + str(yerr[ii])
         fileout.write(str(labels[ii]) + "  " + str(yval[ii]) + \
-                        "  " + str(yerr[ii]) + "\n")
+                        "  " + str(yerr[ii]) + "  " + str(ml[ii]) + "\n")
     fileout.close()
 
 
@@ -742,6 +744,7 @@ def makeSpectrumPage(ax, samples, freqs, mlchain, mlpso, \
 
     # Create the plotting data for this plot
     x = np.arange(npars)
+    x = freqs
     yval = np.zeros(npars)
     yerr = np.zeros(npars)
 
@@ -982,7 +985,7 @@ def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
                 fileout = outputdir+'/'+pulsarname[ind[0]]+'-'+signal
 
                 dopar[ind] = False
-                freqs = np.log10(np.array(np.array(labels)[ind], dtype=np.float))
+                freqs = [np.log10(np.float(np.array(labels)[ind][iii])) for iii in range(np.sum(ind))]
                 spectrumchain = chain[:, ind]
                 spectrummlchain = mlchainpars[ind]
                 if mlpsopars is not None:
@@ -1001,6 +1004,9 @@ def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
                 ax = fig.add_subplot(111)
                 makeSpectrumPage(ax, spectrumchain, freqs, spectrummlchain, \
                         spectrummlpso, title=title)
+
+                plt.savefig(fileout+'.png')
+                plt.savefig(fileout+'.eps')
 
 
 
