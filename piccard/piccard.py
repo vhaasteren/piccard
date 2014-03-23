@@ -3039,6 +3039,8 @@ class ptaPulsar(object):
         if likfunc == 'gibbs1' or write == 'all':
             # DM + Red noise stuff (mark6 needs this)
             self.Zmat = np.append(self.Mmat, self.Fmat, axis=1)
+            self.Wvec = np.zeros(self.Mmat.shape[0]-self.Mmat.shape[1])
+            self.Wovec = np.zeros(0)
 
             if write != 'none':
                 # Write all these quantities to the HDF5 file
@@ -3475,6 +3477,7 @@ class ptaLikelihood(object):
     npgos = None    # Number of orthogonal non-projected observations per pulsar (columns Homat)
     npu = None      # Number of avetoas per pulsar
     npm = None      # Number of columns of design matrix (full design matrix)
+    npz = None      # Number of columns of Zmat
     Tmax = None     # One Tmax to rule them all...
 
     # The Phi, Theta, and Sigma matrices
@@ -4089,6 +4092,7 @@ class ptaLikelihood(object):
         self.npgs = np.zeros(npsrs, dtype=np.int)
         self.npgos = np.zeros(npsrs, dtype=np.int)
         self.npm = np.zeros(npsrs, dtype=np.int)
+        self.npz = np.zeros(npsrs, dtype=np.int)
         for ii, psr in enumerate(self.ptapsrs):
             if not self.likfunc in ['mark2']:
                 self.npf[ii] = len(self.ptapsrs[ii].Ffreqs)
@@ -4122,6 +4126,7 @@ class ptaLikelihood(object):
 
             if self.likfunc[:5] in ['gibbs']:
                 self.npm[ii] = psr.Mmat.shape[1]
+                self.npz[ii] = self.npm[ii] + self.npf[ii]
 
         self.Phi = np.zeros((np.sum(self.npf), np.sum(self.npf)))
         self.Phivec = np.zeros(np.sum(self.npf))

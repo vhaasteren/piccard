@@ -51,7 +51,7 @@ class PTSampler(object):
         self.nowrite = nowrite
 
         # setup output file
-        if not os.path.exists(self.outDir):
+        if not os.path.exists(self.outDir) and not nowrite:
             try:
                 os.makedirs(self.outDir)
             except OSError:
@@ -338,7 +338,9 @@ class PTSampler(object):
 
             # stop
             if self.MPIrank == 0 and iter >= Niter-1:
-                print '\nRun Complete'
+                if self.verbose:
+                    print 'Run Complete'
+                    sys.stdout.flush()
                 runComplete = True
 
             if self.MPIrank == 0 and runComplete:
@@ -349,7 +351,6 @@ class PTSampler(object):
             if self.MPIrank > 0:
                 runComplete = self.comm.Iprobe(source=0, tag=55)
                 time.sleep(0.000001) # trick to get around 
-
 
 
     def temperatureLadder(self, Tmin, Tmax=None, tstep=None):

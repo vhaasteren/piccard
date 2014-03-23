@@ -45,6 +45,11 @@ class pulsarNoiseLL(object):
         @param residuals:   Initialise the residuals we'll work with
         @param toaerrs:     The original TOA uncertainties
         """
+        self.vNvec = []
+        self.fNvec = []
+        self.vis_efac = []
+        self.fis_efac = []
+
         self.residuals = residuals
         self.toaerrs = toaerrs
         self.Nvec = np.zeros(len(residuals))
@@ -121,13 +126,15 @@ class singleFreqLL(object):
     pmax = None
     pstart = None
     pwidth = None
+    pindex = None
 
-    def __init__(self, a, pmin, pmax, pstart, pwidth):
+    def __init__(self, a, pmin, pmax, pstart, pwidth, index):
         self.a = a
         self.pmin = np.array([pmin])
         self.pmax = np.array([pmax])
         self.pstart = np.array([pstart])
         self.pwidth = np.array([pwidth])
+        self.pindex = index
 
     def loglikelihood(self, parameters):
         phivec = np.array([parameters[0], parameters[0]])
@@ -157,31 +164,49 @@ def gibbs_sample_a(self):
 
     a = []
     for ii, psr in enumerate(self.ptapsrs):
+        zindex = np.sum(self.npz[:ii])
+        nzs = self.npz[ii]
+        mindex = np.sum(self.npm[:ii])
+        nms = self.npm[ii]
+        findex = np.sum(self.npf[:ii])
+        nfs = self.npf[ii]
+
         ZNZ = np.dot(psr.Zmat.T, ((1.0/psr.Nvec) * psr.Zmat.T).T)
 
         di = np.diag_indices(ZNZ.shape[0])
 
         # Construct the covariance matrix
         Sigma = ZNZ.copy()
-        Sigma[di] += 1.0/psr.Phivec
+        Sigma[di][zindex+nms:zindex+nms+nfs] += 1.0/(self.Phivec[findex:findex+nfs])
 
-        cfL = sl.cholesky(Sigma, lower=True)
-        cf = (cfL, True)
+        # ahat is the slice ML value for the coefficients. Need ENx
+        ENx = np.dot(psr.Zmat.T, psr.detresiduals / psr.Nvec)
 
-        # ahat is the slice ML value for the coefficients
-        ENx = np.dot(psr.Zmat, psr.detresiduals / psr.Nvec)
-        ahat = sl.cho_solve(cf, ENx)
+        try:
+            cfL = sl.cholesky(Sigma, lower=True)
+            cf = (cfL, True)
 
-        # Calculate the inverse Cholesky factor (can we do this faster?)
-        cfLi = sl.cho_factor(cfL)
-        Li = sl.cho_solve(cfLi, np.eye(Sigma.shape[0]))
+            # Calculate the inverse Cholesky factor (can we do this faster?)
+            cfLi = sl.cho_factor(cfL)
+            Li = sl.cho_solve(cfLi, np.eye(Sigma.shape[0]))
+
+            ahat = sl.cho_solve(cf, ENx)
+        except np.linalg.LinAlgError:
+            U, s, Vt = sl.svd(Sigma)
+            if not np.all(s > 0):
+                raise ValueError("ERROR: Sigma singular according to SVD")
+            Sigi = U * (1.0/s)
+            Li = U * (1.0 / np.sqrt(s))
+
+            ahat = np.dot(Sigi, ENx)
 
         # Get a sample from the coefficient distribution
         psr.gibbscoefficients = ahat + np.dot(Li, np.random.randn(Li.shape[0]))
-        a.append(psr.gibbscoefficients[psr.Mmat.shape[1]:])
 
-        # We really do not care about the tmp's at this point
-        psr.gibbsresiduals = psr.detresiduals - np.dot(psr.Zmat, a[-1])
+        # We really do not care about the tmp's at this point. Save them
+        # separately
+        a.append(psr.gibbscoefficients[psr.Mmat.shape[1]:])
+        psr.gibbsresiduals = psr.detresiduals - np.dot(psr.Zmat, psr.gibbscoefficients)
 
     return a
 
@@ -201,23 +226,24 @@ def gibbs_sample_N(self, curpars):
                 # We have a winner: add this signal
                 pnl.addSignal(signal['Nvec'], True, signal['pmin'][0], \
                         signal['pmax'][0], pstart, signal['pwidth'][0], \
-                        fixed=(not signal['bvary'][0]))
+                        signal['parindex'], fixed=(not signal['bvary'][0]))
             elif signal['pulsarind'] == ii and signal['stype'] == 'equad':
                 # We have a winner: add this signal
                 pnl.addSignal(signal['Nvec'], False, signal['pmin'][0], \
                         signal['pmax'][0], pstart, signal['pwidth'][0], \
-                        fixed=(not signal['bvary'][0]))
+                        signal['parindex'], fixed=(not signal['bvary'][0]))
 
         # Run a tiny MCMC of one correlation length, and return the parameters
         ndim = pnl.dimensions()
         cov = np.diag(pnl.pwidth**2)
         p0 = pnl.pstart
         sampler = ptmcmc.PTSampler(ndim, pnl.loglikelihood, pnl.logprior, cov=cov, \
-                outDir='./gibbs-chains/', verbose=True, nowrite=True)
+                outDir='./gibbs-chains/', verbose=False, nowrite=True)
 
-        sampler.sample(p0, ndim*100, thin=1, burn=0)
+        steps = ndim*40
+        sampler.sample(p0, steps, thin=1, burn=10)
 
-        newpars[pnl.pindex] = sampler._chain[-1,:]
+        newpars[pnl.pindex] = sampler._chain[steps-1,:]
 
     return newpars
 
@@ -239,18 +265,20 @@ def gibbs_sample_Phi(self, a, curpars):
                 for jj in range(signal['ntotpars']):
                     # Warning: does not take into account non-varying parameters
                     sfl = singleFreqLL(a[ii][2*jj:2*jj+2], signal['pmin'][jj], \
-                            signal['pmax'][jj], pstart[jj], signal['pwidth'][jj])
+                            signal['pmax'][jj], pstart+jj, signal['pwidth'][jj], \
+                            signal['parindex'])
 
                     ndim = sfl.dimensions()
 
                     cov = np.diag(sfl.pwidth**2)
                     p0 = sfl.pstart
                     sampler = ptmcmc.PTSampler(ndim, sfl.loglikelihood, sfl.logprior, cov=cov, \
-                            outDir='./gibbs-chains/', verbose=True, nowrite=True)
+                            outDir='./gibbs-chains/', verbose=False, nowrite=True)
 
-                    sampler.sample(p0, ndim*100, thin=1, burn=1)
+                    steps = ndim*40
+                    sampler.sample(p0, steps, thin=1, burn=10)
 
-                    newpars[pnl.pindex] = sampler._chain[-1,:]
+                    newpars[sfl.pindex] = sampler._chain[steps-1,:]
 
     return newpars
 
@@ -289,6 +317,8 @@ def RunGibbs(likob, steps, chainsdir):
     ndim = likob.dimensions
     pars = likob.pstart.copy()
 
+    chain = np.zeros((steps, ndim))
+
     for step in range(steps):
         # Start with calculating the required likelihood quantities
         gibbsQuantities(likob, pars)
@@ -300,4 +330,13 @@ def RunGibbs(likob, steps, chainsdir):
         pars = gibbs_sample_N(likob, pars)
 
         # Generate new red noise parameters
-        gibbs_sample_Phi(likob, a, pars)
+        pars = gibbs_sample_Phi(likob, a, pars)
+
+        percent = (step * 100.0 / steps)
+        sys.stdout.write("\rGibbs: %d%%" %percent)
+        sys.stdout.flush()
+
+        chain[step, :] = pars
+
+    sys.stdout.write("\n")
+    return chain

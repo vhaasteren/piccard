@@ -981,8 +981,8 @@ def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
             if np.sum(ind) > 0:
                 fileout = outputdir+'/'+pulsarname[ind[0]]+'-'+signal
 
-                dopar[jitterparind] = False
-                freqs = np.log10(np.float(np.array(labels[ind])))
+                dopar[ind] = False
+                freqs = np.log10(np.array(np.array(labels)[ind], dtype=np.float))
                 spectrumchain = chain[:, ind]
                 spectrummlchain = mlchainpars[ind]
                 if mlpsopars is not None:
