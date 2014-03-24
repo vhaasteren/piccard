@@ -3038,7 +3038,7 @@ class ptaPulsar(object):
 
         if likfunc == 'gibbs1' or write == 'all':
             # DM + Red noise stuff (mark6 needs this)
-            self.Zmat = np.append(self.Mmat, self.Fmat, axis=1)
+            self.Zmat = np.append(self.Gcmat, self.Fmat, axis=1)
             self.Wvec = np.zeros(self.Mmat.shape[0]-self.Mmat.shape[1])
             self.Wovec = np.zeros(0)
 

@@ -137,7 +137,8 @@ class singleFreqLL(object):
         self.pindex = index
 
     def loglikelihood(self, parameters):
-        phivec = np.array([parameters[0], parameters[0]])
+        #phivec = np.array([10**parameters[0], 10**parameters[0]])
+        phivec = np.array([10**parameters, 10**parameters]).T.flatten()
 
         return -0.5 * np.sum(self.a**2/phivec) - 0.5*np.sum(np.log(phivec))
 
@@ -172,6 +173,7 @@ def gibbs_sample_a(self):
         nfs = self.npf[ii]
 
         ZNZ = np.dot(psr.Zmat.T, ((1.0/psr.Nvec) * psr.Zmat.T).T)
+        #ZNZ = np.dot(psr.Zmat.T, psr.Zmat)
 
         di = np.diag_indices(ZNZ.shape[0])
 
@@ -181,32 +183,41 @@ def gibbs_sample_a(self):
 
         # ahat is the slice ML value for the coefficients. Need ENx
         ENx = np.dot(psr.Zmat.T, psr.detresiduals / psr.Nvec)
+        #ENx = np.dot(psr.Zmat.T, psr.residuals)
 
+        """
         try:
             cfL = sl.cholesky(Sigma, lower=True)
             cf = (cfL, True)
 
             # Calculate the inverse Cholesky factor (can we do this faster?)
-            cfLi = sl.cho_factor(cfL)
+            cfLi = sl.cho_factor(cfL, lower=True)
             Li = sl.cho_solve(cfLi, np.eye(Sigma.shape[0]))
 
             ahat = sl.cho_solve(cf, ENx)
         except np.linalg.LinAlgError:
+        """
+        if True:
             U, s, Vt = sl.svd(Sigma)
             if not np.all(s > 0):
                 raise ValueError("ERROR: Sigma singular according to SVD")
-            Sigi = U * (1.0/s)
-            Li = U * (1.0 / np.sqrt(s))
+            Sigi = np.dot(U, np.dot(np.diag(1.0/s), Vt))
+            #Li = U * (1.0 / np.sqrt(s))
+            Li = np.dot(U, np.diag(1.0 / np.sqrt(s)))
 
             ahat = np.dot(Sigi, ENx)
 
         # Get a sample from the coefficient distribution
-        psr.gibbscoefficients = ahat + np.dot(Li, np.random.randn(Li.shape[0]))
+        psr.gibbscoefficients = ahat - np.dot(Li, np.random.randn(Li.shape[0]))
+
+        addres = np.dot(psr.Zmat, np.dot(Li, np.random.randn(Li.shape[0])))
+        #print "Addres: ", addres
 
         # We really do not care about the tmp's at this point. Save them
         # separately
         a.append(psr.gibbscoefficients[psr.Mmat.shape[1]:])
         psr.gibbsresiduals = psr.detresiduals - np.dot(psr.Zmat, psr.gibbscoefficients)
+        #psr.gibbsresiduals = psr.residuals - np.dot(psr.Zmat, psr.gibbscoefficients)
 
     return a
 
@@ -217,7 +228,7 @@ def gibbs_sample_N(self, curpars):
     newpars = curpars.copy()
 
     for ii, psr in enumerate(self.ptapsrs):
-        pnl = pulsarNoiseLL(psr.residuals, psr.toaerrs)
+        pnl = pulsarNoiseLL(psr.gibbsresiduals, psr.toaerrs)
 
         # Add the signals
         for ss, signal in enumerate(self.ptasignals):
@@ -240,10 +251,12 @@ def gibbs_sample_N(self, curpars):
         sampler = ptmcmc.PTSampler(ndim, pnl.loglikelihood, pnl.logprior, cov=cov, \
                 outDir='./gibbs-chains/', verbose=False, nowrite=True)
 
-        steps = ndim*40
+        steps = ndim*10
         sampler.sample(p0, steps, thin=1, burn=10)
 
-        newpars[pnl.pindex] = sampler._chain[steps-1,:]
+        # REALLY REALLY CHANGE THIS BACK HERE!!!!!
+        #newpars[pnl.pindex] = 1.0 + np.random.randn(1)*0.05
+        newpars[pnl.pindex] = sampler._chain[steps-1,0]
 
     return newpars
 
@@ -259,13 +272,12 @@ def gibbs_sample_Phi(self, a, curpars):
     for ii, psr in enumerate(self.ptapsrs):
         for ss, signal in enumerate(self.ptasignals):
             if signal['pulsarind'] == ii and signal['stype'] == 'spectrum':
-                pstart = curpars[signal['parindex']]
-
                 # Loop over the frequencies
                 for jj in range(signal['ntotpars']):
+                    pstart = np.float(curpars[signal['parindex']+jj])
                     # Warning: does not take into account non-varying parameters
                     sfl = singleFreqLL(a[ii][2*jj:2*jj+2], signal['pmin'][jj], \
-                            signal['pmax'][jj], pstart+jj, signal['pwidth'][jj], \
+                            signal['pmax'][jj], pstart, signal['pwidth'][jj], \
                             signal['parindex'])
 
                     ndim = sfl.dimensions()
@@ -275,10 +287,16 @@ def gibbs_sample_Phi(self, a, curpars):
                     sampler = ptmcmc.PTSampler(ndim, sfl.loglikelihood, sfl.logprior, cov=cov, \
                             outDir='./gibbs-chains/', verbose=False, nowrite=True)
 
-                    steps = ndim*40
+                    steps = ndim*10
                     sampler.sample(p0, steps, thin=1, burn=10)
 
-                    newpars[sfl.pindex] = sampler._chain[steps-1,:]
+                    newpars[sfl.pindex+jj] = sampler._chain[steps-1,0]
+        #Amp = 5.0e-14
+        #Si = 4.33
+        #freqpy = psr.Ffreqs * pic_spy
+        #Tmax = np.max(psr.toas) - np.min(psr.toas)
+        #phivec = np.log10((Amp**2 * pic_spy**3 / (12*np.pi*np.pi * Tmax)) * freqpy[::2] ** (-Si))
+        #newpars[1:] = phivec
 
     return newpars
 
@@ -325,12 +343,15 @@ def RunGibbs(likob, steps, chainsdir):
 
         # Generate new coefficients
         a = gibbs_sample_a(likob)
+        #print "a:", pars
 
         # Generate new white noise parameers
         pars = gibbs_sample_N(likob, pars)
+        #print "N:", pars
 
         # Generate new red noise parameters
         pars = gibbs_sample_Phi(likob, a, pars)
+        #print "P:", pars
 
         percent = (step * 100.0 / steps)
         sys.stdout.write("\rGibbs: %d%%" %percent)

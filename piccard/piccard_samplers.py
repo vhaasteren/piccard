@@ -74,12 +74,12 @@ def confinterval(samples, sigmalevel=2, onesided=False, weights=None):
     y = np.cumsum(hist) / np.sum(hist)
 
   # Find the intervals
-  x2min = y[0]
   if(onesided):
     bound = 1 - sigma[sigmalevel-1]
   else:
     bound = 0.5*(1-sigma[sigmalevel-1])
 
+  x2min = x[0]
   for i in range(len(y)):
     if y[i] >= bound:
       x2min = x[i]
@@ -90,6 +90,7 @@ def confinterval(samples, sigmalevel=2, onesided=False, weights=None):
   else:
     bound = 1 - 0.5 * (1 - sigma[sigmalevel-1])
 
+  x2max = x[-1]
   for i in reversed(range(len(y))):
     if y[i] <= bound:
       x2max = x[i]
@@ -1007,6 +1008,7 @@ def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
 
                 plt.savefig(fileout+'.png')
                 plt.savefig(fileout+'.eps')
+                plt.close(fig)
 
 
 
@@ -1024,7 +1026,7 @@ def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
         # Make a single plot
         indices = np.flatnonzero(np.array(dopar == True))
         f, axarr = plt.subplots(nrows=1, ncols=1)
-        makesubplot1d(axarr, emceechain[:,indices[0]])
+        makesubplot1d(axarr, chain[:,indices[0]])
         fileout = outputdir+'/triplot'
         plt.savefig(fileout+'.png')
         plt.savefig(fileout+'.eps')
