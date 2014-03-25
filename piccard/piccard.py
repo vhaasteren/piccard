@@ -2171,7 +2171,42 @@ class ptaPulsar(object):
                 self.Homat = np.zeros((Vmat.shape[0], 0))
                 self.Hocmat = np.eye(Vmat.shape[0])
 
-        elif compression == 'frequencies' or compression == 'avefrequencies':
+        elif compression == 'frequencies':
+            # Use a power-law spectrum with spectral-index of 4.33
+            freqpy = self.Ffreqs * pic_spy
+            phivec = (pic_spy**3 / (12*np.pi*np.pi * self.Tmax)) * freqpy ** (-4.33)
+
+            GF = np.dot(self.Gmat.T, self.Fmat * phivec)
+            GFFG = np.dot(GF, GF.T)
+            Vmat, svec, Vhsvd = sl.svd(GFFG)
+
+            cumrms = np.cumsum(svec)
+            totrms = np.sum(svec)
+            # print "Freqs: ", cumrms / totrms
+            l = np.flatnonzero( (cumrms/totrms) >= threshold )[0] + 1
+
+            # H is the compression matrix
+            Bmat = Vmat[:, :l].copy()
+            Bomat = Vmat[:, l:].copy()
+            H = np.dot(self.Gmat, Bmat)
+            Ho = np.dot(self.Gmat, Bomat)
+
+            # Use another SVD to construct not only Hmat, but also Hcmat
+            # We use this version of Hmat, and not H from above, in case of
+            # linear dependences...
+            #svec, Vmat = sl.eigh(H)
+            Vmat, s, Vh = sl.svd(H)
+            self.Hmat = Vmat[:, :l]
+            self.Hcmat = Vmat[:, l:]
+
+            # For compression-complements, construct Ho and Hoc
+            Vmat, s, Vh = sl.svd(Ho)
+            self.Homat = Vmat[:, :Ho.shape[1]]
+            self.Hocmat = Vmat[:, Ho.shape[1]:]
+
+        elif compression == 'dmfrequencies' or compression == 'avefrequencies':
+            print "WARNING: compression on DM frequencies not normalised correctly!"
+
             Ftot = np.zeros((len(self.toas), 0))
 
             # Decide on the (dm)frequencies to include
@@ -3108,7 +3143,7 @@ class ptaPulsar(object):
 
         self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat'))
 
-        self.Gr = np.array(h5df.getData(self.name, 'pic_Gr', dontread=memsave))
+        self.Gr = np.array(h5df.getData(self.name, 'pic_Gr'))
         self.GGr = np.array(h5df.getData(self.name, 'pic_GGr', dontread=memsave))
         self.Wvec = np.array(h5df.getData(self.name, 'pic_Wvec',
             dontread=(not self.twoComponentNoise)))
@@ -4119,8 +4154,8 @@ class ptaLikelihood(object):
             if self.likfunc in ['mark1', 'mark2', 'mark3', 'mark3fa', 'mark4', \
                     'mark4ln', 'mark6', 'mark6fa', 'mark7', 'mark8', 'mark9', \
                     'mark10', 'gibbs1']:
-                self.npgs[ii] = len(psr.toas) - psr.Hcmat.shape[1] # (Hc = orth(M) )
-                self.npgos[ii] = len(psr.toas) - self.npgs[ii]
+                self.npgs[ii] = len(psr.Gr)
+                self.npgos[ii] = len(psr.toas) - self.npgs[ii] - psr.Mmat.shape[1]
                 psr.Nwvec = np.zeros(self.npgs[ii])
                 psr.Nwovec = np.zeros(self.npgos[ii])
 
@@ -5062,7 +5097,7 @@ class ptaLikelihood(object):
                 stype='jitter', corr='single')
         numEquads = self.getNumberOfSignalsFromDict(signals, \
                 stype='equad', corr='single')
-        separateEfacs = (numEfacs + numEquads + numJits) > 1
+        separateEfacs = (numEfacs + numEquads + numJits) > 2
 
         # Modify design matrices, and create pulsar Auxiliary quantities
         for pindex, m2psr in enumerate(self.ptapsrs):
@@ -6260,8 +6295,9 @@ class ptaLikelihood(object):
         # TODO: For even more speed, these two could be combined
         self.GCG += blockmul(np.diag(self.Thetavec), GtD.T, self.npfdm, self.npgs)
 
-        GtU = block_diag(*GtUtot)
-        self.GCG += blockmul(np.diag(uvec), GtU.T, self.npu, self.npgs)
+        if np.sum(uvec) > 0:
+            GtU = block_diag(*GtUtot)
+            self.GCG += blockmul(np.diag(uvec), GtU.T, self.npu, self.npgs)
 
         # MARK F
 
