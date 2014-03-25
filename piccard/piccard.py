@@ -4936,6 +4936,7 @@ class ptaLikelihood(object):
         return modeldict
 
 
+
     """
     Initialise a model from a json file
 
