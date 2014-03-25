@@ -3211,8 +3211,8 @@ class ptaPulsar(object):
                 dontread=(not self.twoComponentNoise)))
             self.AGF = np.array(h5df.getData(self.name, 'pic_AGF',
                 dontread=(not self.twoComponentNoise)))
-            self.AoGF = np.array(h5df.getData(self.name, 'pic_AoGF',
-                dontread=(memsave and not self.twoComponentNoise)))
+            #self.AoGF = np.array(h5df.getData(self.name, 'pic_AoGF',
+            #    dontread=(memsave and not self.twoComponentNoise)))
             self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat'))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
 
@@ -4244,6 +4244,7 @@ class ptaLikelihood(object):
     def makeModelDict(self,  nfreqs=20, ndmfreqs=None, \
             Tmax=None, \
             incRedNoise=False, noiseModel='powerlaw', fc=None, \
+            noisePrior='flatlog', \
             incDM=False, dmModel='powerlaw', \
             incClock=False, clockModel='powerlaw', \
             incGWB=False, gwbModel='powerlaw', \
@@ -4313,7 +4314,8 @@ class ptaLikelihood(object):
                         "pmin":[0.001],
                         "pmax":[50.0],
                         "pwidth":[0.1],
-                        "pstart":[1.0]
+                        "pstart":[1.0],
+                        "prior":'flat'
                         })
                     signals.append(newsignal)
             else:
@@ -4327,7 +4329,8 @@ class ptaLikelihood(object):
                     "pmin":[0.001],
                     "pmax":[50.0],
                     "pwidth":[0.1],
-                    "pstart":[1.0]
+                    "pstart":[1.0],
+                    "prior":'flat'
                     })
                 signals.append(newsignal)
 
@@ -4344,7 +4347,8 @@ class ptaLikelihood(object):
                             "pmin":[-10.0],
                             "pmax":[-4.0],
                             "pwidth":[0.1],
-                            "pstart":[-8.0]
+                            "pstart":[-8.0],
+                            "prior":'flatlog'
                             })
                         signals.append(newsignal)
                 else:
@@ -4358,7 +4362,8 @@ class ptaLikelihood(object):
                         "pmin":[-10.0],
                         "pmax":[-4.0],
                         "pwidth":[0.1],
-                        "pstart":[-8.0]
+                        "pstart":[-8.0],
+                        "prior":'flatlog'
                         })
                     signals.append(newsignal)
 
@@ -4375,7 +4380,8 @@ class ptaLikelihood(object):
                             "pmin":[-10.0],
                             "pmax":[-4.0],
                             "pwidth":[0.1],
-                            "pstart":[-8.0]
+                            "pstart":[-8.0],
+                            "prior":'flatlog'
                             })
                         signals.append(newsignal)
                 else:
@@ -4389,7 +4395,8 @@ class ptaLikelihood(object):
                         "pmin":[-10.0],
                         "pmax":[-4.0],
                         "pwidth":[0.1],
-                        "pstart":[-8.0]
+                        "pstart":[-8.0],
+                        "prior":'flatlog'
                         })
                     signals.append(newsignal)
 
@@ -4427,7 +4434,8 @@ class ptaLikelihood(object):
                     "pmin":pmin,
                     "pmax":pmax,
                     "pwidth":pwidth,
-                    "pstart":pstart
+                    "pstart":pstart,
+                    "prior":noisePrior
                     })
                 signals.append(newsignal)
 
@@ -4461,7 +4469,8 @@ class ptaLikelihood(object):
                     "pmin":pmin,
                     "pmax":pmax,
                     "pwidth":pwidth,
-                    "pstart":pstart
+                    "pstart":pstart,
+                    "prior":'flatlog'
                     })
                 signals.append(newsignal)
 
@@ -4476,7 +4485,8 @@ class ptaLikelihood(object):
                     "pmin":[-9.0, -18.0],
                     "pmax":[-5.0, -9.0],
                     "pwidth":[-0.1, -0.1],
-                    "pstart":[-7.0, -10.0]
+                    "pstart":[-7.0, -10.0],
+                    "prior":'flatlog'
                     })
                 signals.append(newsignal)
 
@@ -4491,7 +4501,8 @@ class ptaLikelihood(object):
                     "pmin":[-9.0, -18.0],
                     "pmax":[-5.0, -9.0],
                     "pwidth":[-0.1, -0.1],
-                    "pstart":[-7.0, -10.0]
+                    "pstart":[-7.0, -10.0],
+                    "prior":'flatlog'
                     })
                 signals.append(newsignal)
 
@@ -4591,7 +4602,8 @@ class ptaLikelihood(object):
                     "pmax":pmax,
                     "pwidth":pwidth,
                     "pstart":pstart,
-                    "parid":parids
+                    "parid":parids,
+                    "prior":'flat'
                     })
                 signals.append(newsignal)
 
@@ -4613,7 +4625,8 @@ class ptaLikelihood(object):
                     "pmin":pmin,
                     "pmax":pmax,
                     "pwidth":pwidth,
-                    "pstart":pstart
+                    "pstart":pstart,
+                    "prior":'flat'
                     })
                 signals.append(newsignal)
 
@@ -4635,7 +4648,8 @@ class ptaLikelihood(object):
                         "pmin":pmin,
                         "pmax":pmax,
                         "pwidth":pwidth,
-                        "pstart":pstart
+                        "pstart":pstart,
+                        "prior":'flat'
                         })
                     signals.append(newsignal)
 
@@ -4658,7 +4672,8 @@ class ptaLikelihood(object):
                         "pmin":pmin,
                         "pmax":pmax,
                         "pwidth":pwidth,
-                        "pstart":pstart
+                        "pstart":pstart,
+                        "prior":'flat'
                         })
                     signals.append(newsignal)
 
@@ -4691,7 +4706,8 @@ class ptaLikelihood(object):
                 "pmin":pmin,
                 "pmax":pmax,
                 "pwidth":pwidth,
-                "pstart":pstart
+                "pstart":pstart,
+                "prior":'flat'
                 })
             signals.append(newsignal)
 
@@ -4721,7 +4737,8 @@ class ptaLikelihood(object):
                 "pmin":pmin,
                 "pmax":pmax,
                 "pwidth":pwidth,
-                "pstart":pstart
+                "pstart":pstart,
+                "prior":'flat'
                 })
             signals.append(newsignal)
 
@@ -4751,7 +4768,8 @@ class ptaLikelihood(object):
                 "pmin":pmin,
                 "pmax":pmax,
                 "pwidth":pwidth,
-                "pstart":pstart
+                "pstart":pstart,
+                "prior":'flat'
                 })
             signals.append(newsignal)
 
@@ -4788,7 +4806,8 @@ class ptaLikelihood(object):
                 "pmax":pmax,
                 "pwidth":pwidth,
                 "pstart":pstart,
-                "lAniGWB":lAniGWB
+                "lAniGWB":lAniGWB,
+                "prior":'flat'
                 })
             signals.append(newsignal)
 
@@ -4819,7 +4838,8 @@ class ptaLikelihood(object):
                 "pmax":pmax,
                 "pwidth":pwidth,
                 "pstart":pstart,
-                "npixels":npixels
+                "npixels":npixels,
+                "prior":'flat'
                 })
             signals.append(newsignal)
 
@@ -4839,7 +4859,8 @@ class ptaLikelihood(object):
                 "pmin":[toamin, -18.0, 0.0, 0.0, 0.0],
                 "pmax":[toamax, -10.0, 2*np.pi, np.pi, np.pi],
                 "pwidth":[30*24*3600.0, 0.1, 0.1, 0.1, 0.1],
-                "pstart":[0.5*(toamax-toamin), -15.0, 3.0, 1.0, 1.0]
+                "pstart":[0.5*(toamax-toamin), -15.0, 3.0, 1.0, 1.0],
+                "prior":'flat'
                 })
             signals.append(newsignal)
 
@@ -7980,7 +8001,13 @@ class ptaLikelihood(object):
 
         # Loop over all signals
         for m2signal in self.ptasignals:
-            if m2signal['stype'] == 'powerlaw' and m2signal['corr'] == 'anisotropicgwb':
+            if 'prior' in m2signal:
+                if m2signal['prior'] == 'flat' and m2signal['stype'] != 'spectrum':
+                    # The prior has been set
+                    lp += parameters[m2signal['parindex']]
+                elif m2signal['prior'] == 'flat':
+                    lp += np.sum(parameters[m2signal['parindex']:m2signal['parindex']+m2signal['npars']])
+            elif m2signal['stype'] == 'powerlaw' and m2signal['corr'] == 'anisotropicgwb':
                 nclm = m2signal['aniCorr'].clmlength()
                 # lp += parameters[m2signal['parindex']]
 
