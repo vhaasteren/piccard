@@ -2173,10 +2173,12 @@ class ptaPulsar(object):
 
         elif compression == 'frequencies':
             # Use a power-law spectrum with spectral-index of 4.33
-            freqpy = self.Ffreqs * pic_spy
-            phivec = (pic_spy**3 / (12*np.pi*np.pi * self.Tmax)) * freqpy ** (-4.33)
+            #freqpy = self.Ffreqs * pic_spy
+            #phivec = (pic_spy**3 / (12*np.pi*np.pi * self.Tmax)) * freqpy ** (-4.33)
+            #phivec = (pic_spy**3 / (12*np.pi*np.pi * self.Tmax)) * freqpy ** (-1.00)
+            #GF = np.dot(self.Gmat.T, self.Fmat * phivec)
 
-            GF = np.dot(self.Gmat.T, self.Fmat * phivec)
+            GF = np.dot(self.Gmat.T, self.Fmat)
             GFFG = np.dot(GF, GF.T)
             Vmat, svec, Vhsvd = sl.svd(GFFG)
 
@@ -2184,6 +2186,12 @@ class ptaPulsar(object):
             totrms = np.sum(svec)
             # print "Freqs: ", cumrms / totrms
             l = np.flatnonzero( (cumrms/totrms) >= threshold )[0] + 1
+
+            # Use the number of frequencies, instead of a threshold now:
+            l = self.Fmat.shape[1]
+
+            print("Using {0} components for pulsar {1}".format(\
+                    l, self.name))
 
             # H is the compression matrix
             Bmat = Vmat[:, :l].copy()
@@ -2355,7 +2363,7 @@ class ptaPulsar(object):
     def createPulsarAuxiliaries(self, h5df, Tmax, nfreqs, ndmfreqs, \
             twoComponent=False, nSingleFreqs=0, nSingleDMFreqs=0, \
             compression='None', likfunc='mark3', write='likfunc', \
-            tmsigpars=None, noGmatWrite=False):
+            tmsigpars=None, noGmatWrite=False, threshold=1.0):
         # For creating the auxiliaries it does not really matter: we are now
         # creating all quantities per default
         # TODO: set this parameter in another place?
@@ -2448,7 +2456,7 @@ class ptaPulsar(object):
                     if not par in tmsigpars:
                         tmpars += [par]
             self.constructCompressionMatrix(compression, nfmodes=2*nf,
-                    ndmodes=2*ndmf, threshold=1.0, tmpars=tmpars)
+                    ndmodes=2*ndmf, threshold=threshold, tmpars=tmpars)
             if write != 'no':
                 h5df.addData(self.name, 'pic_Hcmat', self.Hcmat)
 
@@ -3074,12 +3082,24 @@ class ptaPulsar(object):
         if likfunc == 'gibbs1' or write == 'all':
             # DM + Red noise stuff (mark6 needs this)
             self.Zmat = np.append(self.Gcmat, self.Fmat, axis=1)
+            #self.Zmat = np.append(self.Mmat, self.Fmat, axis=1)
             self.Wvec = np.zeros(self.Mmat.shape[0]-self.Mmat.shape[1])
             self.Wovec = np.zeros(0)
+            self.Gr = np.dot(self.Hmat.T, self.residuals)
+
+            # Converstion between orthogonal and non-orthogonal timing
+            # model parameters
+            MtM = np.dot(self.Mmat.T, self.Mmat)
+            MtGc = np.dot(self.Mmat.T, self.Gcmat)
+            cf = sl.cho_factor(MtM)
+            self.tmpConv = sl.cho_solve(cf, MtGc)
+
 
             if write != 'none':
                 # Write all these quantities to the HDF5 file
+                h5df.addData(self.name, 'pic_Gr', self.Gr)
                 h5df.addData(self.name, 'pic_Zmat', self.Zmat)
+                h5df.addData(self.name, 'pic_tmpConv', self.tmpConv)
 
 
 
@@ -3405,6 +3425,7 @@ class ptaPulsar(object):
 
         if likfunc == 'gibbs1':
             self.Zmat = np.array(h5df.getData(self.name, 'pic_Zmat'))
+            self.tmpConv = np.array(h5df.getData(self.name, 'pic_tmpConv'))
 
 
 
@@ -5055,7 +5076,7 @@ class ptaLikelihood(object):
     """
     def initModel(self, fullmodel, fromFile=True, verbose=False, \
                   noGmatWrite=False, noCreate=False, \
-                  addDMQSD=False):
+                  addDMQSD=False, threshold=1.0):
         numNoiseFreqs = fullmodel['numNoiseFreqs']
         numDMFreqs = fullmodel['numDMFreqs']
         compression = fullmodel['compression']
@@ -5181,7 +5202,7 @@ class ptaLikelihood(object):
                                 nSingleDMFreqs=numSingleDMFreqs[pindex], \
                                 likfunc=likfunc, compression=compression, \
                                 write='likfunc', tmsigpars=tmsigpars, \
-                                noGmatWrite=noGmatWrite)
+                                noGmatWrite=noGmatWrite, threshold=threshold)
 
             # When selecting Fourier modes, like in mark7/mark8, the binclude vector
             # indicates whether or not a frequency is included in the likelihood. By
@@ -5597,7 +5618,7 @@ class ptaLikelihood(object):
                         if phimat:
                             self.Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += 10**pcdoubled
                         else:
-                            self.Phivec[findex:findex+2*nfreq] = 10**pcdoubled
+                            self.Phivec[findex:findex+2*nfreq] += 10**pcdoubled
                     elif m2signal['corr'] in ['gr', 'uniform', 'dipole', \
                                               'anisotropicgwb', 'pixelgwb']:
                         nfreq = m2signal['npars']
@@ -5657,7 +5678,7 @@ class ptaLikelihood(object):
                         if phimat:
                             self.Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += pcdoubled
                         else:
-                            self.Phivec[findex:findex+2*nfreq] = pcdoubled
+                            self.Phivec[findex:findex+2*nfreq] += pcdoubled
                     elif m2signal['corr'] in ['gr', 'uniform', 'dipole', \
                                               'anisotropicgwb', 'pixelgwb']:
                         freqpy = m2signal['Ffreqs'] * pic_spy
@@ -5710,7 +5731,7 @@ class ptaLikelihood(object):
                         if phimat:
                             self.Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += pcdoubled
                         else:
-                            self.Phivec[findex:findex+2*nfreq] = pcdoubled
+                            self.Phivec[findex:findex+2*nfreq] += pcdoubled
                     elif m2signal['corr'] in ['gr', 'uniform', 'dipole', \
                                               'anisotropicgwb', 'pixelgwb']:
                         freqpy = self.ptapsrs[0].Ffreqs * pic_spy
@@ -5771,7 +5792,7 @@ class ptaLikelihood(object):
                     if phimat:
                         self.Phi[findex:findex+2, findex:findex+2][di] += 10**pcdoubled
                     else:
-                        self.Phivec[findex:findex+2] = 10**pcdoubled
+                        self.Phivec[findex:findex+2] += 10**pcdoubled
                 elif m2signal['stype'] == 'dmfrequencyline':
                     # For a DM frequency line, the DFF is assumed to be set elsewhere
                     findex = np.sum(self.npffdm[:m2signal['pulsarind']]) + \
