@@ -116,10 +116,10 @@ class pulsarNoiseLL(object):
         return len(self.vNvec)
 
 
-class singleFreqLL(object):
+class pulsarPSDLL(object):
     """
-    For now, this class only does a single frequency for a single pulsar. Later
-    on we'll expand it
+    Like pulsarNoiseLL, but for the power spectrum coefficients. Expects the
+    matrix to be diagonal. Is always a function of amplitude and spectral index
     """
     a = None
     pmin = None
@@ -128,23 +128,36 @@ class singleFreqLL(object):
     pwidth = None
     pindex = None
 
-    def __init__(self, a, pmin, pmax, pstart, pwidth, index):
+    def __init__(self, a, freqs, Tmax, pmin, pmax, pstart, pwidth, index, bvary):
+        """
+        @param a:       The Fourier components of the signal
+        @param freqs:   The frequencies of the signal
+        @param pmin:    Minimum value of the two parameters
+        """
+
         self.a = a
-        self.pmin = np.array([pmin])
-        self.pmax = np.array([pmax])
-        self.pstart = np.array([pstart])
-        self.pwidth = np.array([pwidth])
+        self.freqs = freqs
+        self.pmin = pmin
+        self.pmax = pmax
+        self.pstart = pstart
+        self.pwidth = pwidth
         self.pindex = index
+        self.bvary = bvary
+        self.Tmax = Tmax
 
     def loglikelihood(self, parameters):
-        #phivec = np.array([10**parameters[0], 10**parameters[0]])
-        phivec = np.array([10**parameters, 10**parameters]).T.flatten()
+        pars = self.pstart.copy()
+        pars[self.bvary] = parameters
 
-        return -0.5 * np.sum(self.a**2/phivec) - 0.5*np.sum(np.log(phivec))
+        freqpy = self.freqs * pic_spy
+        pcdoubled = ((10**(2*pars[0])) * pic_spy**3 / (12*np.pi*np.pi * self.Tmax)) * freqpy ** (-pars[1])
+
+        return -0.5 * np.sum(self.a**2 / pcdoubled) - 0.5*np.sum(np.log(pcdoubled))
 
     def logprior(self, parameters):
         bok = -np.inf
-        if np.all(self.pmin <= parameters) and np.all(parameters <= self.pmax):
+        if np.all(self.pmin[self.bvary] <= parameters) and \
+                np.all(parameters <= self.pmax[self.bvary]):
             bok = 0
 
         return bok
@@ -170,46 +183,76 @@ def gibbs_sample_a(self):
         nms = self.npm[ii]
         findex = np.sum(self.npf[:ii])
         nfs = self.npf[ii]
+        fdmindex = np.sum(self.npfdm[:ii])
+        nfdms = self.npfdm[ii]
+        uindex = np.sum(self.npu[:ii])
+        npus = self.npu[ii]
 
         # Make ZNZ
         ZNZ = np.dot(psr.Zmat.T, ((1.0/psr.Nvec) * psr.Zmat.T).T)
-        #ZNZ = np.dot(psr.Zmat.T, psr.Zmat)
 
         di = np.diag_indices(ZNZ.shape[0])
 
-        # Construct the covariance matrix
-        #Sigma = ZNZ.copy()
-        #Sigma[di][zindex+nms:zindex+nms+nfs] += 1.0/(self.Phivec[findex:findex+nfs])
+        indsp = range(zindex+nms, zindex+nms+nfs)
+        indst = range(zindex+nms+nfs, zindex+nms+nfs+nfdms)
+        indsu = range(zindex+nms+nfs+nfdms, zindex+nms+nfs+nfdms+npus)
 
-        inds = range(zindex+nms, zindex+nms+nfs)
         Sigma = ZNZ.copy()
-        Sigma[inds, inds] += 1.0 / self.Phivec[findex:findex+nfs]
+        Sigma[indsp, indsp] += 1.0 / self.Phivec[findex:findex+nfs]
+
+        if nfdms > 0:
+            # We have DM variations
+            Sigma[indst, indst] += 1.0 / self.Thetavec[fdmindex:fdmindex+nfdms]
+
+        if nzs == nms + nfs + nfdms + npus:
+            # We have correlated equads
+            Sigma[indsu, indsu] += 1.0 / psr.Jvec
 
         # ahat is the slice ML value for the coefficients. Need ENx
         ENx = np.dot(psr.Zmat.T, psr.detresiduals / psr.Nvec)
-        #ENx = np.dot(psr.Zmat.T, psr.residuals)
 
-        #"""
         try:
-            cfL = sl.cholesky(Sigma, lower=True)
-            cf = (cfL, True)
+            #raise np.linalg.LinAlgError("")
+            # Use a QR decomposition for the inversions
+            Qs,Rs = sl.qr(Sigma) 
 
-            # Calculate the inverse Cholesky factor (can we do this faster?)
-            cfLi = sl.cho_factor(cfL, lower=True)
-            Li = sl.cho_solve(cfLi, np.eye(Sigma.shape[0]))
-
-            ahat = sl.cho_solve(cf, ENx)
-        #"""
-        except np.linalg.LinAlgError:
-        #if True:
-            U, s, Vt = sl.svd(Sigma)
-            if not np.all(s > 0):
-                raise ValueError("ERROR: Sigma singular according to SVD")
-            Sigi = np.dot(U, np.dot(np.diag(1.0/s), Vt))
-            #Li = U * (1.0 / np.sqrt(s))
-            Li = np.dot(U, np.diag(1.0 / np.sqrt(s)))
+            Qsb = np.dot(Qs.T, np.eye(Sigma.shape[0])) # computing Q^T*b (project b onto the range of A)
+            Sigi = sl.solve(Rs,Qsb) # solving R*x = Q^T*b
+            
+            # Ok, we've got the inverse... now what? Do SVD?
+            U, s, Vt = sl.svd(Sigi)
+            Li = U * np.sqrt(s)
 
             ahat = np.dot(Sigi, ENx)
+
+        except np.linalg.LinAlgError:
+            print "ERROR in QR decomp"
+            #"""
+            try:
+                cfL = sl.cholesky(Sigma, lower=True)
+                cf = (cfL, True)
+
+                # Calculate the inverse Cholesky factor (can we do this faster?)
+                cfLi = sl.cho_factor(cfL, lower=True)
+                Li = sl.cho_solve(cfLi, np.eye(Sigma.shape[0]))
+
+                ahat = sl.cho_solve(cf, ENx)
+            #"""
+            except np.linalg.LinAlgError:
+            #if True:
+                U, s, Vt = sl.svd(Sigma)
+                if not np.all(s > 0):
+                    raise ValueError("ERROR: Sigma singular according to SVD")
+                Sigi = np.dot(U, np.dot(np.diag(1.0/s), Vt))
+                Li = U * (1.0 / np.sqrt(s))
+                #Li = np.dot(U, np.diag(1.0 / np.sqrt(s)))
+
+                ahat = np.dot(Sigi, ENx)
+        except ValueError:
+            print "WTF?"
+            print Sigma
+            np.savetxt("temp.txt", Sigma)
+            raise
 
         # Get a sample from the coefficient distribution
         aadd = np.dot(Li, np.random.randn(Li.shape[0]))
@@ -227,7 +270,6 @@ def gibbs_sample_a(self):
         a.append(psr.gibbscoefficients)
         #a.append(psr.gibbscoefficients[psr.Mmat.shape[1]:])
         psr.gibbsresiduals = psr.detresiduals - np.dot(psr.Zmat, addcoefficients)
-        #psr.gibbsresiduals = psr.residuals - np.dot(psr.Zmat, psr.gibbscoefficients)
 
     return a
 
@@ -267,11 +309,9 @@ def gibbs_sample_N(self, curpars):
 
         steps = ndim*10
         sampler.sample(p0, steps, thin=1, burn=10)
-        newpars[pnl.pindex] = sampler._chain[steps-1,0]
-        #"""
 
-        # REALLY REALLY CHANGE THIS BACK HERE!!!!!
-        # newpars[pnl.pindex] = 1.0 + np.random.randn(1)*0.05
+        newpars[pnl.pindex] = sampler._chain[steps-1,:]
+        #"""
 
     return newpars
 
@@ -287,31 +327,9 @@ def gibbs_sample_Phi(self, a, curpars):
     for ii, psr in enumerate(self.ptapsrs):
         for ss, signal in enumerate(self.ptasignals):
             if signal['pulsarind'] == ii and signal['stype'] == 'spectrum':
-                mindex = np.sum(self.npm[:ii])
                 nms = self.npm[ii]
                 # Loop over the frequencies
                 for jj in range(signal['ntotpars']):
-                    """
-                    pstart = np.float(curpars[signal['parindex']+jj])
-                    # Warning: does not take into account non-varying parameters
-                    sfl = singleFreqLL(a[ii][2*jj:2*jj+2], signal['pmin'][jj], \
-                            signal['pmax'][jj], pstart, signal['pwidth'][jj], \
-                            signal['parindex'])
-
-                    ndim = sfl.dimensions()
-
-                    cov = np.diag(sfl.pwidth**2)
-                    p0 = sfl.pstart
-                    sampler = ptmcmc.PTSampler(ndim, sfl.loglikelihood, sfl.logprior, cov=cov, \
-                            outDir='./gibbs-chains/', verbose=False, nowrite=True)
-
-                    steps = ndim*100
-                    sampler.sample(p0, steps, thin=1, burn=10)
-
-                    newpars[sfl.pindex+jj] = sampler._chain[steps-1,0]
-                    """
-
-                    #"""
                     # We can sample directly from this distribution.
                     # Prior domain:
                     pmin = signal['pmin'][jj]
@@ -320,47 +338,152 @@ def gibbs_sample_Phi(self, a, curpars):
                     rhomax = 10**pmax
                     tau = 0.5*np.sum(a[ii][nms+2*jj:nms+2*jj+2]**2)
 
-                    # Draw sample in area of distribution between two boundaries
-                    Pmax = np.exp(-tau/rhomax) - np.exp(-tau/rhomin)
-                    xi = np.random.rand(1) * Pmax
+                    # Draw samples between rhomax and rhomin, according to
+                    # an exponential distribution
+                    scale = 1 - np.exp(tau*(1.0/rhomax-1.0/rhomin))
+                    eta = np.random.rand(1) * scale
+                    rhonew = -tau / (np.log(1-eta)-tau/rhomax)
 
-                    # Convert that to a value with the inverse transformation
-                    rhonew = -tau / np.log(np.exp(-tau/rhomax) - xi)
                     newpars[signal['parindex']+jj] = np.log10(rhonew)
-                    #print np.log10(rhonew)
 
-                    """
-                    neednew = True
-                    iter = 0
-                    while neednew:
-                        iter += 1
-                        pmin = signal['pmin'][jj]
-                        pmax = signal['pmax'][jj]
-                        tau = 0.5*np.sum(a[ii][nms+2*jj:nms+2*jj+2]**2)
-                        newpars[signal['parindex']+jj] = np.log10(-tau / (np.log(np.random.rand(1))))
+            elif signal['pulsarind'] == ii and signal['stype'] == 'powerlaw':
+                bvary = signal['bvary']
+                pindex = signal['parindex']
+                pstart = signal['pstart']
+                pmin = signal['pmin']
+                pmax = signal['pmax']
+                pwidth = signal['pwidth']
+                Tmax = signal['Tmax']
+                nms = self.npm[ii]
+                nfs = self.npf[ii]
 
-                        par = newpars[signal['parindex']+jj]
+                ndim = np.sum(bvary)
+                if ndim > 0:
+                    pstart[bvary] = curpars[pindex:pindex+np.sum(bvary)]
 
-                        # This is really really not appropriate. Change it!!!
-                        if pmin <= par and par < pmax:
-                            neednew = False
-                        elif iter >= 1000:
-                            # We tried this 1000 times. Something is wrong
-                            if pmin > par:
-                                par = pmin
-                            elif pmax < par:
-                                par = pmax
+                    psd = pulsarPSDLL(a[ii][nms:nms+nfs], psr.Ffreqs, Tmax, pmin, \
+                            pmax, pstart, pwidth, pindex, bvary)
 
-                            neednew = True
-                    """
-        #Amp = 5.0e-14
-        #Si = 4.33
-        #freqpy = psr.Ffreqs * pic_spy
-        #Tmax = np.max(psr.toas) - np.min(psr.toas)
-        #phivec = np.log10((Amp**2 * pic_spy**3 / (12*np.pi*np.pi * Tmax)) * freqpy[::2] ** (-Si))
-        #newpars[1:] = phivec
+                    cov = np.diag(pwidth[bvary]**2)
+                    p0 = pstart[bvary]
+                    sampler = ptmcmc.PTSampler(ndim, psd.loglikelihood, psd.logprior, cov=cov, \
+                            outDir='./gibbs-chains/', verbose=False, nowrite=True)
+
+                    steps = ndim*10
+                    sampler.sample(p0, steps, thin=1, burn=10)
+
+                    newpars[psd.pindex:psd.pindex+ndim] = \
+                            sampler._chain[steps-1,:]
+
+            elif signal['pulsarind'] == ii and signal['stype'] == 'dmspectrum':
+                nms = self.npm[ii]
+                nfs = self.npf[ii]
+                nfdms = self.npfdm[ii]
+                # Loop over the frequencies
+                for jj in range(signal['ntotpars']):
+                    # We can sample directly from this distribution.
+                    # Prior domain:
+                    pmin = signal['pmin'][jj]
+                    pmax = signal['pmax'][jj]
+                    rhomin = 10**pmin
+                    rhomax = 10**pmax
+                    tau = 0.5*np.sum(a[ii][nms+nfs+2*jj:nms+nfs+2*jj+2]**2)
+
+                    # Draw samples between rhomax and rhomin, according to
+                    # an exponential distribution
+                    scale = 1 - np.exp(tau*(1.0/rhomax-1.0/rhomin))
+                    eta = np.random.rand(1) * scale
+                    rhonew = -tau / (np.log(1-eta)-tau/rhomax)
+
+                    newpars[signal['parindex']+jj] = np.log10(rhonew)
+            elif signal['pulsarind'] == ii and signal['stype'] == 'dmpowerlaw':
+                bvary = signal['bvary']
+                pindex = signal['parindex']
+                pstart = signal['pstart']
+                pmin = signal['pmin']
+                pmax = signal['pmax']
+                pwidth = signal['pwidth']
+                Tmax = signal['Tmax']
+                nms = self.npm[ii]
+                nfs = self.npf[ii]
+                nfdms = self.npfdm[ii]
+
+                ndim = np.sum(bvary)
+                if ndim > 0:
+                    pstart[bvary] = curpars[pindex:pindex+np.sum(bvary)]
+
+                    psd = pulsarPSDLL(a[ii][nms+nfs:nms+nfs+nfdms], psr.Ffreqs, Tmax, pmin, \
+                            pmax, pstart, pwidth, pindex, bvary)
+
+                    cov = np.diag(pwidth[bvary]**2)
+                    p0 = pstart[bvary]
+                    sampler = ptmcmc.PTSampler(ndim, psd.loglikelihood, psd.logprior, cov=cov, \
+                            outDir='./gibbs-chains/', verbose=False, nowrite=True)
+
+                    steps = ndim*10
+                    sampler.sample(p0, steps, thin=1, burn=10)
+
+                    newpars[psd.pindex:psd.pindex+ndim] = \
+                            sampler._chain[steps-1,:]
 
     return newpars
+
+
+
+def gibbs_sample_J(self, a, curpars):
+    """
+    Same as gibbs_sample_N, but now for the pulse jitter. We are actually
+    running 1D MCMC chains here, but for now that is easier (and faster?) than
+    implementing a direct 1D sampler based on interpolations
+    """
+    newpars = curpars.copy()
+
+    for ii, psr in enumerate(self.ptapsrs):
+        zindex = np.sum(self.npz[:ii])
+        nzs = self.npz[ii]
+        mindex = np.sum(self.npm[:ii])
+        nms = self.npm[ii]
+        findex = np.sum(self.npf[:ii])
+        nfs = self.npf[ii]
+        fdmindex = np.sum(self.npfdm[:ii])
+        nfdms = self.npfdm[ii]
+        uindex = np.sum(self.npu[:ii])
+        npus = self.npu[ii]
+
+        # Add the signals
+        for ss, signal in enumerate(self.ptasignals):
+            pstart = curpars[signal['parindex']]
+            if signal['pulsarind'] == ii and signal['stype'] == 'jitter' and \
+                    signal['bvary'][0] == True:
+                # We have a jitter parameter
+                inds = zindex+nms+nfs+nfdms
+                inde = zindex+nms+nfs+nfdms+npus
+
+                res = a[ii][inds:inde]
+
+                # Set up the conditional log-likelihood
+                pnl = pulsarNoiseLL(res, psr.toaerrs)
+                pnl.addSignal(signal['Jvec'], False, signal['pmin'][0], \
+                        signal['pmax'][0], pstart, signal['pwidth'][0], \
+                        signal['parindex'], fixed=(not signal['bvary'][0]))
+
+                # Prepare the sampler
+                temp = pnl.loglikelihood(pnl.pstart)
+                ndim = pnl.dimensions()
+                cov = np.diag(pnl.pwidth**2)
+                p0 = pnl.pstart
+                sampler = ptmcmc.PTSampler(ndim, pnl.loglikelihood, pnl.logprior, cov=cov, \
+                        outDir='./gibbs-chains/', verbose=False, nowrite=True)
+
+                # Run a tiny MCMC of one correlation length, and return the parameters
+
+                steps = ndim*10
+                sampler.sample(p0, steps, thin=1, burn=10)
+
+                newpars[pnl.pindex] = sampler._chain[steps-1,:]
+
+    return newpars
+
 
 def gibbsQuantities(self, parameters):
     npsrs = len(self.ptapsrs)
@@ -389,20 +512,21 @@ def RunGibbs(likob, steps, chainsdir):
     2) N, the white noise parameters
     3) Phi, the red noise PSD coefficients
     """
-    if likob.likfunc != 'gibbs1':
+    if not likob.likfunc in ['gibbs1', 'gibbs2']:
         raise ValueError("Likelihood not initialised for Gibbs sampling")
 
     likob.saveModelParameters(chainsdir + '/ptparameters.txt')
 
     ndim = likob.dimensions
     pars = likob.pstart.copy()
-    ncoeffs = np.sum(likob.npm) + np.sum(likob.npf)
+    ncoeffs = np.sum(likob.npz)
 
     chain = np.zeros((steps, ndim))
     chain2 = np.zeros((steps, ncoeffs))
 
     for step in range(steps):
         doneIteration = False
+        iter = 0
 
         # Start with calculating the required likelihood quantities
         gibbsQuantities(likob, pars)
@@ -416,14 +540,16 @@ def RunGibbs(likob, steps, chainsdir):
                     chain2[step, :] = np.append(*a)
                 else:
                     chain2[step, :] = a[0]
-                #print "a:", pars
 
                 doneIteration = True
 
             except np.linalg.LinAlgError:
                 # Why does SVD sometimes not converge?
                 # Try different values...
-                pass
+                iter += 1
+
+                if iter > 100:
+                    print "WARNING: numpy.linalg problems"
 
             # Generate new white noise parameers
             pars = gibbs_sample_N(likob, pars)
@@ -433,6 +559,8 @@ def RunGibbs(likob, steps, chainsdir):
             pars = gibbs_sample_Phi(likob, a, pars)
             #print "P:", pars
 
+            # Generate new correlated equad/jitter parameters
+            pars = gibbs_sample_J(likob, a, pars)
 
         percent = (step * 100.0 / steps)
         sys.stdout.write("\rGibbs: %d%%" %percent)
