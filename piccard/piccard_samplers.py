@@ -795,7 +795,8 @@ def makeResidualsPlot(ax, toas, residuals, toaerrs, flags, \
 
 
 def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
-        parametersfile=None, sampler='auto', make1dplots=True):
+        parametersfile=None, sampler='auto', make1dplots=True, \
+        maxpages=-1):
     """
     Given an MCMC chain file, and an output directory, make all the results
     plots
@@ -1012,17 +1013,52 @@ def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
 
 
 
-    # Make a triplot of all the other parameters
+    # Make a triplot of all the other parameters. But... do it per page. No more
+    # than 10 parameters on one page
     if np.sum(dopar) > 1:
-        indices = np.flatnonzero(np.array(dopar == True))
-        fileout = outputdir+'/triplot'
-        triplot(chain, parlabels=labels, plotparameters=indices, ml=mlpars,
-                ml2=mlpars2)
-        plt.savefig(fileout+'.png')
-        plt.savefig(fileout+'.eps')
-        plt.close(fig)
+        npagemax = 8
+        npages = int(np.sum(dopar) / npagemax)
+        if np.sum(dopar) % npagemax != 0:
+            npages += 1
 
-    if np.sum(dopar) == 1:
+        if maxpages >= 0:
+            npages = min(npages, maxpages)
+
+        #print "Will make {0} pages".format(npages)
+        for pp in range(npages):
+            if np.sum(dopar) == 0:
+                print "ERROR: nothing else to plot left"
+
+            print "Making page:", str(pp)
+            sys.stdout.write("\rMaking page {0} of {1}".format(\
+                    pp+1, npages))
+            sys.stdout.flush()
+
+            fig = plt.figure()
+            fileout = outputdir+'/triplot-page-' + str(pp)
+
+            samples = chain[:,dopar][:,:npagemax]
+            plabels = np.array(labels)[dopar][:npagemax]
+
+            triplot(samples, plabels)
+            plt.savefig(fileout+'.png')
+            plt.savefig(fileout+'.eps')
+            plt.close(fig)
+
+            # Mark parameters as done
+            ind = dopar[dopar]
+            ind[:npagemax] = False
+            dopar[dopar] = ind
+
+            #indices = np.flatnonzero(np.array(dopar == True))
+            #fileout = outputdir+'/triplot'
+            #triplot(chain, parlabels=labels, plotparameters=indices, ml=mlpars,
+            #        ml2=mlpars2)
+            #plt.savefig(fileout+'.png')
+            #plt.savefig(fileout+'.eps')
+            #plt.close(fig)
+        stdout.write("\n")
+    else:
         # Make a single plot
         indices = np.flatnonzero(np.array(dopar == True))
         f, axarr = plt.subplots(nrows=1, ncols=1)

@@ -4376,7 +4376,7 @@ class ptaLikelihood(object):
                             "bvary":[True],
                             "pmin":[-10.0],
                             "pmax":[-4.0],
-                            "pwidth":[0.1],
+                            "pwidth":[0.2],
                             "pstart":[-8.0],
                             "prior":'flatlog'
                             })
@@ -4391,7 +4391,7 @@ class ptaLikelihood(object):
                         "bvary":[True],
                         "pmin":[-10.0],
                         "pmax":[-4.0],
-                        "pwidth":[0.1],
+                        "pwidth":[0.2],
                         "pstart":[-8.0],
                         "prior":'flatlog'
                         })
@@ -4409,7 +4409,7 @@ class ptaLikelihood(object):
                             "bvary":[True],
                             "pmin":[-10.0],
                             "pmax":[-4.0],
-                            "pwidth":[0.1],
+                            "pwidth":[0.3],
                             "pstart":[-8.0],
                             "prior":'flatlog'
                             })
@@ -4424,7 +4424,7 @@ class ptaLikelihood(object):
                         "bvary":[True],
                         "pmin":[-10.0],
                         "pmax":[-4.0],
-                        "pwidth":[0.1],
+                        "pwidth":[0.3],
                         "pstart":[-8.0],
                         "prior":'flatlog'
                         })
@@ -4443,7 +4443,7 @@ class ptaLikelihood(object):
                     pmin = [-20.0, 0.02, 1.0e-11]
                     pmax = [-10.0, 6.98, 3.0e-9]
                     pstart = [-14.0, 2.01, 1.0e-10]
-                    pwidth = [0.1, 0.1, 5.0e-11]
+                    pwidth = [0.3, 0.3, 5.0e-11]
                 elif noiseModel=='spectralModel':
                     bvary = [True, True, True]
                     pmin = [-28.0, 0.0, -4.0]
@@ -4483,7 +4483,7 @@ class ptaLikelihood(object):
                     pmin = [-14.0, 0.02, 1.0e-11]
                     pmax = [-6.5, 6.98, 3.0e-9]
                     pstart = [-13.0, 2.01, 1.0e-10]
-                    pwidth = [0.1, 0.1, 5.0e-11]
+                    pwidth = [0.3, 0.3, 5.0e-11]
                     #dmModel = 'dmpowerlaw'
                 else:
                     raise ValueError("ERROR: option {0} not known".
@@ -4723,7 +4723,7 @@ class ptaLikelihood(object):
                 pmin = [-17.0, 1.02, 1.0e-11]
                 pmax = [-10.0, 6.98, 3.0e-9]
                 pstart = [-15.0, 2.01, 1.0e-10]
-                pwidth = [0.1, 0.1, 5.0e-11]
+                pwidth = [0.3, 0.3, 5.0e-11]
             else:
                 raise ValueError("ERROR: option {0} not known".
                         format(gwbModel))
@@ -4754,7 +4754,7 @@ class ptaLikelihood(object):
                 pmin = [-17.0, 1.02, 1.0e-11]
                 pmax = [-10.0, 6.98, 3.0e-9]
                 pstart = [-15.0, 2.01, 1.0e-10]
-                pwidth = [0.1, 0.1, 5.0e-11]
+                pwidth = [0.3, 0.3, 5.0e-11]
             else:
                 raise ValueError("ERROR: option {0} not known".
                         format(clockModel))
@@ -4785,7 +4785,7 @@ class ptaLikelihood(object):
                 pmin = [-17.0, 1.02, 1.0e-11]
                 pmax = [-10.0, 6.98, 3.0e-9]
                 pstart = [-15.0, 2.01, 1.0e-10]
-                pwidth = [0.1, 0.1, 5.0e-11]
+                pwidth = [0.3, 0.3, 5.0e-11]
             else:
                 raise ValueError("ERROR: option {0} not known".
                         format(dipoleModel))
@@ -4822,7 +4822,7 @@ class ptaLikelihood(object):
                 pmin = [-17.0, 1.02, 1.0e-11] + clmmin
                 pmax = [-10.0, 6.98, 3.0e-9] + clmmax
                 pstart = [-15.0, 2.01, 1.0e-10] + clmstart
-                pwidth = [0.1, 0.1, 5.0e-11] + clmwidth
+                pwidth = [0.3, 0.3, 5.0e-11] + clmwidth
             else:
                 raise ValueError("ERROR: option {0} not known".
                         format(anigwbModel))
@@ -4854,7 +4854,7 @@ class ptaLikelihood(object):
                 pmin = [-17.0, 1.02, 1.0e-11] + [0.0, -0.5*np.pi] * npixels
                 pmax = [-10.0, 6.98, 3.0e-9] + [2*np.pi, 0.5*np.pi] * npixels
                 pstart = [-15.0, 2.01, 1.0e-10] + [0.0, 0.0] * npixels
-                pwidth = [0.1, 0.1, 5.0e-11] + [0.1, 0.1] * npixels
+                pwidth = [0.3, 0.3, 5.0e-11] + [0.1, 0.1] * npixels
             else:
                 raise ValueError("ERROR: option {0} not known".
                         format(anigwbModel))
@@ -5230,6 +5230,7 @@ class ptaLikelihood(object):
         self.allocateLikAuxiliaries()
         self.initPrior()
         self.pardes = self.getModelParameterList()
+        self.pardesgibbs = self.getGibbsModelParameterList()
 
 
     """
@@ -5357,6 +5358,80 @@ class ptaLikelihood(object):
 
         return pardes
 
+    """
+    Get a list of all the model parameters that are extra coefficients in the
+    case of Gibbs sampling.
+
+    Note, at the moment, the Gibbs sampling routines do not check for parameters
+    collisions between the Fourier/timing model modes and the deterministic
+    parameters. This needs to be changed in the future to account for non-linear
+    timing model parameters
+    """
+    def getGibbsModelParameterList(self):
+        gpardes = []
+
+        # The number of 'dimensions' in the likelihood does not count these
+        # 'secondary' parameters we describe here. Use 'dimensions' as the start
+        # index
+        index = self.dimensions
+        if self.likfunc[:5] == 'gibbs':
+            for pp, psr in enumerate(self.ptapsrs):
+                # First do the timing model parameters
+                for ii in range(psr.Mmat.shape[1]):
+                    flagname = "Timing-model-"+psr.name
+                    flagvalue = psr.ptmdescription[ii]
+
+                    gpardes.append(\
+                            {'index': index, 'pulsar': pp, 'sigindex': -1, \
+                                'sigtype': 'Mmat', 'correlation': 'single', \
+                                'name': flagname, 'id': flagvalue, 'pulsarname': \
+                                psr.name})
+                    index += 1
+
+                for ii in range(psr.Fmat.shape[1]):
+                    if ii % 2 == 0:
+                        flagname = "RN-Cos-"+psr.name
+                    else:
+                        flagname = "RN-Sin-"+psr.name
+
+                    flagvalue = str(psr.Ffreqs[ii])
+
+                    gpardes.append(\
+                            {'index': index, 'pulsar': pp, 'sigindex': -1, \
+                                'sigtype': 'Fmat', 'correlation': 'single', \
+                                'name': flagname, 'id': flagvalue, 'pulsarname': \
+                                psr.name})
+                    index += 1
+
+                for ii in range(psr.Fdmfreqs.shape[0]):
+                    if ii % 2 == 0:
+                        flagname = "DM-Cos-"+psr.name
+                    else:
+                        flagname = "DM-Sin-"+psr.name
+
+                    flagvalue = str(psr.Fdmfreqs[ii])
+
+                    gpardes.append(\
+                            {'index': index, 'pulsar': pp, 'sigindex': -1, \
+                                'sigtype': 'Fmat_dm', 'correlation': 'single', \
+                                'name': flagname, 'id': flagvalue, 'pulsarname': \
+                                psr.name})
+                    index += 1
+
+                if self.likfunc == 'gibbs2':
+                    for ii in range(psr.Umat.shape[1]):
+                        flagname = "Ave-res-"+psr.name
+                        flagvalue = str(psr.avetoas[ii])
+
+                        gpardes.append(\
+                                {'index': index, 'pulsar': pp, 'sigindex': -1, \
+                                    'sigtype': 'Residual_ave', 'correlation': 'single', \
+                                    'name': flagname, 'id': flagvalue, 'pulsarname': \
+                                    psr.name})
+                        index += 1
+
+        return gpardes
+
 
     """
     Once a model is defined, it can be useful to have all the parameter names
@@ -5392,6 +5467,17 @@ class ptaLikelihood(object):
                     self.pardes[ii]['name'],
                     self.pardes[ii]['id'],
                     self.pardes[ii]['pulsarname']))
+
+        # Do the same for the Gibbs parameter descriptions, if we have 'm
+        for pdg in self.pardesgibbs:
+            fil.write("{0:d} \t{1:d} \t{2:s} \t{3:s} \t{4:s} \t{5:s} \t{6:s}\n".format(\
+                    pdg['index'],
+                    pdg['pulsar'],
+                    pdg['sigtype'],
+                    pdg['correlation'],
+                    pdg['name'],
+                    pdg['id'],
+                    pdg['pulsarname']))
 
         fil.close()
 

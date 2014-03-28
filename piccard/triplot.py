@@ -16,6 +16,13 @@ import os as os
 import scipy.ndimage.filters as snf
 from distutils.version import LooseVersion
 
+try:
+    # Check if we have Dan Foreman-Mackey's triangle plotting package
+    import triangle as triangle
+    tri = triangle
+except ImportError:
+    tri = None
+
 """
 font = {'family' : 'serif',
         'serif'  : 'Computer modern Roman',
@@ -185,7 +192,7 @@ Make a tri-plot of an MCMC chain.
 
 Writes an eps and a png file as well
 """
-def triplot(chain, parlabels=None, plotparameters=None, name=None, ml=None, ml2=None):
+def triplot_homemade(chain, parlabels=None, plotparameters=None, name=None, ml=None, ml2=None):
     # Need chain, and parlabels
 
     # Figure out which parameters to plot
@@ -284,3 +291,27 @@ def triplot(chain, parlabels=None, plotparameters=None, name=None, ml=None, ml2=
     f.subplots_adjust(hspace=0)
     plt.setp([a.get_xticklabels() for a in f.axes[:-0-2]], visible=False)
     """
+
+def triplot(samples, parlabels=None, plotparameters=None, name=None, ml=None, ml2=None):
+    if tri is None:
+        triplot_homemade(samples, parlabels, plotparameters, name, ml, ml2)
+        return
+
+    # Need chain, and parlabels
+
+    # Figure out which parameters to plot
+    fileparameters = samples.shape[1]
+    if plotparameters is None:
+        parameters = np.arange(fileparameters)
+    else:
+        plotparameters = np.array(plotparameters)
+        parameters = plotparameters[plotparameters < fileparameters]
+
+    chain = samples[:, parameters]
+    labels = np.array(parlabels)[parameters]
+
+    fig = triangle.corner(chain, labels=list(labels))
+
+    #In [31]: fig = triangle.corner(samples, labels=["$m$", "$b$", "$\ln\,f$"],
+    #   ....:                       truths=[m_true, b_true, np.log(f_true)])
+    

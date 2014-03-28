@@ -27,7 +27,6 @@ class pulsarNoiseLL(object):
     avoiding having to go over the whole signal dictionary
     """
     residuals = None        # The residuals
-    toaerrs = None          # The uncertainties
     Nvec = None             # The full noise vector
     vNvec = []              # Which residuals a parameter affects (varying)
     fNvec = []              # Which residuals a parameter affects (fixed)
@@ -40,10 +39,9 @@ class pulsarNoiseLL(object):
     pindex = None           # Index of the parameter
     fval = None             # The current value for the parameters (fixed)
 
-    def __init__(self, residuals, toaerrs):
+    def __init__(self, residuals):
         """
         @param residuals:   Initialise the residuals we'll work with
-        @param toaerrs:     The original TOA uncertainties
         """
         self.vNvec = []
         self.fNvec = []
@@ -51,7 +49,6 @@ class pulsarNoiseLL(object):
         self.fis_efac = []
 
         self.residuals = residuals
-        self.toaerrs = toaerrs
         self.Nvec = np.zeros(len(residuals))
         self.pmin = np.zeros(0)
         self.pmax = np.zeros(0)
@@ -280,7 +277,7 @@ def gibbs_sample_N(self, curpars):
     newpars = curpars.copy()
 
     for ii, psr in enumerate(self.ptapsrs):
-        pnl = pulsarNoiseLL(psr.gibbsresiduals, psr.toaerrs)
+        pnl = pulsarNoiseLL(psr.gibbsresiduals)
 
         # Add the signals
         for ss, signal in enumerate(self.ptasignals):
@@ -307,7 +304,7 @@ def gibbs_sample_N(self, curpars):
         sampler = ptmcmc.PTSampler(ndim, pnl.loglikelihood, pnl.logprior, cov=cov, \
                 outDir='./gibbs-chains/', verbose=False, nowrite=True)
 
-        steps = ndim*10
+        steps = ndim*20
         sampler.sample(p0, steps, thin=1, burn=10)
 
         newpars[pnl.pindex] = sampler._chain[steps-1,:]
@@ -369,7 +366,7 @@ def gibbs_sample_Phi(self, a, curpars):
                     sampler = ptmcmc.PTSampler(ndim, psd.loglikelihood, psd.logprior, cov=cov, \
                             outDir='./gibbs-chains/', verbose=False, nowrite=True)
 
-                    steps = ndim*10
+                    steps = ndim*40
                     sampler.sample(p0, steps, thin=1, burn=10)
 
                     newpars[psd.pindex:psd.pindex+ndim] = \
@@ -420,7 +417,7 @@ def gibbs_sample_Phi(self, a, curpars):
                     sampler = ptmcmc.PTSampler(ndim, psd.loglikelihood, psd.logprior, cov=cov, \
                             outDir='./gibbs-chains/', verbose=False, nowrite=True)
 
-                    steps = ndim*10
+                    steps = ndim*40
                     sampler.sample(p0, steps, thin=1, burn=10)
 
                     newpars[psd.pindex:psd.pindex+ndim] = \
@@ -452,18 +449,22 @@ def gibbs_sample_J(self, a, curpars):
 
         # Add the signals
         for ss, signal in enumerate(self.ptasignals):
-            pstart = curpars[signal['parindex']]
             if signal['pulsarind'] == ii and signal['stype'] == 'jitter' and \
                     signal['bvary'][0] == True:
                 # We have a jitter parameter
                 inds = zindex+nms+nfs+nfdms
                 inde = zindex+nms+nfs+nfdms+npus
 
-                res = a[ii][inds:inde]
+                # To which avetoas does this 'jitter' apply?
+                select = np.array(signal['Jvec'], dtype=np.bool)
+                selall = np.ones(np.sum(select))
+
+                res = a[ii][inds:inde][select]
+                pstart = curpars[signal['parindex']]
 
                 # Set up the conditional log-likelihood
-                pnl = pulsarNoiseLL(res, psr.toaerrs)
-                pnl.addSignal(signal['Jvec'], False, signal['pmin'][0], \
+                pnl = pulsarNoiseLL(res)
+                pnl.addSignal(selall, False, signal['pmin'][0], \
                         signal['pmax'][0], pstart, signal['pwidth'][0], \
                         signal['parindex'], fixed=(not signal['bvary'][0]))
 
@@ -477,7 +478,7 @@ def gibbs_sample_J(self, a, curpars):
 
                 # Run a tiny MCMC of one correlation length, and return the parameters
 
-                steps = ndim*10
+                steps = ndim*40
                 sampler.sample(p0, steps, thin=1, burn=10)
 
                 newpars[pnl.pindex] = sampler._chain[steps-1,:]
@@ -517,12 +518,22 @@ def RunGibbs(likob, steps, chainsdir):
 
     likob.saveModelParameters(chainsdir + '/ptparameters.txt')
 
+    # Clear the file for writing
+    chainfilename = chainsdir + '/chain_1.txt'
+    chainfile = open(chainfilename, 'w')
+    chainfile.close()
+
+    # Dump samples to file every dumpint steps (no thinning)
+    dumpint = 100
+
     ndim = likob.dimensions
     pars = likob.pstart.copy()
     ncoeffs = np.sum(likob.npz)
 
-    chain = np.zeros((steps, ndim))
-    chain2 = np.zeros((steps, ncoeffs))
+    #chain = np.zeros((steps, ndim))
+    #chain2 = np.zeros((steps, ncoeffs))
+    samples = np.zeros((min(dumpint, steps), ndim+ncoeffs))
+    stepind = 0
 
     for step in range(steps):
         doneIteration = False
@@ -536,10 +547,7 @@ def RunGibbs(likob, steps, chainsdir):
                 # Generate new coefficients
                 a = gibbs_sample_a(likob)
 
-                if len(a) > 1:
-                    chain2[step, :] = np.append(*a)
-                else:
-                    chain2[step, :] = a[0]
+                samples[stepind, ndim:] = np.hstack(a)
 
                 doneIteration = True
 
@@ -562,12 +570,34 @@ def RunGibbs(likob, steps, chainsdir):
             # Generate new correlated equad/jitter parameters
             pars = gibbs_sample_J(likob, a, pars)
 
+        samples[stepind, :ndim] = pars
+
+        stepind += 1
+        # Write to file if necessary
+        if (stepind % dumpint == 0 or step == steps-1):
+            nwrite = dumpint
+
+            # Check how many samples we are writing
+            if step == steps-1:
+                nwrite = stepind
+
+            # Open the file in append mode
+            chainfile = open(chainfilename, 'a+')
+            for jj in range(nwrite):
+                chainfile.write('0.0\t  0.0\t  0.0\t')
+                chainfile.write('\t'.join(["%.17e"%\
+                        (samples[jj,kk]) for kk in range(ndim+ncoeffs)]))
+                chainfile.write('\n')
+            chainfile.close()
+            stepind = 0
+
         percent = (step * 100.0 / steps)
         sys.stdout.write("\rGibbs: %d%%" %percent)
         sys.stdout.flush()
 
-        chain[step, :] = pars
+    sys.stdout.write("\n")
 
+    """
     #extracols = np.zeros((chain.shape[0], 3))
     #savechain = np.append(extracols, chain, axis=1)
     savechain = np.zeros((chain.shape[0], chain.shape[1]+3))
@@ -578,3 +608,4 @@ def RunGibbs(likob, steps, chainsdir):
     sys.stdout.write("\n")
     np.savetxt(chainsdir+'/chain2_1.txt', chain2)
     #return chain
+    """
