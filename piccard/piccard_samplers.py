@@ -732,9 +732,9 @@ def makeEfacPage(fig, samples, labels, mlchain, mlpso, txtfilename, \
     fileout.close()
 
 
-def makeSpectrumPage(ax, samples, freqs, mlchain, mlpso, \
+def makeSpectrumPage(ax, samples, freqs, mlchain, mlpso, txtfilename, \
         xlabel='Frequency [log10(f/Hz)]', ylabel='PSD', \
-        title='Power Spectral Density'):
+        title='Power Spectral Density', xpad=0.2, ypad=1.0):
     """
     Make a 1-D plot of the power spectrum
 
@@ -757,13 +757,20 @@ def makeSpectrumPage(ax, samples, freqs, mlchain, mlpso, \
 
     resp = ax.errorbar(x, yval, yerr=yerr, fmt='.', c='blue')
 
-    ax.axis([min(x)-0.2, max(x)+0.2, min(yval-yerr)-1, max(yval+yerr)+1])
+    ax.axis([min(x)-xpad, max(x)+xpad, min(yval-yerr)-ypad, max(yval+yerr)+ypad])
 
     ax.set_title(title)
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
 
     ax.grid(True)
+
+    # Write the plot to file
+    fileout = open(txtfilename, 'w')
+    for ii in range(npars):
+        fileout.write(str(x[ii]) + "  " + str(yval[ii]) + \
+                        "  " + str(yerr[ii]) + "  " + str(mlchain[ii]) + "\n")
+    fileout.close()
 
 
 def makeResidualsPlot(ax, toas, residuals, toaerrs, flags, \
@@ -1005,7 +1012,86 @@ def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
                 fig = plt.figure()
                 ax = fig.add_subplot(111)
                 makeSpectrumPage(ax, spectrumchain, freqs, spectrummlchain, \
-                        spectrummlpso, title=title)
+                        spectrummlpso, fileout+'.txt', title=title)
+
+                plt.savefig(fileout+'.png')
+                plt.savefig(fileout+'.eps')
+                plt.close(fig)
+
+    # Plot power-spectra from the Fourier components here. Even works when we
+    # have modelled the spectrum itself with a power-law
+    for psr in list(set(pulsarid)):
+        for signal in ['Fmat', 'Fdmmat']:
+            sigind = (np.array(stype) == signal)
+            psrind = (np.array(pulsarid) == psr)
+            ind = np.logical_and(sigind, psrind)
+
+            if np.sum(ind) > 0:
+                fileout = outputdir+'/'+pulsarname[ind[0]]+'-'+signal+'-spectrum'
+
+                dopar[ind] = False
+                modefreqs = [np.log10(np.float(np.array(labels)[ind][iii])) for iii in range(np.sum(ind))]
+                freqs = modefreqs[::2]
+
+                spectrumchain = np.log10(chain[:, ind][:,::2]**2 + chain[:,ind][:,1::2]**2)
+                spectrummlchain = np.log10(mlchainpars[ind][::2]**2 + mlchainpars[ind][1::2]**2)
+
+
+                if mlpsopars is not None:
+                    spectrummlpso = np.log10(mlpsopars[ind][::2]**2 + mlpsopars[ind][1::2]**2)
+                else:
+                    pectrummlpso = None
+
+                if signal == 'Fmat':
+                    title = 'Mode Power Spectral Density noise {0}'.format(\
+                            pulsarname[ind[0]])
+                elif signal == 'Fdmmat':
+                    title = 'Mode Power Spectral Density DM variations {0}'.format(\
+                            pulsarname[ind[0]])
+
+                fig = plt.figure()
+                ax = fig.add_subplot(111)
+                makeSpectrumPage(ax, spectrumchain, freqs, spectrummlchain, \
+                        spectrummlpso, fileout+'.txt', title=title)
+
+                plt.savefig(fileout+'.png')
+                plt.savefig(fileout+'.eps')
+                plt.close(fig)
+
+    # Plot the epoch-averaged residuals. These plots result from the jitter
+    # analysis, and only represent the jitter signal
+    for psr in list(set(pulsarid)):
+        for signal in ['Residual_ave']:
+            sigind = (np.array(stype) == signal)
+            psrind = (np.array(pulsarid) == psr)
+            ind = np.logical_and(sigind, psrind)
+
+            if np.sum(ind) > 0:
+                fileout = outputdir+'/'+pulsarname[ind[0]]+'-Residual-ave'
+
+                dopar[ind] = False
+                MJDs = pic_T0 + np.array([np.float(np.array(labels)[ind][iii]) for iii in range(np.sum(ind))]) / pic_spd
+
+                #modefreqs = [np.log10(np.float(np.array(labels)[ind][iii])) for iii in range(np.sum(ind))]
+                #freqs = modefreqs[::2]
+
+                reschain = chain[:, ind]
+                resmlchain = mlchainpars[ind]
+
+                if mlpsopars is not None:
+                    resmlpso = mlpsopars[ind]
+                else:
+                    resmlpso = None
+
+                title = 'Epoch-averaged correlated residuals {0}'.format(\
+                        pulsarname[ind[0]])
+
+                fig = plt.figure()
+                ax = fig.add_subplot(111)
+                makeSpectrumPage(ax, reschain, MJDs, resmlchain, \
+                        resmlpso, fileout+'.txt', title=title, \
+                        xlabel='MJD', ylabel=r'Residual [s]', \
+                        xpad=7.0, ypad=5.0e-8)
 
                 plt.savefig(fileout+'.png')
                 plt.savefig(fileout+'.eps')
