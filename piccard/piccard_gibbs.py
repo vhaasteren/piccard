@@ -9,22 +9,21 @@ import glob
 import sys
 
 from .piccard import *
-from . import pytwalk                  # Internal module
-from . import pydnest                  # Internal module
-from . import rjmcmchammer as rjemcee  # Internal module
 from . import PTMCMC_generic as ptmcmc
 
-try:    # Fall back to internal emcee implementation
-    import emcee as emceehammer
-    emcee = emceehammer
-except ImportError:
-    import mcmchammer as mcmchammer
-    emcee = mcmchammer
+
+"""
+This file implements a blocked Gibbs sampler. Gibbs sampling is a special case
+of Metropolis-Hastings, and in Pulsar Timing data analysis it can be used to
+increase the mixing rate of the chain. We still use the PAL/PAL2 version of
+PTMCMC_generic to do the actual MCMC steps, but the steps are performed in
+parameter blocks.
+"""
 
 class pulsarNoiseLL(object):
     """
-    This class simplifies sampling from a pulsar noise-only distribution, by
-    avoiding having to go over the whole signal dictionary
+    This class represents the likelihood function in the block with
+    white-noise-only parameters.
     """
     residuals = None        # The residuals
     Nvec = None             # The full noise vector
