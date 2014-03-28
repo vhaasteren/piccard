@@ -1029,7 +1029,6 @@ def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
             if np.sum(dopar) == 0:
                 print "ERROR: nothing else to plot left"
 
-            print "Making page:", str(pp)
             sys.stdout.write("\rMaking page {0} of {1}".format(\
                     pp+1, npages))
             sys.stdout.flush()
