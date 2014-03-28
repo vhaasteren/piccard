@@ -1021,7 +1021,7 @@ def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
     # Plot power-spectra from the Fourier components here. Even works when we
     # have modelled the spectrum itself with a power-law
     for psr in list(set(pulsarid)):
-        for signal in ['Fmat', 'Fdmmat']:
+        for signal in ['Fmat', 'Fmat_dm']:
             sigind = (np.array(stype) == signal)
             psrind = (np.array(pulsarid) == psr)
             ind = np.logical_and(sigind, psrind)
@@ -1040,7 +1040,7 @@ def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
                 if mlpsopars is not None:
                     spectrummlpso = np.log10(mlpsopars[ind][::2]**2 + mlpsopars[ind][1::2]**2)
                 else:
-                    pectrummlpso = None
+                    spectrummlpso = None
 
                 if signal == 'Fmat':
                     title = 'Mode Power Spectral Density noise {0}'.format(\
@@ -1122,8 +1122,16 @@ def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
             fig = plt.figure()
             fileout = outputdir+'/triplot-page-' + str(pp)
 
-            samples = chain[:,dopar][:,:npagemax]
-            plabels = np.array(labels)[dopar][:npagemax]
+            # If the next page would have only parameter, push one parameter to
+            # the next page
+            ncurpars = 0
+            if np.sum(dopar) == npagemax+1:
+                ncurpars = npagemax-1
+            else:
+                ncurpars = npagemax
+
+            samples = chain[:,dopar][:,:ncurpars]
+            plabels = np.array(labels)[dopar][:ncurpars]
 
             triplot(samples, plabels)
             plt.savefig(fileout+'.png')
@@ -1132,7 +1140,7 @@ def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
 
             # Mark parameters as done
             ind = dopar[dopar]
-            ind[:npagemax] = False
+            ind[:ncurpars] = False
             dopar[dopar] = ind
 
             #indices = np.flatnonzero(np.array(dopar == True))
