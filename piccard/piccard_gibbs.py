@@ -124,6 +124,7 @@ class pulsarPSDLL(object):
     pstart = None
     pwidth = None
     pindex = None
+    bvary = None
 
     def __init__(self, a, freqs, Tmax, pmin, pmax, pstart, pwidth, index, bvary):
         """
@@ -160,7 +161,66 @@ class pulsarPSDLL(object):
         return bok
 
     def dimensions(self):
-        return len(self.pmin)
+        return np.sum(self.bvary)
+
+
+class pulsarDetLL(object):
+    """
+    Like pulsarNoiseLL, but for all other deterministic sources, like GW BWM
+    """
+    def __init__(self, likob, allpars, mask, pmin, pmax, pstart, pwidth, bvary):
+        """
+        @param likob:   The likelihood object, containing all the pulsars etc.
+        @param allpars: Array with _all_ parameters, not just the det-sources
+        @param mask:    Boolean mask that selects the det-source parameters
+        @param pmin:    Minimum bound of all det-source parameters
+        @param pmax:    Maximum bound of all det-source parameters
+        @param pstart:  Start-parameter of all ''
+        @param pwidth:  Width-parameter of all ''
+        @param bvary:   Whether or not we vary the parameters (also with mask?)
+        """
+
+        self.likob = likob
+        self.allpars = allpars.copy()
+        self.mask = mask
+        self.pmin = pmin
+        self.pmax = pmax
+        self.pstart = pstart
+        self.pwidth = pwidth
+        self.bvary = bvary
+
+    def loglikelihood(self, parameters):
+        """
+        Calculate the conditional likelihood, as a function of the deterministic
+        model parameters. This is an all-pulsar likelihood
+        """
+        self.allpars[self.mask] = parameters
+        self.likob.updateDetSources(self.allpars)
+
+        xi2 = 0
+        ldet = 0
+
+        for psr in self.likob.ptapsrs:
+            xi2 += np.sum((psr.detresiduals-psr.gibbssubresiduals)**2/psr.Nvec)
+            ldet += np.sum(np.log(psr.Nvec))
+
+        return -0.5*xi2 - 0.5*ldet
+
+
+    def logprior(self, parameters):
+        """
+        Only return 0 when the parameters are within the prior domain
+        """
+        bok = -np.inf
+        if np.all(self.pmin[self.bvary] <= parameters) and \
+                np.all(parameters <= self.pmax[self.bvary]):
+            bok = 0
+
+        return bok
+
+    def dimensions(self):
+        return np.sum(self.bvary)
+
 
 
 
@@ -174,7 +234,8 @@ def gibbs_sample_a(self):
 
     a = []
     for ii, psr in enumerate(self.ptapsrs):
-        zindex = np.sum(self.npz[:ii])
+        #zindex = np.sum(self.npz[:ii])
+        zindex = 0              # This is on a per-pulsar basis
         nzs = self.npz[ii]
         mindex = np.sum(self.npm[:ii])
         nms = self.npm[ii]
@@ -224,7 +285,6 @@ def gibbs_sample_a(self):
 
         except np.linalg.LinAlgError:
             print "ERROR in QR decomp"
-            #"""
             try:
                 cfL = sl.cholesky(Sigma, lower=True)
                 cf = (cfL, True)
@@ -234,21 +294,18 @@ def gibbs_sample_a(self):
                 Li = sl.cho_solve(cfLi, np.eye(Sigma.shape[0]))
 
                 ahat = sl.cho_solve(cf, ENx)
-            #"""
             except np.linalg.LinAlgError:
-            #if True:
                 U, s, Vt = sl.svd(Sigma)
                 if not np.all(s > 0):
                     raise ValueError("ERROR: Sigma singular according to SVD")
                 Sigi = np.dot(U, np.dot(np.diag(1.0/s), Vt))
                 Li = U * (1.0 / np.sqrt(s))
-                #Li = np.dot(U, np.diag(1.0 / np.sqrt(s)))
 
                 ahat = np.dot(Sigi, ENx)
         except ValueError:
             print "WTF?"
-            print Sigma
-            np.savetxt("temp.txt", Sigma)
+            print "Look in wtf.txt for the Sigma matrix"
+            np.savetxt("wtf.txt", Sigma)
             raise
 
         # Get a sample from the coefficient distribution
@@ -259,14 +316,11 @@ def gibbs_sample_a(self):
         psr.gibbscoefficients[:psr.Mmat.shape[1]] = np.dot(psr.tmpConv, \
                 addcoefficients[:psr.Mmat.shape[1]])
 
-        # addres = np.dot(psr.Zmat, aadd)
-        #print "Addres: ", addres
-
         # We really do not care about the tmp's at this point. Save them
         # separately
         a.append(psr.gibbscoefficients)
-        #a.append(psr.gibbscoefficients[psr.Mmat.shape[1]:])
-        psr.gibbsresiduals = psr.detresiduals - np.dot(psr.Zmat, addcoefficients)
+        psr.gibbssubresiduals = np.dot(psr.Zmat, addcoefficients)
+        psr.gibbsresiduals = psr.detresiduals - psr.gibbssubresiduals
 
     return a
 
@@ -436,7 +490,8 @@ def gibbs_sample_J(self, a, curpars):
     newpars = curpars.copy()
 
     for ii, psr in enumerate(self.ptapsrs):
-        zindex = np.sum(self.npz[:ii])
+        #zindex = np.sum(self.npz[:ii])
+        zindex = 0          # Per pulsar basis
         nzs = self.npz[ii]
         mindex = np.sum(self.npm[:ii])
         nms = self.npm[ii]
@@ -477,13 +532,61 @@ def gibbs_sample_J(self, a, curpars):
                         outDir='./gibbs-chains/', verbose=False, nowrite=True)
 
                 # Run a tiny MCMC of one correlation length, and return the parameters
-
                 steps = ndim*40
                 sampler.sample(p0, steps, thin=1, burn=10)
 
                 newpars[pnl.pindex] = sampler._chain[steps-1,:]
 
     return newpars
+
+
+def gibbs_sample_Det(likob, curpars):
+    """
+    Sample from the conditional likelihood with everything fixed except for the
+    deterministic sources
+    """
+    sigList = ['lineartimingmodel', 'nonlineartimingmodel', 'fouriermode', \
+            'dmfouriermode', 'jitterfouriermode', \
+            'bwm']
+
+    mask = np.array([0]*likob.dimensions, dtype=np.bool)
+    for ss, signal in enumerate(likob.ptasignals):
+        if signal['stype'] in sigList:
+            # Deterministic source, so include it
+            pindex = signal['parindex']
+            npars = np.sum(signal['bvary'])
+            mask[pindex:pindex+npars] = True
+
+    ndim = np.sum(mask)
+    newpars = curpars.copy()
+
+    if ndim > 0:
+        # Only sample if we really have something to do
+        pmin = likob.pmin[mask]
+        pmax = likob.pmax[mask]
+        pstart = likob.pstart[mask]
+        pwidth = likob.pwidth[mask]
+        bvary = np.array([1]*ndim, dtype=np.bool)
+
+        # Prepare the likelihood function
+        pdl = pulsarDetLL(likob, newpars, mask, pmin, pmax, pstart, pwidth, bvary)
+
+        cov = np.diag(pdl.pwidth**2)
+        p0 = pdl.pstart
+        sampler = ptmcmc.PTSampler(ndim, pdl.loglikelihood, pdl.logprior, cov=cov, \
+                outDir='./gibbs-chains/', verbose=False, nowrite=True)
+
+        steps = ndim*20
+        sampler.sample(p0, steps, thin=1, burn=10)
+
+        newpars[pdl.mask] = sampler._chain[steps-1,:]
+
+        # And we should not forget to re-set the gibbsresiduals
+        for psr in likob.ptapsrs:
+            psr.gibbsresiduals = psr.detresiduals - psr.gibbssubresiduals
+
+    return newpars
+
 
 
 def gibbsQuantities(self, parameters):
@@ -569,6 +672,9 @@ def RunGibbs(likob, steps, chainsdir):
 
             # Generate new correlated equad/jitter parameters
             pars = gibbs_sample_J(likob, a, pars)
+
+            # If we have 'm, sample from the deterministic sources
+            pars = gibbs_sample_Det(likob, pars)
 
         samples[stepind, :ndim] = pars
 

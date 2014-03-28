@@ -1056,7 +1056,7 @@ def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
             #plt.savefig(fileout+'.png')
             #plt.savefig(fileout+'.eps')
             #plt.close(fig)
-        stdout.write("\n")
+        sys.stdout.write("\n")
     else:
         # Make a single plot
         indices = np.flatnonzero(np.array(dopar == True))

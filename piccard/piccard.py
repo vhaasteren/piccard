@@ -2414,7 +2414,7 @@ class ptaPulsar(object):
             #self.DF = np.dot(self.Dmat, self.Fdmmat)
             self.DF = (self.Dvec * self.Fdmmat.T).T
         else:
-            self.Fdmmat = np.zeros(0)
+            self.Fdmmat = np.zeros((len(self.toas),0))
             self.Fdmfreqs = np.zeros(0)
             #self.Dmat = np.diag(pic_DMk / (self.freqs**2))
             self.Dvec = pic_DMk / (self.freqs**2)
@@ -2475,7 +2475,6 @@ class ptaPulsar(object):
             self.GGr = np.dot(self.Hmat, self.Gr)
             self.GtF = np.dot(self.Hmat.T, self.Fmat)
             self.GtD = np.dot(self.Hmat.T, self.DF)
-            #(self.avetoas, self.Umat) = dailyaveragequantities(self.toas)
             self.GtU = np.dot(self.Hmat.T, self.Umat)
 
             # For two-component noise
@@ -3435,6 +3434,16 @@ class ptaPulsar(object):
         if likfunc == 'gibbs1' or likfunc == 'gibbs2':
             self.Zmat = np.array(h5df.getData(self.name, 'pic_Zmat'))
             self.tmpConv = np.array(h5df.getData(self.name, 'pic_tmpConv'))
+            self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
+            self.Umat = np.array(h5df.getData(self.name, 'pic_Umat'))
+            self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat'))
+
+            if len(self.Fdmfreqs) > 0:
+                self.DF = np.array(h5df.getData(self.name, 'pic_DF'))
+                self.Fdmmat = np.array(h5df.getData(self.name, 'pic_Fdmmat'))
+            else:
+                self.Fdmmat = np.zeros((len(self.toas),0))
+                self.DF = np.zeros((len(self.toas),0))
 
 
 
