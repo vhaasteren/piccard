@@ -3078,14 +3078,24 @@ class ptaPulsar(object):
             # No need to write anything just yet?
             pass
 
-        if likfunc == 'gibbs1' or likfunc == 'gibbs2' or write == 'all':
-            if ndmf > 0:
-                Ft = np.append(self.Fmat, self.DF, axis=1)
-            else:
-                Ft = self.Fmat
+        if likfunc == 'gibbs' or write == 'all':
+            # Select the largest F-matrix for GWs:
+            ind = np.argmax(self.npf)
+            self.Fmat_gw = self.ptapsrs[ind].Fmat.copy()
+            self.Ffreqs_gw = self.ptapsrs[ind].Ffreqs.copy()
 
-            if likfunc == 'gibbs2':
-                Ftot = np.append(Ft, self.Umat, axis=1)
+            if ndmf > 0 and 'dm' in self.gibbsmodel:
+                Fr = np.append(self.Fmat, self.DF, axis=1)
+            else:
+                Fr = self.Fmat
+
+            if 'jitter' in self.gibbsmodel
+                Ft = np.append(Fr, self.Umat, axis=1)
+            else:
+                Ft = Fr
+
+            if 'corrsig' in self.gibbsmodel:
+                Ftot = np.append(Ft, self.Fmat_gw[:,:len(self.Ffreqs)], axis=1)
             else:
                 Ftot = Ft
 
@@ -3101,7 +3111,6 @@ class ptaPulsar(object):
             MtGc = np.dot(self.Mmat.T, self.Gcmat)
             cf = sl.cho_factor(MtM)
             self.tmpConv = sl.cho_solve(cf, MtGc)
-
 
             if write != 'none':
                 # Write all these quantities to the HDF5 file
@@ -3431,7 +3440,7 @@ class ptaPulsar(object):
             self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat'))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
 
-        if likfunc == 'gibbs1' or likfunc == 'gibbs2':
+        if likfunc == 'gibbs':
             self.Zmat = np.array(h5df.getData(self.name, 'pic_Zmat'))
             self.tmpConv = np.array(h5df.getData(self.name, 'pic_tmpConv'))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
@@ -3521,6 +3530,11 @@ class ptaLikelihood(object):
     # The model/signals description
     ptasignals = []
 
+    # Gibbs 'signals': which coefficients are included? Do this more elegantly
+    # in the future. Possible values for now:
+    # design, rednoise, dm, jitter, corrsig
+    gibbsmodel = []
+
     dimensions = 0
     pmin = None
     pmax = None
@@ -3555,10 +3569,17 @@ class ptaLikelihood(object):
     Tmax = None     # One Tmax to rule them all...
 
     # The Phi, Theta, and Sigma matrices
-    Phi = None          # mark1, mark3, mark?, mark6
-    Thetavec = None     #               mark?, mark6
-    Sigma = None        #        mark3, mark?, mark6
-    GNGldet = None      # mark1, mark3, mark?, mark6
+    Phi = None          # mark1, mark3, mark?, mark6                (Noise & corr)
+    Phivec = None       # mark1, mark3, mark?, mark6          gibbs (Noise)
+    Thetavec = None     #               mark?, mark6          gibbs (DM)
+    Muvec = None        #                             mark11        (Jitter)
+    Svec = None         #                                     gibbs (GWB PSD)
+    Scor = None         #                                     gibbs (GWB corr)
+    Sigma = None        #        mark3, mark?, mark6                (everything)
+    GNGldet = None      # mark1, mark3, mark?, mark6                (log-det)
+
+    Fmat_gw = None      # The F-matrix, but for GWs
+    Ffreqs_gw = None    # Frequencies of the GWs
 
     # Other quantities that we do not want to re-initialise every likelihood call
     rGr = None          # mark1, mark3, mark?, mark6
@@ -3567,7 +3588,7 @@ class ptaLikelihood(object):
     avec = None         # mark1
     rGF = None          #        mark3, mark?
     rGE = None          #                      mark6
-    rGZ = None          #                              gibbs
+    rGZ = None          #                                     gibbs
     FGGNGGF = None      #        mark3, mark?
     EGGNGGE = None      #                      mark6
     ZGGNGGZ = None      #                              gibbs
@@ -4179,7 +4200,7 @@ class ptaLikelihood(object):
             self.npu[ii] = len(psr.avetoas)
 
             if self.likfunc in ['mark1', 'mark4', 'mark4ln', 'mark6', \
-                    'mark6fa', 'mark8', 'mark10', 'gibbs1', 'gibbs2']:
+                    'mark6fa', 'mark8', 'mark10', 'gibbs']:
                 self.npfdm[ii] = len(psr.Fdmfreqs)
                 self.npffdm[ii] = len(psr.Fdmfreqs)
 
@@ -4192,7 +4213,7 @@ class ptaLikelihood(object):
 
             if self.likfunc in ['mark1', 'mark2', 'mark3', 'mark3fa', 'mark4', \
                     'mark4ln', 'mark6', 'mark6fa', 'mark7', 'mark8', 'mark9', \
-                    'mark10', 'gibbs1', 'gibbs2']:
+                    'mark10', 'gibbs']:
                 self.npgs[ii] = len(psr.Gr)
                 self.npgos[ii] = len(psr.toas) - self.npgs[ii] - psr.Mmat.shape[1]
                 psr.Nwvec = np.zeros(self.npgs[ii])
@@ -4206,6 +4227,8 @@ class ptaLikelihood(object):
         self.Phivec = np.zeros(np.sum(self.npf))
         self.Thetavec = np.zeros(np.sum(self.npfdm))
         self.Muvec = np.zeros(np.sum(self.npu))
+        self.Svec = np.zeros(np.max(self.npf))
+        self.Scor = np.zeros((len(self.ptapsrs), len(self.ptapsrs)))
 
         if self.likfunc == 'mark1':
             self.GNGldet = np.zeros(npsrs)
@@ -4261,7 +4284,7 @@ class ptaLikelihood(object):
         elif self.likfunc == 'mark11':
             self.GNGldet = np.zeros(npsrs)
             self.rGr = np.zeros(npsrs)
-        elif self.likfunc == 'gibbs1' or self.likfunc == 'gibbs2':
+        elif self.likfunc == 'gibbs':
             zlen = np.sum(self.npm) + np.sum(self.npf)
             self.Sigma = np.zeros((zlen, zlen))
             self.GNGldet = np.zeros(npsrs)
@@ -4314,6 +4337,9 @@ class ptaLikelihood(object):
         numDMFreqs = np.zeros(len(self.ptapsrs), dtype=np.int)
         numSingleFreqs = np.zeros(len(self.ptapsrs), dtype=np.int)
         numSingleDMFreqs = np.zeros(len(self.ptapsrs), dtype=np.int)
+
+        # For Gibbs sampling, keep track of the included coefficients
+        gibbsmodel = ['design']
 
         # Figure out what the frequencies per pulsar are
         for pindex, m2psr in enumerate(self.ptapsrs):
@@ -4407,6 +4433,7 @@ class ptaLikelihood(object):
                     signals.append(newsignal)
 
             if incCEquad or incJitter:
+                gibbsmodel.append('jitter')
                 if separateCEquads:
                     for flagval in uflagvals:
                         newsignal = OrderedDict({
@@ -4440,6 +4467,7 @@ class ptaLikelihood(object):
                     signals.append(newsignal)
 
             if incRedNoise:
+                gibbsmodel.append('rednoise')
                 if noiseModel=='spectrum':
                     nfreqs = numNoiseFreqs[ii]
                     bvary = [True]*nfreqs
@@ -4479,6 +4507,7 @@ class ptaLikelihood(object):
                 signals.append(newsignal)
 
             if incDM:
+                gibbsmodel.append('dm')
                 if dmModel=='dmspectrum':
                     nfreqs = numDMFreqs[ii]
                     bvary = [True]*nfreqs
@@ -4720,6 +4749,8 @@ class ptaLikelihood(object):
                     del Umat
 
         if incGWB:
+            if not 'corrsig' in gibbsmodel:
+                gibbsmodel.append('corrsig')
             if gwbModel=='spectrum':
                 nfreqs = np.max(numNoiseFreqs)
                 bvary = [True]*nfreqs
@@ -4751,6 +4782,8 @@ class ptaLikelihood(object):
             signals.append(newsignal)
 
         if incClock:
+            if not 'corrsig' in gibbsmodel:
+                gibbsmodel.append('corrsig')
             if clockModel=='spectrum':
                 nfreqs = np.max(numNoiseFreqs)
                 bvary = [True]*nfreqs
@@ -4782,6 +4815,8 @@ class ptaLikelihood(object):
             signals.append(newsignal)
 
         if incDipole:
+            if not 'corrsig' in gibbsmodel:
+                gibbsmodel.append('corrsig')
             if dipoleModel=='spectrum':
                 nfreqs = np.max(numNoiseFreqs)
                 bvary = [True]*nfreqs
@@ -4813,6 +4848,8 @@ class ptaLikelihood(object):
             signals.append(newsignal)
 
         if incAniGWB:
+            if not 'corrsig' in gibbsmodel:
+                gibbsmodel.append('corrsig')
             nclm = (lAniGWB+1)**2-1
             clmvary = [True]*nclm
             clmmin = [-5.0]*nclm
@@ -4851,6 +4888,8 @@ class ptaLikelihood(object):
             signals.append(newsignal)
 
         if incPixelGWB:
+            if not 'corrsig' in gibbsmodel:
+                gibbsmodel.append('corrsig')
             if pixelgwbModel=='spectrum':
                 nfreqs = np.max(numNoiseFreqs)
                 bvary = [True]*(nfreqs + 2*npixels)
@@ -4916,6 +4955,7 @@ class ptaLikelihood(object):
             "evalCompressionComplement":evalCompressionComplement,
             "likfunc":likfunc,
             "Tmax":Tmax,
+            "gibbsmodel":gibbsmodel,
             "signals":signals
             })
 
@@ -4969,6 +5009,7 @@ class ptaLikelihood(object):
             "evalCompressionComplement":self.evallikcomp,
             "likfunc":self.likfunc,
             "Tmax":self.Tmax,
+            "gibbsmodel":self.gibbsmodel,
             "signals":signals
             })
 
@@ -5102,6 +5143,10 @@ class ptaLikelihood(object):
         orderFrequencyLines = fullmodel['orderFrequencyLines']
         likfunc = fullmodel['likfunc']
         signals = fullmodel['signals']
+        if 'gibbsmodel' in fullmodel:
+            gibbsmodel = fullmodel['gibbsmodel']
+        elif likfunc[:5] == 'gibbs':
+            raise ValueError("gibbsmodel not set in model")
 
         if 'Tmax' in fullmodel:
             if fullmodel['Tmax'] is not None:
@@ -5122,6 +5167,7 @@ class ptaLikelihood(object):
 
         # Details about the likelihood function
         self.likfunc = likfunc
+        self.gibbsmodel = gibbsmodel
         self.orderFrequencyLines = orderFrequencyLines
 
         # Determine the time baseline of the array of pulsars
@@ -5386,48 +5432,51 @@ class ptaLikelihood(object):
         if self.likfunc[:5] == 'gibbs':
             for pp, psr in enumerate(self.ptapsrs):
                 # First do the timing model parameters
-                for ii in range(psr.Mmat.shape[1]):
-                    flagname = "Timing-model-"+psr.name
-                    flagvalue = psr.ptmdescription[ii]
+                if 'design' in self.gibbsmodel:
+                    for ii in range(psr.Mmat.shape[1]):
+                        flagname = "Timing-model-"+psr.name
+                        flagvalue = psr.ptmdescription[ii]
 
-                    gpardes.append(\
-                            {'index': index, 'pulsar': pp, 'sigindex': -1, \
-                                'sigtype': 'Mmat', 'correlation': 'single', \
-                                'name': flagname, 'id': flagvalue, 'pulsarname': \
-                                psr.name})
-                    index += 1
+                        gpardes.append(\
+                                {'index': index, 'pulsar': pp, 'sigindex': -1, \
+                                    'sigtype': 'Mmat', 'correlation': 'single', \
+                                    'name': flagname, 'id': flagvalue, 'pulsarname': \
+                                    psr.name})
+                        index += 1
 
-                for ii in range(psr.Fmat.shape[1]):
-                    if ii % 2 == 0:
-                        flagname = "RN-Cos-"+psr.name
-                    else:
-                        flagname = "RN-Sin-"+psr.name
+                if 'rednoise' in self.gibbsmodel:
+                    for ii in range(psr.Fmat.shape[1]):
+                        if ii % 2 == 0:
+                            flagname = "RN-Cos-"+psr.name
+                        else:
+                            flagname = "RN-Sin-"+psr.name
 
-                    flagvalue = str(psr.Ffreqs[ii])
+                        flagvalue = str(psr.Ffreqs[ii])
 
-                    gpardes.append(\
-                            {'index': index, 'pulsar': pp, 'sigindex': -1, \
-                                'sigtype': 'Fmat', 'correlation': 'single', \
-                                'name': flagname, 'id': flagvalue, 'pulsarname': \
-                                psr.name})
-                    index += 1
+                        gpardes.append(\
+                                {'index': index, 'pulsar': pp, 'sigindex': -1, \
+                                    'sigtype': 'Fmat', 'correlation': 'single', \
+                                    'name': flagname, 'id': flagvalue, 'pulsarname': \
+                                    psr.name})
+                        index += 1
 
-                for ii in range(psr.Fdmfreqs.shape[0]):
-                    if ii % 2 == 0:
-                        flagname = "DM-Cos-"+psr.name
-                    else:
-                        flagname = "DM-Sin-"+psr.name
+                if 'dm' in self.gibbsmodel:
+                    for ii in range(psr.Fdmfreqs.shape[0]):
+                        if ii % 2 == 0:
+                            flagname = "DM-Cos-"+psr.name
+                        else:
+                            flagname = "DM-Sin-"+psr.name
 
-                    flagvalue = str(psr.Fdmfreqs[ii])
+                        flagvalue = str(psr.Fdmfreqs[ii])
 
-                    gpardes.append(\
-                            {'index': index, 'pulsar': pp, 'sigindex': -1, \
-                                'sigtype': 'Fmat_dm', 'correlation': 'single', \
-                                'name': flagname, 'id': flagvalue, 'pulsarname': \
-                                psr.name})
-                    index += 1
+                        gpardes.append(\
+                                {'index': index, 'pulsar': pp, 'sigindex': -1, \
+                                    'sigtype': 'Fmat_dm', 'correlation': 'single', \
+                                    'name': flagname, 'id': flagvalue, 'pulsarname': \
+                                    psr.name})
+                        index += 1
 
-                if self.likfunc == 'gibbs2':
+                if 'jitter' in self.gibbsmodel:
                     for ii in range(psr.Umat.shape[1]):
                         flagname = "Ave-res-"+psr.name
                         flagvalue = str(psr.avetoas[ii])
@@ -5435,6 +5484,18 @@ class ptaLikelihood(object):
                         gpardes.append(\
                                 {'index': index, 'pulsar': pp, 'sigindex': -1, \
                                     'sigtype': 'Residual_ave', 'correlation': 'single', \
+                                    'name': flagname, 'id': flagvalue, 'pulsarname': \
+                                    psr.name})
+                        index += 1
+
+                if 'corrsig' in self.gibbsmodel:
+                    for ii in range(self.Fmat.shape[1]):
+                        flagname = "Corr-sig-"+psr.name
+                        flagvalue = str(psr.Ffreqs[ii])
+
+                        gpardes.append(\
+                                {'index': index, 'pulsar': pp, 'sigindex': -1, \
+                                    'sigtype': 'Fmat_corr', 'correlation': 'single', \
                                     'name': flagname, 'id': flagvalue, 'pulsarname': \
                                     psr.name})
                         index += 1
@@ -5674,24 +5735,40 @@ class ptaLikelihood(object):
                     psr.Jvec += m2signal['Jvec'] * pequadsqr
 
 
-    """
-    Loop over all signals, and fill the phi matrix. This function assumes that
-    the self.Phi matrix has already been allocated
+    def constructPhiAndTheta(self, parameters, selection=None, \
+            make_matrix=True, noise_vec=False, gibbs_expansion=False):
+        """
+        Loop over all signals, and fill the phi matrix. This function assumes that
+        the self.Phi matrix has already been allocated
 
-    In this version, the DM variations are included in self.Thetavec
+        In this version, the DM variations are included in self.Thetavec
 
-    selection allows the user to specify which signals to include. By
-    default=all
+        selection allows the user to specify which signals to include. By
+        default=all
 
-    TODO: if the number of possible modes gets really large, but the number of
-          actually selected modes (modes, not signals) is not, this function
-          becomes the computational bottleneck. Make a version of this that only
-          constructs the required elements
-    """
-    def constructPhiAndTheta(self, parameters, selection=None, phimat=True):
-        self.Phi[:] = 0         # Start with a fresh matrix
+        TODO: if the number of possible modes gets really large, but the number of
+              actually selected modes (modes, not signals) is not, this function
+              becomes the computational bottleneck. Make a version of this that only
+              constructs the required elements
+
+        @param parameters:      Value of all the model parameters
+        @param selection:       Boolean array that selects signals to include
+        @param make_matrix:   Whether or not to actually build the matrix
+                                (otherwise just the Phi vector)
+        @param noise_vec:       If true, place noise only in the phi vector, not
+                                in the matrix
+        @param gibbs_expansion: Do not build the Phi matrix, but place the
+                                correlated signals (only) in two tensor-product
+                                components (H&D or other)
+        """
+
+        if make_matrix:
+            self.Phi[:] = 0         # Start with a fresh matrix
+
         self.Phivec[:] = 0      # ''
         self.Thetavec[:] = 0    # ''
+        self.Svec[:] = 0
+        self.Scor[:] = 0
         npsrs = len(self.ptapsrs)
 
         if selection is None:
@@ -5719,11 +5796,10 @@ class ptaLikelihood(object):
 
                         # Fill the phi matrix
                         di = np.diag_indices(2*nfreq)
-                        if phimat:
+                        if make_matrix and not noise_vec:
                             self.Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += 10**pcdoubled
-                        else:
-                            self.Phivec[findex:findex+2*nfreq] += 10**pcdoubled
-                            #print pcdoubled, self.Phivec
+
+                        self.Phivec[findex:findex+2*nfreq] += 10**pcdoubled
                     elif m2signal['corr'] in ['gr', 'uniform', 'dipole', \
                                               'anisotropicgwb', 'pixelgwb']:
                         nfreq = m2signal['npars']
@@ -5743,21 +5819,29 @@ class ptaLikelihood(object):
                             npixels = m2signal['aniCorr'].npixels
                             pixpars = sparameters[-2*npixels:]
                             corrmat = m2signal['aniCorr'].corrmat(pixpars)
+                            pcdoubled = np.array([sparameters[:-2*npixels], \
+                                    sparameters[:-2*npixels]]).T.flatten()
 
-                        indexa = 0
-                        indexb = 0
-                        for aa in range(npsrs):
-                            for bb in range(npsrs):
-                                # Some pulsars may have fewer frequencies than
-                                # others (right?). So only use overlapping ones
-                                nof = np.min([self.npf[aa], self.npf[bb], 2*nfreq])
-                                di = np.diag_indices(nof)
-
-                                if phimat:
-                                    self.Phi[indexa:indexa+nof,indexb:indexb+nof][di] += 10**pcdoubled[:nof] * corrmat[aa, bb]
-                                indexb += self.npff[bb]
+                        if make_matrix:
+                            # Only add it if we need the full matrix
+                            indexa = 0
                             indexb = 0
-                            indexa += self.npff[aa]
+                            for aa in range(npsrs):
+                                for bb in range(npsrs):
+                                    # Some pulsars may have fewer frequencies than
+                                    # others (right?). So only use overlapping ones
+                                    nof = np.min([self.npf[aa], self.npf[bb], 2*nfreq])
+                                    di = np.diag_indices(nof)
+
+                                    self.Phi[indexa:indexa+nof,indexb:indexb+nof][di] += 10**pcdoubled[:nof] * corrmat[aa, bb]
+                                    indexb += self.npff[bb]
+                                indexb = 0
+                                indexa += self.npff[aa]
+
+                        if gibbs_expansion:
+                            # Expand in spectrum and correlations
+                            self.Svec += 10**pcdoubled
+                            self.Scor = corrmat     # Yes, well, there can be only one
                 elif m2signal['stype'] == 'dmspectrum':
                     if m2signal['corr'] == 'single':
                         findex = np.sum(self.npffdm[:m2signal['pulsarind']])
@@ -5780,10 +5864,10 @@ class ptaLikelihood(object):
                         # Fill the phi matrix
                         di = np.diag_indices(2*nfreq)
 
-                        if phimat:
+                        if make_matrix and not noise_vec:
                             self.Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += pcdoubled
-                        else:
-                            self.Phivec[findex:findex+2*nfreq] += pcdoubled
+
+                        self.Phivec[findex:findex+2*nfreq] += pcdoubled
                     elif m2signal['corr'] in ['gr', 'uniform', 'dipole', \
                                               'anisotropicgwb', 'pixelgwb']:
                         freqpy = m2signal['Ffreqs'] * pic_spy
@@ -5800,23 +5884,28 @@ class ptaLikelihood(object):
                             pixpars = sparameters[3:]
                             corrmat = m2signal['aniCorr'].corrmat(pixpars)
 
-                        indexa = 0
-                        indexb = 0
-                        for aa in range(npsrs):
-                            for bb in range(npsrs):
-                                # Some pulsars may have fewer frequencies than
-                                # others (right?). So only use overlapping ones
-                                nof = np.min([self.npf[aa], self.npf[bb]])
-                                if nof > nfreq:
-                                    raise IOError, "ERROR: nof > nfreq. Adjust GWB freqs"
-
-                                di = np.diag_indices(nof)
-
-                                if phimat:
-                                    self.Phi[indexa:indexa+nof,indexb:indexb+nof][di] += pcdoubled[:nof] * corrmat[aa, bb]
-                                indexb += self.npff[bb]
+                        if make_matrix:
+                            indexa = 0
                             indexb = 0
-                            indexa += self.npff[aa]
+                            for aa in range(npsrs):
+                                for bb in range(npsrs):
+                                    # Some pulsars may have fewer frequencies than
+                                    # others (right?). So only use overlapping ones
+                                    nof = np.min([self.npf[aa], self.npf[bb]])
+                                    if nof > nfreq:
+                                        raise IOError, "ERROR: nof > nfreq. Adjust GWB freqs"
+
+                                    di = np.diag_indices(nof)
+
+                                    self.Phi[indexa:indexa+nof,indexb:indexb+nof][di] += pcdoubled[:nof] * corrmat[aa, bb]
+                                    indexb += self.npff[bb]
+                                indexb = 0
+                                indexa += self.npff[aa]
+
+                        if gibbs_expansion:
+                            # Expand in spectrum and correlations
+                            self.Svec += pcdoubled
+                            self.Scor = corrmat
                 elif m2signal['stype'] == 'spectralModel':
                     Amp = 10**sparameters[0]
                     alpha = sparameters[1]
@@ -5833,10 +5922,10 @@ class ptaLikelihood(object):
                         # Fill the phi matrix
                         di = np.diag_indices(2*nfreq)
 
-                        if phimat:
+                        if make_matrix and not noise_vec:
                             self.Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += pcdoubled
-                        else:
-                            self.Phivec[findex:findex+2*nfreq] += pcdoubled
+
+                        self.Phivec[findex:findex+2*nfreq] += pcdoubled
                     elif m2signal['corr'] in ['gr', 'uniform', 'dipole', \
                                               'anisotropicgwb', 'pixelgwb']:
                         freqpy = self.ptapsrs[0].Ffreqs * pic_spy
@@ -5855,23 +5944,28 @@ class ptaLikelihood(object):
                             pixpars = sparameters[3:]
                             corrmat = m2signal['aniCorr'].corrmat(pixpars)
 
-                        indexa = 0
-                        indexb = 0
-                        for aa in range(npsrs):
-                            for bb in range(npsrs):
-                                # Some pulsars may have fewer frequencies than
-                                # others (right?). So only use overlapping ones
-                                nof = np.min([self.npf[aa], self.npf[bb]])
-                                if nof > nfreq:
-                                    raise IOError, "ERROR: nof > nfreq. Adjust GWB freqs"
-
-                                di = np.diag_indices(nof)
-
-                                if phimat:
-                                    self.Phi[indexa:indexa+nof,indexb:indexb+nof][di] += pcdoubled[:nof] * corrmat[aa, bb]
-                                indexb += self.npff[bb]
+                        if make_matrix:
+                            indexa = 0
                             indexb = 0
-                            indexa += self.npff[aa]
+                            for aa in range(npsrs):
+                                for bb in range(npsrs):
+                                    # Some pulsars may have fewer frequencies than
+                                    # others (right?). So only use overlapping ones
+                                    nof = np.min([self.npf[aa], self.npf[bb]])
+                                    if nof > nfreq:
+                                        raise IOError, "ERROR: nof > nfreq. Adjust GWB freqs"
+
+                                    di = np.diag_indices(nof)
+
+                                    self.Phi[indexa:indexa+nof,indexb:indexb+nof][di] += pcdoubled[:nof] * corrmat[aa, bb]
+                                    indexb += self.npff[bb]
+                                indexb = 0
+                                indexa += self.npff[aa]
+                        
+                        if gibbs_expansion:
+                            # Expand in spectrum and correlations
+                            self.Svec += pcdoubled
+                            self.Scor = corrmat     # Yes, well, there can be only one
                 elif m2signal['stype'] == 'dmpowerlaw':
                     Amp = 10**sparameters[0]
                     Si = sparameters[1]
@@ -5894,10 +5988,10 @@ class ptaLikelihood(object):
                     pcdoubled = np.array([sparameters[1], sparameters[1]])
                     di = np.diag_indices(2)
 
-                    if phimat:
+                    if make_matrix and not noise_vec:
                         self.Phi[findex:findex+2, findex:findex+2][di] += 10**pcdoubled
-                    else:
-                        self.Phivec[findex:findex+2] += 10**pcdoubled
+
+                    self.Phivec[findex:findex+2] += 10**pcdoubled
                 elif m2signal['stype'] == 'dmfrequencyline':
                     # For a DM frequency line, the DFF is assumed to be set elsewhere
                     findex = np.sum(self.npffdm[:m2signal['pulsarind']]) + \
@@ -8034,7 +8128,7 @@ class ptaLikelihood(object):
     """
     def mark11loglikelihood(self, parameters):
         # The red signals
-        self.constructPhiAndTheta(parameters, phimat=False)
+        self.constructPhiAndTheta(parameters, make_matrix=False)
 
         # The white noise
         self.setPsrNoise(parameters)

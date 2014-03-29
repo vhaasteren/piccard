@@ -678,6 +678,107 @@ def gibbs_sample_loglik_Det(likob, curpars, loglik_Det):
     return newpars
 
 
+def gibbs_prepare_correlations(likob):
+    """
+    Prepare the inverse covariance matrix with correlated signals, and related
+    quantities for the Gibbs sampler
+
+    @param likob:   the full likelihood object
+    """
+    if not np.all(likob.Svec == 0):
+        likob.have_gibbs_corr = True
+
+        # There actually is a signal, so invert the correlation covariance
+        try:
+            U, s, Vt = sl.svd(likob.Scor)
+
+            if not np.all(s > 0):
+                raise ValueError("ERROR: WScor singular according to SVD")
+
+            likob.Scor_inv = np.dot(U * (1.0/s), Vt)
+            likob.Scor_Li = U * (1.0 / np.sqrt(s))
+
+        except ValueError:
+            print "WTF?"
+            print "Look in wtf.txt for the Scor matrix"
+            np.savetxt("wtf.txt", likob.Scor)
+            raise
+            
+    else:
+        likob.have_gibbs_corr = True
+
+def gibbs_psr_corrs(likob, psrindex, a):
+    """
+    Get the Gibbs coefficient quadratic offsets for the correlated signals, for
+    a specific pulsar
+
+    @param likob:       The full likelihood object
+    @param psrindex:    Index of the pulsar
+    @param b:           List of Gibbs coefficient of all pulsar
+
+    @return:    (pSinv_vec, pPvec), the quadratic offsets
+    """
+    psr = likob.ptapsrs[psrindex]
+
+    # The inverse of the GWB correlations are easy
+    pSinv_vec = 1.0 / likob.Svec[:likob.npf[psrindex]] * \
+            likob.Scor_inv[psrindex,psrindex]
+
+    # For the quadratic offsets, we'll need to do some splice magic
+    # First select the slice we'll need from the correlation matrix
+    temp = np.arange(len(likob.ptapsrs))
+    psrslice = np.delete(temp, psrindex)
+    #corr_inv = likob.Scor_inv[:,psrslice]       # Specific slice of inverse
+
+    # The quadratic offset we'll return
+    pPvec = np.zeros(psr.Fmat.shape[1])
+
+    # Pre-compute the GWB-index offsets of all the pulsars
+    corrmode_offset = []
+    for ii in range(len(likob.ptapsrs)):
+        # I can't believe how much nesting etc. I have to do here. This
+        # must be highly optimisable.
+        nms = likob.npm[ii]
+        nfs = likob.npf[ii]
+        nfdms = likob.npfdm[ii]
+        npus = likob.npu[ii]
+
+        # GWs are all the way at the end. Sum all we need
+        ntot = 0
+        if 'design' in likob.gibbsmodel:
+            ntot += nms
+        if 'rednoise' in likob.gibbsmodel:
+            ntot += nfs
+        if 'dm' in likob.gibbsmodel:
+            ntot += nfdms
+        if 'jitter' in likob.gibbsmodel:
+            ntot += npus
+
+        corrmode_offset.append(ntot)
+
+
+    # For every mode, build the b vector
+    for ii, freq in enumerate(psr.Ffreqs):
+        # We are not even sure if all pulsars have this frequency, so be
+        # careful. Just create them on the fly
+        b = []
+        A = []
+        for jj in psrslice:
+            if ii < likob.ptapsrs[jj].Fmat.shape[1]:
+                # Have it, add to the sum
+                b.append(a[jj][corrmode_offset[jj]+ii])
+                A.append(corr_inv[psrindex,jj] / freq)
+
+        # Make numpy arrays
+        b = np.array(b)
+        A = np.array(A)
+
+        # Ok, we have the two vectors. Now fill the next element of
+        pPvec[ii] = np.sum(b * A)
+
+    return (pSinv_vec, pPvec)
+
+
 
 def gibbs_sample_a(likob):
     """
@@ -690,9 +791,7 @@ def gibbs_sample_a(likob):
     a = []
     for ii, psr in enumerate(likob.ptapsrs):
         #zindex = np.sum(likob.npz[:ii])
-        zindex = 0              # This is on a per-pulsar basis
         nzs = likob.npz[ii]
-        mindex = np.sum(likob.npm[:ii])
         nms = likob.npm[ii]
         findex = np.sum(likob.npf[:ii])
         nfs = likob.npf[ii]
@@ -704,7 +803,9 @@ def gibbs_sample_a(likob):
         # Make ZNZ
         ZNZ = np.dot(psr.Zmat.T, ((1.0/psr.Nvec) * psr.Zmat.T).T)
 
-        di = np.diag_indices(ZNZ.shape[0])
+        # Depending on what signals are in the Gibbs model, we'll have to add
+        # prior-covariances to ZNZ
+        zindex
 
         indsp = range(zindex+nms, zindex+nms+nfs)
         indst = range(zindex+nms+nfs, zindex+nms+nfs+nfdms)
@@ -753,7 +854,7 @@ def gibbs_sample_a(likob):
                 U, s, Vt = sl.svd(Sigma)
                 if not np.all(s > 0):
                     raise ValueError("ERROR: Sigma singular according to SVD")
-                Sigi = np.dot(U, np.dot(np.diag(1.0/s), Vt))
+                Sigi = np.dot(U * (1.0/s), Vt)
                 Li = U * (1.0 / np.sqrt(s))
 
                 ahat = np.dot(Sigi, ENx)
@@ -780,284 +881,23 @@ def gibbs_sample_a(likob):
     return a
 
 
-def gibbs_sample_N_old(likob, curpars):
-    # Given the values for a, which have been subtracted from the residuals, we
-    # now need to find the PSD and noise coefficients.
-    newpars = curpars.copy()
-
-    for ii, psr in enumerate(likob.ptapsrs):
-        pnl = pulsarNoiseLL(psr.gibbsresiduals, ii)
-
-        # Add the signals
-        for ss, signal in enumerate(likob.ptasignals):
-            pstart = curpars[signal['parindex']]
-            if signal['pulsarind'] == ii and signal['stype'] == 'efac':
-                # We have a winner: add this signal
-                pnl.addSignal(signal['Nvec'], True, signal['pmin'][0], \
-                        signal['pmax'][0], pstart, signal['pwidth'][0], \
-                        signal['parindex'], fixed=(not signal['bvary'][0]))
-            elif signal['pulsarind'] == ii and signal['stype'] == 'equad':
-                # We have a winner: add this signal
-                pnl.addSignal(signal['Nvec'], False, signal['pmin'][0], \
-                        signal['pmax'][0], pstart, signal['pwidth'][0], \
-                        signal['parindex'], fixed=(not signal['bvary'][0]))
-
-
-        temp = pnl.loglikelihood(pnl.pstart)
-
-        #"""
-        # Run a tiny MCMC of one correlation length, and return the parameters
-        ndim = pnl.dimensions()
-        cov = np.diag(pnl.pwidth**2)
-        p0 = pnl.pstart
-        sampler = ptmcmc.PTSampler(ndim, pnl.loglikelihood, pnl.logprior, cov=cov, \
-                outDir='./gibbs-chains/', verbose=False, nowrite=True)
-
-        steps = ndim*20
-        sampler.sample(p0, steps, thin=1, burn=10)
-
-        newpars[pnl.pindex] = sampler._chain[steps-1,:]
-        #"""
-
-    return newpars
-
-
-
-def gibbs_sample_Phi_old(likob, a, curpars):
-    """
-    Same as gibbs_sample_N, but for the phi frequency components
-
-    """
-    newpars = curpars.copy()
-
-    for ii, psr in enumerate(likob.ptapsrs):
-        for ss, signal in enumerate(likob.ptasignals):
-            if signal['pulsarind'] == ii and signal['stype'] == 'spectrum':
-                nms = likob.npm[ii]
-                # Loop over the frequencies
-                for jj in range(signal['ntotpars']):
-                    # We can sample directly from this distribution.
-                    # Prior domain:
-                    pmin = signal['pmin'][jj]
-                    pmax = signal['pmax'][jj]
-                    rhomin = 10**pmin
-                    rhomax = 10**pmax
-                    tau = 0.5*np.sum(a[ii][nms+2*jj:nms+2*jj+2]**2)
-
-                    # Draw samples between rhomax and rhomin, according to
-                    # an exponential distribution
-                    scale = 1 - np.exp(tau*(1.0/rhomax-1.0/rhomin))
-                    eta = np.random.rand(1) * scale
-                    rhonew = -tau / (np.log(1-eta)-tau/rhomax)
-
-                    newpars[signal['parindex']+jj] = np.log10(rhonew)
-
-            elif signal['pulsarind'] == ii and signal['stype'] == 'powerlaw':
-                bvary = signal['bvary']
-                pindex = signal['parindex']
-                pstart = signal['pstart']
-                pmin = signal['pmin']
-                pmax = signal['pmax']
-                pwidth = signal['pwidth']
-                Tmax = signal['Tmax']
-                nms = likob.npm[ii]
-                nfs = likob.npf[ii]
-
-                ndim = np.sum(bvary)
-                if ndim > 0:
-                    pstart[bvary] = curpars[pindex:pindex+np.sum(bvary)]
-
-                    psd = pulsarPSDLL(a[ii][nms:nms+nfs], psr.Ffreqs, Tmax, pmin, \
-                            pmax, pstart, pwidth, pindex, ii, \
-                            np.arange(nms, nms+nfs), bvary)
-
-                    cov = np.diag(pwidth[bvary]**2)
-                    p0 = pstart[bvary]
-                    sampler = ptmcmc.PTSampler(ndim, psd.loglikelihood, psd.logprior, cov=cov, \
-                            outDir='./gibbs-chains/', verbose=False, nowrite=True)
-
-                    steps = ndim*40
-                    sampler.sample(p0, steps, thin=1, burn=10)
-
-                    newpars[psd.pindex:psd.pindex+ndim] = \
-                            sampler._chain[steps-1,:]
-
-            elif signal['pulsarind'] == ii and signal['stype'] == 'dmspectrum':
-                nms = likob.npm[ii]
-                nfs = likob.npf[ii]
-                nfdms = likob.npfdm[ii]
-                # Loop over the frequencies
-                for jj in range(signal['ntotpars']):
-                    # We can sample directly from this distribution.
-                    # Prior domain:
-                    pmin = signal['pmin'][jj]
-                    pmax = signal['pmax'][jj]
-                    rhomin = 10**pmin
-                    rhomax = 10**pmax
-                    tau = 0.5*np.sum(a[ii][nms+nfs+2*jj:nms+nfs+2*jj+2]**2)
-
-                    # Draw samples between rhomax and rhomin, according to
-                    # an exponential distribution
-                    scale = 1 - np.exp(tau*(1.0/rhomax-1.0/rhomin))
-                    eta = np.random.rand(1) * scale
-                    rhonew = -tau / (np.log(1-eta)-tau/rhomax)
-
-                    newpars[signal['parindex']+jj] = np.log10(rhonew)
-            elif signal['pulsarind'] == ii and signal['stype'] == 'dmpowerlaw':
-                bvary = signal['bvary']
-                pindex = signal['parindex']
-                pstart = signal['pstart']
-                pmin = signal['pmin']
-                pmax = signal['pmax']
-                pwidth = signal['pwidth']
-                Tmax = signal['Tmax']
-                nms = likob.npm[ii]
-                nfs = likob.npf[ii]
-                nfdms = likob.npfdm[ii]
-
-                ndim = np.sum(bvary)
-                if ndim > 0:
-                    pstart[bvary] = curpars[pindex:pindex+np.sum(bvary)]
-
-                    psd = pulsarPSDLL(a[ii][nms+nfs:nms+nfs+nfdms], psr.Fdmfreqs, \
-                                    Tmax, pmin, pmax, pstart, pwidth, pindex, \
-                                    ii, np.arange(nms+nfs, nms+nfs+nfdms), bvary)
-
-                    cov = np.diag(pwidth[bvary]**2)
-                    p0 = pstart[bvary]
-                    sampler = ptmcmc.PTSampler(ndim, psd.loglikelihood, psd.logprior, cov=cov, \
-                            outDir='./gibbs-chains/', verbose=False, nowrite=True)
-
-                    steps = ndim*40
-                    sampler.sample(p0, steps, thin=1, burn=10)
-
-                    newpars[psd.pindex:psd.pindex+ndim] = \
-                            sampler._chain[steps-1,:]
-
-    return newpars
-
-
-
-def gibbs_sample_J_old(likob, a, curpars):
-    """
-    Same as gibbs_sample_N, but now for the pulse jitter. We are actually
-    running 1D MCMC chains here, but for now that is easier (and faster?) than
-    implementing a direct 1D sampler based on interpolations
-    """
-    newpars = curpars.copy()
-
-    for ii, psr in enumerate(likob.ptapsrs):
-        #zindex = np.sum(likob.npz[:ii])
-        zindex = 0          # Per pulsar basis
-        nzs = likob.npz[ii]
-        mindex = np.sum(likob.npm[:ii])
-        nms = likob.npm[ii]
-        findex = np.sum(likob.npf[:ii])
-        nfs = likob.npf[ii]
-        fdmindex = np.sum(likob.npfdm[:ii])
-        nfdms = likob.npfdm[ii]
-        uindex = np.sum(likob.npu[:ii])
-        npus = likob.npu[ii]
-
-        # Add the signals
-        for ss, signal in enumerate(likob.ptasignals):
-            if signal['pulsarind'] == ii and signal['stype'] == 'jitter' and \
-                    signal['bvary'][0] == True:
-                # We have a jitter parameter
-                inds = zindex+nms+nfs+nfdms
-                inde = zindex+nms+nfs+nfdms+npus
-
-                # To which avetoas does this 'jitter' apply?
-                select = np.array(signal['Jvec'], dtype=np.bool)
-                selall = np.ones(np.sum(select))
-
-                res = a[ii][inds:inde][select]
-                pstart = curpars[signal['parindex']]
-
-                # Set up the conditional log-likelihood
-                pnl = pulsarNoiseLL(res, ii)
-                pnl.addSignal(selall, False, signal['pmin'][0], \
-                        signal['pmax'][0], pstart, signal['pwidth'][0], \
-                        signal['parindex'], fixed=(not signal['bvary'][0]))
-
-                # Prepare the sampler
-                temp = pnl.loglikelihood(pnl.pstart)
-                ndim = pnl.dimensions()
-                cov = np.diag(pnl.pwidth**2)
-                p0 = pnl.pstart
-                sampler = ptmcmc.PTSampler(ndim, pnl.loglikelihood, pnl.logprior, cov=cov, \
-                        outDir='./gibbs-chains/', verbose=False, nowrite=True)
-
-                # Run a tiny MCMC of one correlation length, and return the parameters
-                steps = ndim*40
-                sampler.sample(p0, steps, thin=1, burn=10)
-
-                newpars[pnl.pindex] = sampler._chain[steps-1,:]
-
-    return newpars
-
-
-def gibbs_sample_Det_old(likob, curpars):
-    """
-    Sample from the conditional likelihood with everything fixed except for the
-    deterministic sources
-    """
-    sigList = ['lineartimingmodel', 'nonlineartimingmodel', 'fouriermode', \
-            'dmfouriermode', 'jitterfouriermode', \
-            'bwm']
-
-    mask = np.array([0]*likob.dimensions, dtype=np.bool)
-    for ss, signal in enumerate(likob.ptasignals):
-        if signal['stype'] in sigList:
-            # Deterministic source, so include it
-            pindex = signal['parindex']
-            npars = np.sum(signal['bvary'])
-            mask[pindex:pindex+npars] = True
-
-    ndim = np.sum(mask)
-    newpars = curpars.copy()
-
-    if ndim > 0:
-        # Only sample if we really have something to do
-        pmin = likob.pmin[mask]
-        pmax = likob.pmax[mask]
-        pstart = likob.pstart[mask]
-        pwidth = likob.pwidth[mask]
-        bvary = np.array([1]*ndim, dtype=np.bool)
-
-        # Prepare the likelihood function
-        pdl = pulsarDetLL(likob, newpars, mask, pmin, pmax, pstart, pwidth, bvary)
-
-        cov = np.diag(pdl.pwidth**2)
-        p0 = pdl.pstart
-        sampler = ptmcmc.PTSampler(ndim, pdl.loglikelihood, pdl.logprior, cov=cov, \
-                outDir='./gibbs-chains/', verbose=False, nowrite=True)
-
-        steps = ndim*20
-        sampler.sample(p0, steps, thin=1, burn=10)
-
-        newpars[pdl.mask] = sampler._chain[steps-1,:]
-
-        # And we should not forget to re-set the gibbsresiduals
-        for psr in likob.ptapsrs:
-            psr.gibbsresiduals = psr.detresiduals - psr.gibbssubresiduals
-
-    return newpars
-
-
 
 def gibbsQuantities(likob, parameters):
-    npsrs = len(likob.ptapsrs)
+    """
+    Calculate basic Gibbs quantities at least once
 
-    # MARK A
+    @param parameters:  The current non-Gibbs model parameters
+    """
+
+    npsrs = len(likob.ptapsrs)
 
     likob.setPsrNoise(parameters)
 
-    # MARK B
+    # Place only correlated signals (GWB) in the Phi matrix, and the rest in the
+    # noise vectors
+    likob.constructPhiAndTheta(parameters, make_matrix=True, noise_vec=True)
 
-    likob.constructPhiAndTheta(parameters, phimat=False)
 
-    # MARK ??
     if likob.haveDetSources:
         likob.updateDetSources(parameters)
 
@@ -1124,6 +964,9 @@ def RunGibbs(likob, steps, chainsdir):
 
         # Start with calculating the required likelihood quantities
         gibbsQuantities(likob, pars)
+
+        # If necessary, invert the correlation matrix Svec & Scor with Ffreqs_gw
+        # and Fmat_gw
 
         while not doneIteration:
             try:
