@@ -254,9 +254,12 @@ class corrPSDLL(object):
         for ii, pc in enumerate(pcdoubled):
             msk = self.freqmask[:, ii]
             xi2 += np.dot(self.freqb[msk,ii], np.dot(\
-                    self.Scor_inv[msk,msk], self.freqb[msk,ii])) / pc
+                    self.Scor_inv[msk,:][:,msk], self.freqb[msk,ii])) / pc
             ldet += self.Scor_ldet + np.sum(msk)*np.log(pc)
 
+        #print "shapes:", self.freqs.shape, msk.shape, self.freqmask.shape
+        #print "more:", self.freqb[msk,ii].shape, self.Scor_inv[msk,:][:,msk].shape,\
+        #        self.freqb[msk,ii].shape
         return -0.5 * xi2 - 0.5 * ldet
 
 
@@ -459,13 +462,23 @@ def gibbs_prepare_loglik_J(likob, curpars):
         uindex = np.sum(likob.npu[:ii])
         npus = likob.npu[ii]
 
+        # Figure out where to start counting
+        ntot = 0
+        if 'design' in likob.gibbsmodel:
+            ntot += nms
+        if 'rednoise' in likob.gibbsmodel:
+            ntot += nfs
+        if 'dm' in likob.gibbsmodel:
+            ntot += nfdms
+
+
         # Add the signals
         for ss, signal in enumerate(likob.ptasignals):
             if signal['pulsarind'] == ii and signal['stype'] == 'jitter' and \
                     signal['bvary'][0] == True:
                 # We have a jitter parameter
-                inds = zindex+nms+nfs+nfdms
-                inde = zindex+nms+nfs+nfdms+npus
+                inds = ntot
+                inde = ntot+npus
 
                 # To which avetoas does this 'jitter' apply?
                 select = np.array(signal['Jvec'], dtype=np.bool)
@@ -521,9 +534,19 @@ def gibbs_sample_loglik_J(likob, a, curpars, loglik_J):
         nfdms = likob.npfdm[ii]
         npus = likob.npu[ii]
 
+        # Figure out where the indices start
+        ntot = 0
+        if 'design' in likob.gibbsmodel:
+            ntot += nms
+        if 'rednoise' in likob.gibbsmodel:
+            ntot += nfs
+        if 'dm' in likob.gibbsmodel:
+            ntot += nfdms
+
+
         # Gibbs parameter selectors
-        inds = nms+nfs+nfdms
-        inde = nms+nfs+nfdms+npus
+        inds = ntot
+        inde = ntot+npus
 
         # Set the new 'residuals'
         select = np.array(pnl.maskJvec, dtype=np.bool)
@@ -565,13 +588,17 @@ def gibbs_prepare_loglik_Phi(likob, curpars):
                 nms = likob.npm[ii]
                 nfs = likob.npf[ii]
 
+                ntot = 0
+                if 'design' in likob.gibbsmodel:
+                    ntot += nms
+
                 ndim = np.sum(bvary)
                 if ndim > 0:
                     pstart[bvary] = curpars[pindex:pindex+np.sum(bvary)]
 
                     loglik_Phi.append(pulsarPSDLL(np.zeros(nfs), \
                             psr.Ffreqs, Tmax, pmin, pmax, pstart, pwidth, \
-                            pindex, ii, np.arange(nms, nms+nfs), bvary))
+                            pindex, ii, np.arange(ntot, ntot+nfs), bvary))
                     psd = loglik_Phi[-1]
 
                     cov = np.diag(pwidth[bvary]**2)
@@ -599,13 +626,19 @@ def gibbs_prepare_loglik_Phi(likob, curpars):
                 nfs = likob.npf[ii]
                 nfdms = likob.npfdm[ii]
 
+                ntot = 0
+                if 'design' in likob.gibbsmodel:
+                    ntot += nms
+                if 'rednoise' in likob.gibbsmodel:
+                    ntot += nfs
+
                 ndim = np.sum(bvary)
                 if ndim > 0:
                     pstart[bvary] = curpars[pindex:pindex+np.sum(bvary)]
 
                     loglik_Phi.append(pulsarPSDLL(np.zeros(nfdms), \
                         psr.Fdmfreqs, Tmax, pmin, pmax, pstart, pwidth, pindex, \
-                                ii, np.arange(nms+nfs, nms+nfs+nfdms), bvary))
+                                ii, np.arange(ntot, ntot+nfdms), bvary))
                     psd = loglik_Phi(-1)
 
                     cov = np.diag(pwidth[bvary]**2)
@@ -639,6 +672,11 @@ def gibbs_sample_loglik_Phi_an(likob, a, curpars):
         for ss, signal in enumerate(likob.ptasignals):
             if signal['pulsarind'] == ii and signal['stype'] == 'spectrum':
                 nms = likob.npm[ii]
+
+                ntot = 0
+                if 'design' in likob.gibbsmodel:
+                    ntot += nms
+
                 # Loop over the frequencies
                 for jj in range(signal['ntotpars']):
                     # We can sample directly from this distribution.
@@ -647,7 +685,7 @@ def gibbs_sample_loglik_Phi_an(likob, a, curpars):
                     pmax = signal['pmax'][jj]
                     rhomin = 10**pmin
                     rhomax = 10**pmax
-                    tau = 0.5*np.sum(a[ii][nms+2*jj:nms+2*jj+2]**2)
+                    tau = 0.5*np.sum(a[ii][ntot+2*jj:ntot+2*jj+2]**2)
 
                     # Draw samples between rhomax and rhomin, according to
                     # an exponential distribution
@@ -660,6 +698,13 @@ def gibbs_sample_loglik_Phi_an(likob, a, curpars):
                 nms = likob.npm[ii]
                 nfs = likob.npf[ii]
                 nfdms = likob.npfdm[ii]
+
+                ntot = 0
+                if 'design' in likob.gibbsmodel:
+                    ntot += nms
+                if 'rednoise' in likob.gibbsmodel:
+                    ntot += nfs
+
                 # Loop over the frequencies
                 for jj in range(signal['ntotpars']):
                     # We can sample directly from this distribution.
@@ -668,7 +713,7 @@ def gibbs_sample_loglik_Phi_an(likob, a, curpars):
                     pmax = signal['pmax'][jj]
                     rhomin = 10**pmin
                     rhomax = 10**pmax
-                    tau = 0.5*np.sum(a[ii][nms+nfs+2*jj:nms+nfs+2*jj+2]**2)
+                    tau = 0.5*np.sum(a[ii][ntot+2*jj:ntot+2*jj+2]**2)
 
                     # Draw samples between rhomax and rhomin, according to
                     # an exponential distribution
@@ -790,7 +835,7 @@ def gibbs_sample_loglik_Det(likob, curpars, loglik_Det):
 
 
 
-def gibbs_prepare_loglik_corrPhi(likob, a, curpars):
+def gibbs_prepare_loglik_corrPhi(likob, curpars):
     """
     Prepares the likelihood objects for the power-spectra of correlated signals
 
@@ -799,7 +844,7 @@ def gibbs_prepare_loglik_corrPhi(likob, a, curpars):
     @param curpars: the current value of all parameters
     """
 
-    loglik_corrPhi = []
+    loglik_corrPSD = []
     for ss, signal in enumerate(likob.ptasignals):
         if signal['stype'] == 'powerlaw' and signal['corr'] != 'single':
             bvary = signal['bvary']
@@ -810,14 +855,17 @@ def gibbs_prepare_loglik_corrPhi(likob, a, curpars):
             pwidth = signal['pwidth']
             Tmax = signal['Tmax']
 
-            """
             b = []
+            gindices = []
             for ii, psr in enumerate(likob.ptapsrs):
                 nms = likob.npm[ii]
                 nfs = likob.npf[ii]
                 nfdms = likob.npfdm[ii]
+                npus = likob.npu[ii]
 
-                # GWs are all the way at the end. Sum all we need
+                b.append(np.zeros(nfs))
+
+                # Save the indices of the Gibbs parameters
                 ntot = 0
                 if 'design' in likob.gibbsmodel:
                     ntot += nms
@@ -828,8 +876,7 @@ def gibbs_prepare_loglik_corrPhi(likob, a, curpars):
                 if 'jitter' in likob.gibbsmodel:
                     ntot += npus
 
-                b.append(a[ii][ntot:])
-            """
+                gindices.append(np.arange(ntot, ntot+nfs))
 
             ndim = np.sum(bvary)
             if ndim > 0:
@@ -837,10 +884,10 @@ def gibbs_prepare_loglik_corrPhi(likob, a, curpars):
 
                 # Make the b's with only GW gibsscoeffs here
 
-                loglik_corrPhi.append(corrPSDLL(np.zeros(nfs), \
-                        psr.Ffreqs, Tmax, pmin, pmax, pstart, pwidth, \
-                        pindex, ii, np.arange(nms, nms+nfs), bvary))
-                psd = loglik_corrPhi[-1]
+                loglik_corrPSD.append(corrPSDLL(b, \
+                        likob.Ffreqs_gw, Tmax, pmin, pmax, pstart, pwidth, \
+                        pindex, -1, gindices, bvary))
+                psd = loglik_corrPSD[-1]
 
                 cov = np.diag(pwidth[bvary]**2)
                 p0 = pstart[bvary]
@@ -849,17 +896,38 @@ def gibbs_prepare_loglik_corrPhi(likob, a, curpars):
 
                 psd.setSampler(sampler)
 
-                #steps = ndim*40
-                #sampler.sample(p0, steps, thin=1, burn=10)
-
-                #newpars[psd.pindex:psd.pindex+ndim] = \
-                #        sampler._chain[steps-1,:]
-
-    return loglik_corrPhi
+    return loglik_corrPSD
 
 
+def gibbs_sample_loglik_corrPhi(likob, a, curpars, loglik_corrPSD):
+    """
+    Sample the correlated Phi-loglikelihood conditional. Some models can be done
+    analytically (latter not yet implemented)
 
+    @param likob:       the full likelihood object
+    @param a:           list of arrays with all the Gibbs-only parameters
+    @param curpars:     the current value of all non-Gibbs parameters
+    @param loglik_PSD:  List of prepared likelihood/samplers for non-analytic
+                        models
+    """
+    newpars = curpars.copy()
 
+    for psd in loglik_corrPSD:
+        b = []
+        for ii, ind in enumerate(psd.gindices):
+            b.append(a[ii][ind])
+
+        psd.setNewData(b, likob.Scor_inv, likob.Scor_ldet)
+        ndim = psd.dimensions()
+
+        p0 = newpars[psd.pindex:psd.pindex+ndim]
+
+        steps = ndim*40
+        psd.sampler.sample(p0, steps, thin=1, burn=10)
+
+        newpars[psd.pindex:psd.pindex+ndim] = psd.sampler._chain[steps-1,:]
+
+    return newpars
 
 
 def gibbs_prepare_correlations(likob):
@@ -921,8 +989,6 @@ def gibbs_psr_corrs(likob, psrindex, a):
     # Pre-compute the GWB-index offsets of all the pulsars
     corrmode_offset = []
     for ii in range(len(likob.ptapsrs)):
-        # I can't believe how much nesting etc. I have to do here. This
-        # must be highly optimisable.
         nms = likob.npm[ii]
         nfs = likob.npf[ii]
         nfdms = likob.npfdm[ii]
@@ -952,7 +1018,7 @@ def gibbs_psr_corrs(likob, psrindex, a):
             if ii < likob.ptapsrs[jj].Fmat.shape[1]:
                 # Have it, add to the sum
                 b.append(a[jj][corrmode_offset[jj]+ii])
-                A.append(corr_inv[psrindex,jj] / freq)
+                A.append(likob.Scor_inv[psrindex,jj] / freq)
 
         # Make numpy arrays
         b = np.array(b)
@@ -980,7 +1046,7 @@ def gibbs_sample_a(likob, preva=None):
     if preva is None:
         preva = []
         for ii, psr in enumerate(likob.ptapsrs):
-            preva.append(np.zeros(psr.npz[ii]))
+            preva.append(np.zeros(likob.npz[ii]))
 
     a = preva
 
@@ -1098,7 +1164,8 @@ def gibbsQuantities(likob, parameters):
 
     # Place only correlated signals (GWB) in the Phi matrix, and the rest in the
     # noise vectors
-    likob.constructPhiAndTheta(parameters, make_matrix=True, noise_vec=True)
+    likob.constructPhiAndTheta(parameters, make_matrix=True, \
+            noise_vec=True, gibbs_expansion=True)
 
 
     if likob.haveDetSources:
@@ -1155,6 +1222,7 @@ def RunGibbs(likob, steps, chainsdir):
     loglik_PSD = gibbs_prepare_loglik_Phi(likob, pars)
     loglik_J = gibbs_prepare_loglik_J(likob, pars)
     loglik_Det = gibbs_prepare_loglik_Det(likob, pars)
+    loglik_corrPSD = gibbs_prepare_loglik_corrPhi(likob, pars)
 
     # The gibbs coefficients will be set by gibbs_sample_a
     a = None
@@ -1208,7 +1276,7 @@ def RunGibbs(likob, steps, chainsdir):
 
             if 'corrsig' in likob.gibbsmodel and likob.have_gibbs_corr:
                 # Generate new GWB parameters
-                pass
+                pars = gibbs_sample_loglik_corrPhi(likob, a, pars, loglik_corrPSD)
 
         samples[stepind, :ndim] = pars
 

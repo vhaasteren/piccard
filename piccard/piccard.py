@@ -2358,12 +2358,16 @@ class ptaPulsar(object):
     @param tmsigpars:       If not none, this is a list of the timing model
                             parameters that we are treating numerically.
                             Therefore, do not include in the compression matrix
+    @param noGmatWrite:     Whether or not to save the G-matrix to file
+    @param threshold:       Threshold for compression precision
+    @param gibbsmodel:      What coefficients to include in the Gibbs model
 
     """
     def createPulsarAuxiliaries(self, h5df, Tmax, nfreqs, ndmfreqs, \
             twoComponent=False, nSingleFreqs=0, nSingleDMFreqs=0, \
             compression='None', likfunc='mark3', write='likfunc', \
-            tmsigpars=None, noGmatWrite=False, threshold=1.0):
+            tmsigpars=None, noGmatWrite=False, threshold=1.0, \
+            gibbsmodel=[]):
         # For creating the auxiliaries it does not really matter: we are now
         # creating all quantities per default
         # TODO: set this parameter in another place?
@@ -3079,28 +3083,27 @@ class ptaPulsar(object):
             pass
 
         if likfunc == 'gibbs' or write == 'all':
-            # Select the largest F-matrix for GWs:
-            ind = np.argmax(self.npf)
-            self.Fmat_gw = self.ptapsrs[ind].Fmat.copy()
-            self.Ffreqs_gw = self.ptapsrs[ind].Ffreqs.copy()
-
-            if ndmf > 0 and 'dm' in self.gibbsmodel:
+            if ndmf > 0 and 'dm' in gibbsmodel:
                 Fr = np.append(self.Fmat, self.DF, axis=1)
             else:
                 Fr = self.Fmat
 
-            if 'jitter' in self.gibbsmodel
+            if 'jitter' in gibbsmodel:
                 Ft = np.append(Fr, self.Umat, axis=1)
             else:
                 Ft = Fr
 
-            if 'corrsig' in self.gibbsmodel:
-                Ftot = np.append(Ft, self.Fmat_gw[:,:len(self.Ffreqs)], axis=1)
+            if 'corrsig' in gibbsmodel:
+                Ftot = np.append(Ft, self.Fmat, axis=1)
             else:
                 Ftot = Ft
 
-            self.Zmat = np.append(self.Gcmat, Ftot, axis=1)
-            #self.Zmat = np.append(self.Mmat, self.Fmat, axis=1)
+            if 'design' in gibbsmodel:
+                self.Zmat = np.append(self.Gcmat, Ftot, axis=1)
+                #self.Zmat = np.append(self.Mmat, self.Fmat, axis=1)
+            else:
+                self.Zmat = Ftot
+
             self.Wvec = np.zeros(self.Mmat.shape[0]-self.Mmat.shape[1])
             self.Wovec = np.zeros(0)
             self.Gr = np.dot(self.Hmat.T, self.residuals)
@@ -4294,6 +4297,12 @@ class ptaLikelihood(object):
             self.rGr = np.zeros(npsrs)
             self.ZGGNGGZ = np.zeros((zlen, zlen))
 
+            # Select the largest F-matrix for GWs:
+            ind = np.argmax(self.npf)
+            self.Fmat_gw = self.ptapsrs[ind].Fmat.copy()
+            self.Ffreqs_gw = self.ptapsrs[ind].Ffreqs.copy()
+
+
 
     """
     Based on somewhat simpler quantities, this function makes a full model
@@ -5266,7 +5275,8 @@ class ptaLikelihood(object):
                                 nSingleDMFreqs=numSingleDMFreqs[pindex], \
                                 likfunc=likfunc, compression=compression, \
                                 write='likfunc', tmsigpars=tmsigpars, \
-                                noGmatWrite=noGmatWrite, threshold=threshold)
+                                noGmatWrite=noGmatWrite, threshold=threshold, \
+                                gibbsmodel=self.gibbsmodel)
 
             # When selecting Fourier modes, like in mark7/mark8, the binclude vector
             # indicates whether or not a frequency is included in the likelihood. By
@@ -5489,7 +5499,7 @@ class ptaLikelihood(object):
                         index += 1
 
                 if 'corrsig' in self.gibbsmodel:
-                    for ii in range(self.Fmat.shape[1]):
+                    for ii in range(self.Fmat_gw.shape[1]):
                         flagname = "Corr-sig-"+psr.name
                         flagvalue = str(psr.Ffreqs[ii])
 
@@ -5841,7 +5851,7 @@ class ptaLikelihood(object):
                         if gibbs_expansion:
                             # Expand in spectrum and correlations
                             self.Svec += 10**pcdoubled
-                            self.Scor = corrmat     # Yes, well, there can be only one
+                            self.Scor = corrmat.copy()     # Yes, well, there can be only one
                 elif m2signal['stype'] == 'dmspectrum':
                     if m2signal['corr'] == 'single':
                         findex = np.sum(self.npffdm[:m2signal['pulsarind']])
@@ -5905,7 +5915,7 @@ class ptaLikelihood(object):
                         if gibbs_expansion:
                             # Expand in spectrum and correlations
                             self.Svec += pcdoubled
-                            self.Scor = corrmat
+                            self.Scor = corrmat.copy()
                 elif m2signal['stype'] == 'spectralModel':
                     Amp = 10**sparameters[0]
                     alpha = sparameters[1]
