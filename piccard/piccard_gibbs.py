@@ -214,6 +214,8 @@ class corrPSDLL(object):
     Scor_inv = None
     Scor_ldet = None
 
+    allPsrSame = False
+
     def __init__(self, b, freqs, Tmax, pmin, pmax, pstart, pwidth, index, \
             psrindex, gindices, bvary):
         """
@@ -250,16 +252,21 @@ class corrPSDLL(object):
 
         xi2 = 0
         ldet = 0
-        # For every frequency, do an H&D matrix inverse inner-product
-        for ii, pc in enumerate(pcdoubled):
-            msk = self.freqmask[:, ii]
-            xi2 += np.dot(self.freqb[msk,ii], np.dot(\
-                    self.Scor_inv[msk,:][:,msk], self.freqb[msk,ii])) / pc
-            ldet += self.Scor_ldet + np.sum(msk)*np.log(pc)
 
-        #print "shapes:", self.freqs.shape, msk.shape, self.freqmask.shape
-        #print "more:", self.freqb[msk,ii].shape, self.Scor_inv[msk,:][:,msk].shape,\
-        #        self.freqb[msk,ii].shape
+        if self.allPsrSame:
+            nfreqs = len(pcdoubled)
+            dotprod = np.dot(self.freqb[:,0], np.dot(self.Scor_inv, \
+                    self.freqb[:,0]))
+            xi2 += np.sum(dotprod / pcdoubled)
+            ldet += nfreqs * self.Scor_ldet + np.sum(np.log(pcdoubled))
+        else:
+            # For every frequency, do an H&D matrix inverse inner-product
+            for ii, pc in enumerate(pcdoubled):
+                msk = self.freqmask[:, ii]
+                xi2 += np.dot(self.freqb[msk,ii], np.dot(\
+                        self.Scor_inv[msk,:][:,msk], self.freqb[msk,ii])) / pc
+                ldet += self.Scor_ldet + np.sum(msk)*np.log(pc)
+
         return -0.5 * xi2 - 0.5 * ldet
 
 
@@ -296,6 +303,8 @@ class corrPSDLL(object):
             for jj in range(len(self.freqs)):
                 if self.freqmask[ii, jj]:
                     self.freqb[ii, jj] = self.b[ii][jj]
+
+        self.allPsrSame = np.all(freqmask)
 
 
     def setSampler(self, sampler):
@@ -410,9 +419,6 @@ def gibbs_prepare_loglik_N(likob, curpars):
 
         pnl.setSampler(sampler)
 
-        #steps = ndim*20
-        #sampler.sample(p0, steps, thin=1, burn=10)
-
     return loglik_N
 
 def gibbs_sample_loglik_N(likob, curpars, loglik_N):
@@ -503,12 +509,6 @@ def gibbs_prepare_loglik_J(likob, curpars):
                         outDir='./gibbs-chains/', verbose=False, nowrite=True)
 
                 pnl.setSampler(sampler)
-
-                # Run a tiny MCMC of one correlation length, and return the parameters
-                #steps = ndim*40
-                #sampler.sample(p0, steps, thin=1, burn=10)
-
-                #newpars[pnl.pindex] = sampler._chain[steps-1,:]
 
 
     return loglik_J
@@ -608,12 +608,6 @@ def gibbs_prepare_loglik_Phi(likob, curpars):
 
                     psd.setSampler(sampler)
 
-                    #steps = ndim*40
-                    #sampler.sample(p0, steps, thin=1, burn=10)
-
-                    #newpars[psd.pindex:psd.pindex+ndim] = \
-                    #        sampler._chain[steps-1,:]
-
             elif signal['pulsarind'] == ii and signal['stype'] == 'dmpowerlaw':
                 bvary = signal['bvary']
                 pindex = signal['parindex']
@@ -639,7 +633,7 @@ def gibbs_prepare_loglik_Phi(likob, curpars):
                     loglik_Phi.append(pulsarPSDLL(np.zeros(nfdms), \
                         psr.Fdmfreqs, Tmax, pmin, pmax, pstart, pwidth, pindex, \
                                 ii, np.arange(ntot, ntot+nfdms), bvary))
-                    psd = loglik_Phi(-1)
+                    psd = loglik_Phi[-1]
 
                     cov = np.diag(pwidth[bvary]**2)
                     p0 = pstart[bvary]
@@ -647,12 +641,6 @@ def gibbs_prepare_loglik_Phi(likob, curpars):
                             outDir='./gibbs-chains/', verbose=False, nowrite=True)
 
                     psd.setSampler(sampler)
-
-                    #steps = ndim*40
-                    #sampler.sample(p0, steps, thin=1, burn=10)
-
-                    #newpars[psd.pindex:psd.pindex+ndim] = \
-                    #        sampler._chain[steps-1,:]
 
     return loglik_Phi
 
@@ -795,14 +783,6 @@ def gibbs_prepare_loglik_Det(likob, curpars):
                 outDir='./gibbs-chains/', verbose=False, nowrite=True)
 
         pdl.setSampler(sampler)
-        #steps = ndim*20
-        #sampler.sample(p0, steps, thin=1, burn=10)
-
-        #newpars[pdl.mask] = sampler._chain[steps-1,:]
-
-        # And we should not forget to re-set the gibbsresiduals
-        #for psr in likob.ptapsrs:
-        #    psr.gibbsresiduals = psr.detresiduals - psr.gibbssubresiduals
 
     return loglik_Det
 
@@ -1173,7 +1153,7 @@ def gibbsQuantities(likob, parameters):
 
 
 
-def RunGibbs(likob, steps, chainsdir):
+def RunGibbs(likob, steps, chainsdir, noWrite=False):
     """
     Run a gibbs sampler on a, for now, simplified version of the likelihood.
 
@@ -1205,9 +1185,13 @@ def RunGibbs(likob, steps, chainsdir):
     likob.saveModelParameters(chainsdir + '/ptparameters.txt')
 
     # Clear the file for writing
-    chainfilename = chainsdir + '/chain_1.txt'
-    chainfile = open(chainfilename, 'w')
-    chainfile.close()
+    if not noWrite:
+        chainfilename = chainsdir + '/chain_1.txt'
+        chainfile = open(chainfilename, 'w')
+        chainfile.close()
+
+        # Also save the residuals for all pulsars
+        likob.saveResiduals(chainsdir)
 
     # Dump samples to file every dumpint steps (no thinning)
     dumpint = 100
@@ -1259,19 +1243,15 @@ def RunGibbs(likob, steps, chainsdir):
                     print "WARNING: numpy.linalg problems"
 
             # Generate new white noise parameers
-            #pars = gibbs_sample_N_old(likob, pars)
             pars = gibbs_sample_loglik_N(likob, pars, loglik_N)
 
             # Generate new red noise parameters
-            #pars = gibbs_sample_Phi_old(likob, a, pars)
             pars = gibbs_sample_loglik_Phi(likob, a, pars, loglik_PSD)
 
             # Generate new correlated equad/jitter parameters
-            #pars = gibbs_sample_J_old(likob, a, pars)
             pars = gibbs_sample_loglik_J(likob, a, pars, loglik_J)
 
             # If we have 'm, sample from the deterministic sources
-            #pars = gibbs_sample_Det_old(likob, pars)
             pars = gibbs_sample_loglik_Det(likob, pars, loglik_Det)
 
             if 'corrsig' in likob.gibbsmodel and likob.have_gibbs_corr:
@@ -1290,13 +1270,14 @@ def RunGibbs(likob, steps, chainsdir):
                 nwrite = stepind
 
             # Open the file in append mode
-            chainfile = open(chainfilename, 'a+')
-            for jj in range(nwrite):
-                chainfile.write('0.0\t  0.0\t  0.0\t')
-                chainfile.write('\t'.join(["%.17e"%\
-                        (samples[jj,kk]) for kk in range(ndim+ncoeffs)]))
-                chainfile.write('\n')
-            chainfile.close()
+            if not noWrite:
+                chainfile = open(chainfilename, 'a+')
+                for jj in range(nwrite):
+                    chainfile.write('0.0\t  0.0\t  0.0\t')
+                    chainfile.write('\t'.join(["%.17e"%\
+                            (samples[jj,kk]) for kk in range(ndim+ncoeffs)]))
+                    chainfile.write('\n')
+                chainfile.close()
             stepind = 0
 
         percent = (step * 100.0 / steps)

@@ -734,11 +734,25 @@ def makeEfacPage(fig, samples, labels, mlchain, mlpso, txtfilename, \
 
 def makeSpectrumPage(ax, samples, freqs, mlchain, mlpso, txtfilename, \
         xlabel='Frequency [log10(f/Hz)]', ylabel='PSD', \
-        title='Power Spectral Density', xpad=0.2, ypad=1.0):
+        title='Power Spectral Density', xpad=0.2, ypad=1.0, \
+        banderror=False):
     """
     Make a 1-D plot of the power spectrum
 
     TODO: Add ML estimates
+
+    @param ax:          matplotlib axis object
+    @param samples:     MCMC samples we'll use to estimate errors
+    @param freqs:       x-axis of plot
+    @param mlchain:     Maximum likelihood values (from chain)
+    @param mlpso:       Maximum likleihood values (other method)
+    @param txtfilename: Name of file to write plot values to
+    @param xlabel:      Xlabel to put on plot
+    @param ylabel:      Ylabel to put on plot
+    @param title:       Title to put on plot
+    @param xpad:        How much to padd the xaxis range
+    @param ypad:        How much to padd the yaxis range
+    @param banderror:   Whether to plot errors in a band-shape
     """
 
     npars = len(mlchain)
@@ -755,7 +769,23 @@ def makeSpectrumPage(ax, samples, freqs, mlchain, mlpso, txtfilename, \
         yval[ii] = (fmax + fmin) * 0.5
         yerr[ii] = (fmax - fmin) * 0.5
 
-    resp = ax.errorbar(x, yval, yerr=yerr, fmt='.', c='blue')
+    if banderror:
+        srt = np.argsort(x)
+        ax.plot(x[srt], yval[srt], 'k--', linewidth=3.0)
+        ax.fill_between(x[srt], yval[srt]-yerr[srt], yval[srt]+yerr[srt], \
+                facecolor='0.7', edgecolor='k', linewidth=1.5)
+        """
+        line1 = plt.Line2D(range(10), range(10), linewidth=3.0, linestyle='--', color='k')
+        line2 = plt.Line2D(range(10), range(10), linewidth=1.5, linestyle='-', color='k')
+
+        lines = (line1, line2)
+        labels = (r'Injection', r'2$\sigma$ bound')
+
+        axarr[1].legend(lines, labels, loc='upper left', fancybox=True,
+            shadow=True, scatterpoints=1, prop={'size':12})
+        """
+    else:
+        resp = ax.errorbar(x, yval, yerr=yerr, fmt='.', c='blue')
 
     ax.axis([min(x)-xpad, max(x)+xpad, min(yval-yerr)-ypad, max(yval+yerr)+ypad])
 
@@ -863,12 +893,14 @@ def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
         residuals = []
         toaerrs = []
         flags = []
+        freqs = []
         for ii in range(len(lines)):
             line = lines[ii].split()
             toas.append(float(line[0]))
             residuals.append(float(line[1]))
             toaerrs.append(float(line[2]))
             flags.append(line[3])
+            freqs.append(float(line[4]))
 
         toas = np.array(toas)
         residuals = np.array(residuals)
@@ -1162,6 +1194,133 @@ def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
         plt.close(fig)
 
 
+def reconstructDM(likob, chainfile, outputdir, burnin=0, thin=1, \
+        parametersfile=None, sampler='auto'):
+    """
+    Given an MCMC chain file, reconstruct the DM variations. We need the design
+    matrix and the DM Fourier frequencies for this, so we'll have to use the
+    likelihood object, and not just the parameters file. However, the parameters
+    are initialised from 'ptparameters.txt' so that we are sure we are
+    compatible with the chain (and we don't need to initialise the likob model)
+
+    @param likob:       The full likelihood object. Model init not required
+    @param chainfile:   Filename/directory name of the MCMC file
+    @param outputdir:   output directory where the plots will be saved
+    @param burnin:      Number of steps to be considered burn-in
+    @param thin:        Number of steps to skip in between samples (thinning)
+    @param parametersfile:  name of the file with the parameter labels
+    @param sampler:     What method was used to generate the mcmc chain. 
+                        (auto=autodetect). Options:('emcee', 'MultiNest',
+                        'ptmcmc')
+    """
+    # Read the mcmc chain
+    (llf, lpf, chainf, labels, pulsarid, pulsarname, stype, mlpso, mlpsopars) = \
+            ReadMCMCFile(chainfile, parametersfile=parametersfile, \
+            sampler=sampler, incextra=True)
+
+    # Remove burn-in and thin the chain
+    ll = llf[burnin::thin]
+    lp = lpf[burnin::thin]
+    chain = chainf[burnin::thin, :]
+
+    # Obtain the maximum from the chain
+    mlind = np.argmax(lp)
+    mlchain = lp[mlind]
+    mlchainpars = chain[mlind, :]
+
+    # Reconstruct the DM variations from the Fourier components and the design
+    # matrix.
+    #for psr in list(set(pulsarid)):
+    for psr in list(set(pulsarname)):
+        # First find the pulsar in our likelihood object
+        lo_psrnames = likob.getPulsarNames()
+        if not psr in lo_psrnames:
+            # Huh? We don't have the pulsar in our likelihood object? Ok,
+            # continue
+            raise ValueError("Pulsar {0} not found in likob!".format(psr))
+
+        lo_psrind = lo_psrnames.index(psr)
+        lo_psr = likob.ptapsrs[lo_psrind]
+
+        fileout = outputdir+'/'+lo_psr.name+'-dmcorrections'
+        title = 'DM corrections for {0}'.format(lo_psr.name)
+        xlabel = 'MJD'
+        ylabel = r"$\Delta$DM"
+
+        dmsigind = (np.array(stype) == 'Fmat_dm')
+        #psrind = (np.array(pulsarid) == psr)
+        psrind = (np.array(pulsarname) == psr)
+        Fdmind = np.logical_and(dmsigind, psrind)   # Mask of full mcmc
+
+        Msigind = (np.array(stype) == 'Mmat')
+        psrind = (np.array(pulsarname) == psr)
+        Mind = np.logical_and(Msigind, psrind)      # Mask of full mcmc
+
+        if np.sum(Fdmind) > 0:
+            # Check that the number of frequencies match
+            if lo_psr.Fdmmat.shape[1] != np.sum(Fdmind):
+                raise ValueError("DM frequencies different for chain/likob: {0}".\
+                            format(lo_psr.name))
+
+            # We can reconstruct the DM from the Fourier components. If a DM
+            # quadratic was subtracted, we need those parametes, too
+            MDMind = []         # Index of DM design matrix
+            MDMlabel = []       # Label that belongs to that parameter
+            Mlabels = list(np.array(labels)[Mind])
+            for Mpar in ['DM', 'DM1', 'DM2']:
+                if Mpar in Mlabels:
+                    # We have it. Do some index magic, and add it to
+                    # MDMind and MDMlabel
+                    Mpar_ind_full = (np.array(labels) == Mpar)
+                    fullinds = np.logical_and(Mpar_ind_full, Mind)
+                    intind = np.where(fullinds)[0]      # Mask to indices
+                    if len(intind) != 1:
+                        raise ValueError("{0} seems to not be mentioned once for {1}".\
+                                format(Mpar, lo_psr.name))
+                    MDMind.append(intind[0])
+                    MDMlabel.append(Mpar)
+            MDMind = np.array(MDMind)           # Integer indices of full mcmc
+            MDMlabel = np.array(MDMlabel)     # List of labels
+
+            # Now make sure we have the same indices in our lo_psr, and save the
+            # design matrix elements
+            MDMmat = np.zeros((len(lo_psr.toas), 0))
+            for lbl in MDMlabel:
+                # Check we have this parameter in our lo_likob design matrix
+                if not lbl in lo_psr.ptmdescription:
+                    raise ValueError("{0} does not appear in likob for {1}".\
+                            format(lbl, lo_psr.name))
+
+                # Add the column of the design matrix
+                lo_colind = lo_psr.ptmdescription.index(lbl)
+                MDMmat = np.append(MDMmat, np.vstack(lo_psr.Mmat[:, lo_colind]), axis=1)
+
+            # Re-scale the MDMmat to reconstruct DM, not residuals
+            DDMmat = ((1.0 / lo_psr.Dvec) * MDMmat.T).T
+            
+            Mtot = np.append(DDMmat, lo_psr.Fdmmat, axis=1)
+            totind = np.append(MDMind, np.where(Fdmind)[0])
+
+            # Better have a pretty thin chain, 'cause this will take a lot of
+            # memory! :)
+            dmchain = np.dot(Mtot, chain[:, totind].T).T
+
+            mlchain = np.zeros(dmchain.shape[1])
+            mlpso = np.zeros(dmchain.shape[1])
+
+            # dmchain is now a single huge chain, with its each column a new
+            # mcmc sample, and each column is a dm value for that epoch
+            fig = plt.figure()
+            ax = fig.add_subplot(111)
+
+            makeSpectrumPage(ax, dmchain, pic_T0 + lo_psr.toas/pic_spd, \
+                    mlchain, mlpso, fileout+'.txt', title=title, \
+                    xlabel=xlabel, ylabel=ylabel, xpad=4.0, ypad=0.0005, \
+                    banderror=True)
+
+            plt.savefig(fileout+'.png')
+            plt.savefig(fileout+'.eps')
+            plt.close(fig)
 
 
 """

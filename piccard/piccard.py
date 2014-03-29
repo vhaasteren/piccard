@@ -3083,26 +3083,30 @@ class ptaPulsar(object):
             pass
 
         if likfunc == 'gibbs' or write == 'all':
-            if ndmf > 0 and 'dm' in gibbsmodel:
-                Fr = np.append(self.Fmat, self.DF, axis=1)
+            if 'design' in gibbsmodel:
+                Ft_1 = self.Gcmat.copy()
             else:
-                Fr = self.Fmat
+                Ft_1 = np.zeros((self.Gcmat.shape[0], 0))
+
+            if 'rednoise' in gibbsmodel:
+                Ft_2 = np.append(Ft_1, self.Fmat, axis=1)
+            else:
+                Ft_2 = Ft_1
+
+            if ndmf > 0 and 'dm' in gibbsmodel:
+                Ft_3 = np.append(Ft_2, self.DF, axis=1)
+            else:
+                Ft_3 = Ft_2
 
             if 'jitter' in gibbsmodel:
-                Ft = np.append(Fr, self.Umat, axis=1)
+                Ft_4 = np.append(Ft_2, self.Umat, axis=1)
             else:
-                Ft = Fr
+                Ft_4 = Ft_3
 
             if 'corrsig' in gibbsmodel:
-                Ftot = np.append(Ft, self.Fmat, axis=1)
+                self.Zmat = np.append(Ft_4, self.Fmat, axis=1)
             else:
-                Ftot = Ft
-
-            if 'design' in gibbsmodel:
-                self.Zmat = np.append(self.Gcmat, Ftot, axis=1)
-                #self.Zmat = np.append(self.Mmat, self.Fmat, axis=1)
-            else:
-                self.Zmat = Ftot
+                self.Zmat = Ft_4
 
             self.Wvec = np.zeros(self.Mmat.shape[0]-self.Mmat.shape[1])
             self.Wovec = np.zeros(0)
@@ -3682,67 +3686,15 @@ class ptaLikelihood(object):
             newpsr.readFromH5(self.h5df, psrname)
             self.ptapsrs.append(newpsr)
 
-
-    """
-    Note: This function is not (yet) ready for use
-    """
-    def addSignalFourierCoeffOldOld(self, psrind, index, Tmax, isDM=False):
-        if isDM:
-            newsignal = dict({
-                'stype':'dmfouriercoeff',
-                'npars':len(self.ptapsrs[0].Fdmfreqs),
-                'ntotpars':len(self.ptapsrs[0].Fdmfreqs),
-                'bvary':np.array([1]*newsignal.ntotpars, dtype=np.bool),
-                'corr':'single',
-                'Tmax':Tmax,
-                'parindex':index
-                })
-        else:
-            newsignal = dict({
-                'stype':'dmfouriercoeff',
-                'npars':len(self.ptapsrs[0].Ffreqs),
-                'ntotpars':len(self.ptapsrs[0].Ffreqs),
-                'bvary':np.array([1]*newsignal.ntotpars, dtype=np.bool),
-                'corr':'single',
-                'Tmax':Tmax,
-                'parindex':index
-                })
-
-        # Since this parameter space is so large, calculate the
-        # best first-estimate values of these quantities
-        # We assume that many auxiliaries have been set already (is done
-        # in initModel, so should be ok)
-        # TODO: check whether this works, and make smarter
-        npars = newsignal['npars']
-        psr = self.ptapsrs[newsignal['pulsarind']]
-
+    def getPulsarNames(self):
         """
-        if isDM:
-            NGGF = np.array([(1.0/(psr.toaerrs**2)) * psr.GGtD[:,ii] for ii in range(psr.Fmat.shape[1])]).T
-            FGGNGGF = np.dot(psr.GGtD.T, NGGF)
-        else:
-            NGGF = np.array([(1.0/(psr.toaerrs**2)) * psr.GGtF[:,ii] for ii in range(psr.Fmat.shape[1])]).T
-            FGGNGGF = np.dot(psr.GGtF.T, NGGF)
-        rGGNGGF = np.dot(psr.GGr, NGGF)
-
-        try:
-            cf = sl.cho_factor(FGGNGGF)
-            fest = sl.cho_solve(cf, rGGNGGF)
-        except np.linalg.LinAlgError:
-            U, s, Vh = sl.svd(FGGNGGF)
-            if not np.all(s > 0):
-                raise ValueError("ERROR: F^{T}F singular according to SVD")
-
-            fest = np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, rGGNGGF)))
-
-        newsignal.pmin = -1.0e4*np.abs(fest)
-        newsignal.pmax = 1.0e4*np.abs(fest)
-        newsignal.pstart = fest
-        newsignal.pwidth = 1.0e-1*np.abs(fest)
-
-        self.ptasignals.append(newsignal)
+        Get a list of the pulsar names
         """
+        psrnames = []
+        for psr in self.ptapsrs:
+            psrnames.append(psr.name)
 
+        return psrnames
 
 
     """
@@ -5574,11 +5526,12 @@ class ptaLikelihood(object):
 
             fil = open(filename, "w")
             for ii in range(len(psr.toas)):
-                fil.write("{0} \t{1} \t{2} \t{3}\n".format(\
+                fil.write("{0} \t{1} \t{2} \t{3} \t{4}\n".format(\
                         pic_T0 + psr.toas[ii]/pic_spd, \
                         psr.residuals[ii], \
                         psr.toaerrs[ii], \
-                        psr.flags[ii]))
+                        psr.flags[ii], \
+                        psr.freqs[ii]))
         fil.close()
 
     """
