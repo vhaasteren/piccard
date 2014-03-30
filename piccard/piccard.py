@@ -3099,7 +3099,7 @@ class ptaPulsar(object):
                 Ft_3 = Ft_2
 
             if 'jitter' in gibbsmodel:
-                Ft_4 = np.append(Ft_2, self.Umat, axis=1)
+                Ft_4 = np.append(Ft_3, self.Umat, axis=1)
             else:
                 Ft_4 = Ft_3
 

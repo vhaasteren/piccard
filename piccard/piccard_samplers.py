@@ -1130,9 +1130,87 @@ def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
                 plt.close(fig)
 
 
+    # Make triplots of the timing model parameters. But... do it per page. No
+    # more than 8 parameters on one page
+    for psr in list(set(pulsarid)):
+        for signal in ['Mmat']:
+            sigind = (np.array(stype) == signal)
+            psrind = (np.array(pulsarid) == psr)
+            ind = np.logical_and(sigind, psrind)
+
+            # Deselect these parameters for plotting
+            dopar = np.logical_and(dopar, np.logical_not(ind))
+
+            if np.sum(ind) > 1:
+                # Make a triplot
+                npagemax = 8
+                npages = int(np.sum(ind) / npagemax)
+                if np.sum(ind) % npagemax != 0:
+                    npages += 1
+
+                if maxpages >= 0:
+                    npages = min(npages, maxpages)
+
+                for pp in range(npages):
+                    if np.sum(ind) == 0:
+                        print "ERROR: nothing else to plot left"
+
+                    sys.stdout.write("\rMaking timing model page {0} of {1}".format(\
+                            pp+1, npages))
+                    sys.stdout.flush()
+
+                    fig = plt.figure()
+                    pn = (np.array(pulsarname)[ind])[0]
+                    fileout = outputdir+'/timingmodel-'+pn+'-page-' + str(pp)
+
+                    # If the next page would have only parameter, push one parameter to
+                    # the next page
+                    ncurpars = 0
+                    if np.sum(ind) == npagemax+1:
+                        ncurpars = npagemax-1
+                    else:
+                        ncurpars = npagemax
+
+                    samples = chain[:,ind][:,:ncurpars]
+                    plabels = np.array(labels)[ind][:ncurpars]
+
+                    triplot(samples, plabels)
+                    plt.savefig(fileout+'.png')
+                    plt.savefig(fileout+'.eps')
+                    plt.close(fig)
+
+                    # Mark parameters as done
+                    ind2 = ind[ind]
+                    ind2[:ncurpars] = False
+                    ind[ind] = ind2
+
+                    #indices = np.flatnonzero(np.array(dopar == True))
+                    #fileout = outputdir+'/triplot'
+                    #triplot(chain, parlabels=labels, plotparameters=indices, ml=mlpars,
+                    #        ml2=mlpars2)
+                    #plt.savefig(fileout+'.png')
+                    #plt.savefig(fileout+'.eps')
+                    #plt.close(fig)
+                sys.stdout.write("\n")
+            elif np.sum(ind) == 1:
+                # Make a 1D plot
+                # Make a single plot
+                pn = (np.array(pulsarname)[ind])[0]
+                fileout = outputdir+'/timingmodel-'+pn+'-page-1'
+
+                indices = np.flatnonzero(np.array(dopar == True))
+                f, axarr = plt.subplots(nrows=1, ncols=1)
+                makesubplot1d(axarr, chain[:,indices[0]])
+                fileout = outputdir+'/triplot'
+                plt.savefig(fileout+'.png')
+                plt.savefig(fileout+'.eps')
+                plt.close(fig)
+
+                dopar[ind] = False
+
 
     # Make a triplot of all the other parameters. But... do it per page. No more
-    # than 10 parameters on one page
+    # than 8 parameters on one page
     if np.sum(dopar) > 1:
         npagemax = 8
         npages = int(np.sum(dopar) / npagemax)
@@ -1147,7 +1225,7 @@ def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
             if np.sum(dopar) == 0:
                 print "ERROR: nothing else to plot left"
 
-            sys.stdout.write("\rMaking page {0} of {1}".format(\
+            sys.stdout.write("\rMaking left-over page {0} of {1}".format(\
                     pp+1, npages))
             sys.stdout.flush()
 
@@ -1183,7 +1261,7 @@ def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
             #plt.savefig(fileout+'.eps')
             #plt.close(fig)
         sys.stdout.write("\n")
-    else:
+    elif np.sum(dopar) == 1:
         # Make a single plot
         indices = np.flatnonzero(np.array(dopar == True))
         f, axarr = plt.subplots(nrows=1, ncols=1)
