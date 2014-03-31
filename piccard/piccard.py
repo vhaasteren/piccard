@@ -2463,10 +2463,10 @@ class ptaPulsar(object):
                     ndmodes=2*ndmf, threshold=threshold, tmpars=tmpars)
             if write != 'no':
                 h5df.addData(self.name, 'pic_Hcmat', self.Hcmat)
+                h5df.addData(self.name, 'pic_Gcmat', self.Gcmat)
 
                 if not noGmatWrite:
                     h5df.addData(self.name, 'pic_Gmat', self.Gmat)
-                    h5df.addData(self.name, 'pic_Gcmat', self.Gcmat)
                     h5df.addData(self.name, 'pic_Hmat', self.Hmat)
                     h5df.addData(self.name, 'pic_Homat', self.Homat)
                     h5df.addData(self.name, 'pic_Hocmat', self.Hocmat)
@@ -3209,7 +3209,9 @@ class ptaPulsar(object):
         # If compression is not done, but Hmat represents a compression matrix,
         # we need to re-evaluate the lot. Raise an error
         if not noGmat:
-            if (compression == 'None' or compression is None) and \
+            if compression == 'dont':
+                pass
+            elif (compression == 'None' or compression is None) and \
                     h5df.getShape(self.name, 'pic_Gmat')[1] != \
                     h5df.getShape(self.name, 'pic_Hmat')[1]:
                 raise ValueError("Compressed file detected. Re-calculating all quantities.")
@@ -3232,7 +3234,7 @@ class ptaPulsar(object):
                 #dontread=(memsave and not self.twoComponentNoise)))
             self.Fdmmat = np.array(h5df.getData(self.name, 'pic_Fdmmat', dontread=memsave))
             #self.Dmat = np.array(h5df.getData(self.name, 'pic_Dmat', dontread=memsave))
-            self.Dvec = np.array(h5df.getData(self.name, 'pic_Dvec', dontread=memsave))
+            self.Dvec = np.array(h5df.getData(self.name, 'pic_Dvec'))
             self.DF = np.array(h5df.getData(self.name, 'pic_DF', dontread=memsave))
             self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat', dontread=memsave))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))

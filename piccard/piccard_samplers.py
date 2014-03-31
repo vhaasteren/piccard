@@ -772,7 +772,7 @@ def makeSpectrumPage(ax, samples, freqs, mlchain, mlpso, txtfilename, \
     if banderror:
         srt = np.argsort(x)
         ax.plot(x[srt], yval[srt], 'k--', linewidth=3.0)
-        ax.fill_between(x[srt], yval[srt]-yerr[srt], yval[srt]+yerr[srt], \
+        ax.fill_between(x[srt], yval[srt]-0.5*yerr[srt], yval[srt]+0.5*yerr[srt], \
                 facecolor='0.7', edgecolor='k', linewidth=1.5)
         """
         line1 = plt.Line2D(range(10), range(10), linewidth=3.0, linestyle='--', color='k')
@@ -1273,7 +1273,7 @@ def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
 
 
 def reconstructDM(likob, chainfile, outputdir, burnin=0, thin=1, \
-        parametersfile=None, sampler='auto'):
+        parametersfile=None, sampler='auto', dmparlist=['DM1', 'DM2']):
     """
     Given an MCMC chain file, reconstruct the DM variations. We need the design
     matrix and the DM Fourier frequencies for this, so we'll have to use the
@@ -1290,6 +1290,9 @@ def reconstructDM(likob, chainfile, outputdir, burnin=0, thin=1, \
     @param sampler:     What method was used to generate the mcmc chain. 
                         (auto=autodetect). Options:('emcee', 'MultiNest',
                         'ptmcmc')
+    @param dmparlist:      Which timing model parameters to include for the DM
+                        variation reconstruction. 'DM' is omitted, because it is
+                        highly covariant with pulse shape evolution.
     """
     # Read the mcmc chain
     (llf, lpf, chainf, labels, pulsarid, pulsarname, stype, mlpso, mlpsopars) = \
@@ -1345,7 +1348,7 @@ def reconstructDM(likob, chainfile, outputdir, burnin=0, thin=1, \
             MDMind = []         # Index of DM design matrix
             MDMlabel = []       # Label that belongs to that parameter
             Mlabels = list(np.array(labels)[Mind])
-            for Mpar in ['DM', 'DM1', 'DM2']:
+            for Mpar in dmparlist:
                 if Mpar in Mlabels:
                     # We have it. Do some index magic, and add it to
                     # MDMind and MDMlabel

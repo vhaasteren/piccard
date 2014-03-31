@@ -9,8 +9,8 @@ import glob
 import sys
 
 from .piccard import *
+from .piccard_pso import *
 from . import PTMCMC_generic as ptmcmc
-
 
 """
 This file implements a blocked Gibbs sampler. Gibbs sampling is a special case
@@ -19,6 +19,46 @@ increase the mixing rate of the chain. We still use the PAL/PAL2 version of
 PTMCMC_generic to do the actual MCMC steps, but the steps are performed in
 parameter blocks.
 """
+
+
+def gibbs_loglikelihood(likob, parameters):
+    """
+    Within the Gibbs sampler, we would still like to have access to the
+    loglikelihood value, even though it is not necessarily used for the sampling
+    itself. This function evaluates the ll.
+
+    This function does not set any of the noise/correlation auxiliaries. It
+    assumes that has been done earlier in the Gibbs step. Also, it assumes the
+    Gibbsresiduals have been set properly.
+
+    @param likob:       The full likelihood object
+    @param parameters:  All the model parameters
+    @param coeffs:      List of all the Gibbs coefficients per pulsar
+
+    @return:            The log-likelihood
+    """
+
+    xi2 = 0
+    ldet = 0
+
+    for ii, psr in likob.ptapsrs:
+        # Before continuing, isn't it just possible to sum up all the
+        # conditionals? Must come down to the same thing, right? Just offset
+        # with the current values
+        pass
+
+    if 'design' in likob.gibbsmodel:
+        ntot += nms
+    if 'rednoise' in likob.gibbsmodel:
+        ntot += nfs
+    if 'dm' in likob.gibbsmodel:
+        ntot += nfdms
+    if 'jitter' in likob.gibbsmodel:
+        ntot += npus
+
+    return 0.0
+
+
 
 class pulsarNoiseLL(object):
     """
@@ -119,6 +159,9 @@ class pulsarNoiseLL(object):
 
         return bok
 
+    def logposterior(self, parameters):
+        return self.logprior(parameters) + self.loglikelihood(parameters)
+
     def dimensions(self):
         if len(self.vNvec) != len(self.vis_efac):
             raise ValueError("dimensions not set correctly")
@@ -184,6 +227,9 @@ class pulsarPSDLL(object):
             bok = 0
 
         return bok
+
+    def logposterior(self, parameters):
+        return self.logprior(parameters) + self.loglikelihood(parameters)
 
     def setNewData(self, a):
         self.a = a
@@ -278,6 +324,9 @@ class corrPSDLL(object):
 
         return bok
 
+    def logposterior(self, parameters):
+        return self.logprior(parameters) + self.loglikelihood(parameters)
+
     def setNewData(self, b, Scor_inv, Scor_ldet):
         """
         Set new data at the beginning of each small MCMC chain
@@ -371,6 +420,9 @@ class pulsarDetLL(object):
 
         return bok
 
+    def logposterior(self, parameters):
+        return self.logprior(parameters) + self.loglikelihood(parameters)
+
     def setSampler(self, sampler):
         self.sampler = sampler
 
@@ -421,11 +473,12 @@ def gibbs_prepare_loglik_N(likob, curpars):
 
     return loglik_N
 
-def gibbs_sample_loglik_N(likob, curpars, loglik_N):
+def gibbs_sample_loglik_N(likob, curpars, loglik_N, ml=False):
     """
     @param likob:       the full likelihood object
     @param curpars:     the current value of all non-Gibbs parameters
     @param loglik_N:    List of prepared likelihood/samplers for the noise
+    @param ml:          If True, return ML values (PSO), not a random sample
     """
     newpars = curpars.copy()
 
@@ -438,10 +491,26 @@ def gibbs_sample_loglik_N(likob, curpars, loglik_N):
         ndim = pnl.dimensions()
         p0 = newpars[pnl.pindex]
 
-        steps = ndim*20
-        pnl.sampler.sample(p0, steps, thin=1, burn=10)
+        if ml:
+            # Use a particle swarm optimiser
+            nparticles = int(ndim**2/2) + 5*ndim
+            maxiterations = 500
 
-        newpars[pnl.pindex] = pnl.sampler._chain[steps-1,:]
+            swarm = Swarm(nparticles, pnl.pmin, pnl.pmax, pnl.logposterior)
+
+            for ii in range(maxiterations):
+                swarm.iterateOnce()
+
+                if np.all(swarm.Rhat() < 1.02):
+                    # Convergence critirion satisfied!
+                    print "N converged in {0}".format(ii)
+                    break
+            newpars[pnl.pindex] = swarm.bestx
+        else:
+            steps = ndim*20
+            pnl.sampler.sample(p0, steps, thin=1, burn=10)
+
+            newpars[pnl.pindex] = pnl.sampler._chain[steps-1,:]
 
     return newpars
 
@@ -513,12 +582,13 @@ def gibbs_prepare_loglik_J(likob, curpars):
 
     return loglik_J
 
-def gibbs_sample_loglik_J(likob, a, curpars, loglik_J):
+def gibbs_sample_loglik_J(likob, a, curpars, loglik_J, ml=False):
     """
     @param likob:       the full likelihood object
     @param a:       list of arrays with all the Gibbs-only parameters
     @param curpars:     the current value of all non-Gibbs parameters
     @param loglik_J:    List of prepared likelihood/samplers for the correlated noise
+    @param ml:          If True, return ML values (PSO), not a random sample
     """
     newpars = curpars.copy()
 
@@ -555,12 +625,30 @@ def gibbs_sample_loglik_J(likob, a, curpars, loglik_J):
 
         # Number of dimensions really is 'just' 1, but do it anyway
         ndim = pnl.dimensions()
-        p0 = newpars[pnl.pindex]
 
-        steps = ndim*40
-        pnl.sampler.sample(p0, steps, thin=1, burn=10)
+        if ml:
+            # Use a particle swarm optimiser
+            nparticles = int(ndim**2/2) + 5*ndim
+            maxiterations = 500
 
-        newpars[pnl.pindex] = pnl.sampler._chain[steps-1,:]
+            swarm = Swarm(nparticles, pnl.pmin, pnl.pmax, pnl.logposterior)
+
+            for ii in range(maxiterations):
+                swarm.iterateOnce()
+
+                if np.all(swarm.Rhat() < 1.02):
+                    # Convergence critirion satisfied!
+                    print "J converged in {0}".format(ii)
+                    break
+
+            newpars[pnl.pindex] = swarm.bestx
+        else:
+            p0 = newpars[pnl.pindex]
+
+            steps = ndim*40
+            pnl.sampler.sample(p0, steps, thin=1, burn=10)
+
+            newpars[pnl.pindex] = pnl.sampler._chain[steps-1,:]
 
     return newpars
 
@@ -644,7 +732,7 @@ def gibbs_prepare_loglik_Phi(likob, curpars):
 
     return loglik_Phi
 
-def gibbs_sample_loglik_Phi_an(likob, a, curpars):
+def gibbs_sample_loglik_Phi_an(likob, a, curpars, ml=False):
     """
     Sample the Phi-loglikelihood conditional for the analytic parameters. The
     numerical (MCMC) parameters are done elsewhere
@@ -652,6 +740,7 @@ def gibbs_sample_loglik_Phi_an(likob, a, curpars):
     @param likob:   the full likelihood object
     @param a:       list of arrays with all the Gibbs-only parameters
     @param curpars: the current value of all non-Gibbs parameters
+    @param ml:      If True, return ML values, not a random sample
     """
     newpars = curpars.copy()
 
@@ -667,21 +756,26 @@ def gibbs_sample_loglik_Phi_an(likob, a, curpars):
 
                 # Loop over the frequencies
                 for jj in range(signal['ntotpars']):
-                    # We can sample directly from this distribution.
-                    # Prior domain:
-                    pmin = signal['pmin'][jj]
-                    pmax = signal['pmax'][jj]
-                    rhomin = 10**pmin
-                    rhomax = 10**pmax
-                    tau = 0.5*np.sum(a[ii][ntot+2*jj:ntot+2*jj+2]**2)
+                    if ml:
+                        tau = 0.5*np.sum(a[ii][ntot+2*jj:ntot+2*jj+2]**2)
+                        rhonew = 0.5 * tau
+                        newpars[signal['parindex']+jj] = np.log10(rhonew)
+                    else:
+                        # We can sample directly from this distribution.
+                        # Prior domain:
+                        pmin = signal['pmin'][jj]
+                        pmax = signal['pmax'][jj]
+                        rhomin = 10**pmin
+                        rhomax = 10**pmax
+                        tau = 0.5*np.sum(a[ii][ntot+2*jj:ntot+2*jj+2]**2)
 
-                    # Draw samples between rhomax and rhomin, according to
-                    # an exponential distribution
-                    scale = 1 - np.exp(tau*(1.0/rhomax-1.0/rhomin))
-                    eta = np.random.rand(1) * scale
-                    rhonew = -tau / (np.log(1-eta)-tau/rhomax)
+                        # Draw samples between rhomax and rhomin, according to
+                        # an exponential distribution
+                        scale = 1 - np.exp(tau*(1.0/rhomax-1.0/rhomin))
+                        eta = np.random.rand(1) * scale
+                        rhonew = -tau / (np.log(1-eta)-tau/rhomax)
 
-                    newpars[signal['parindex']+jj] = np.log10(rhonew)
+                        newpars[signal['parindex']+jj] = np.log10(rhonew)
             elif signal['pulsarind'] == ii and signal['stype'] == 'dmspectrum':
                 nms = likob.npm[ii]
                 nfs = likob.npf[ii]
@@ -695,34 +789,39 @@ def gibbs_sample_loglik_Phi_an(likob, a, curpars):
 
                 # Loop over the frequencies
                 for jj in range(signal['ntotpars']):
-                    # We can sample directly from this distribution.
-                    # Prior domain:
-                    pmin = signal['pmin'][jj]
-                    pmax = signal['pmax'][jj]
-                    rhomin = 10**pmin
-                    rhomax = 10**pmax
-                    tau = 0.5*np.sum(a[ii][ntot+2*jj:ntot+2*jj+2]**2)
+                    if ml:
+                        tau = 0.5*np.sum(a[ii][ntot+2*jj:ntot+2*jj+2]**2)
+                        rhonew = 0.5 * tau
+                        newpars[signal['parindex']+jj] = np.log10(rhonew)
+                    else:
+                        # We can sample directly from this distribution.
+                        # Prior domain:
+                        pmin = signal['pmin'][jj]
+                        pmax = signal['pmax'][jj]
+                        rhomin = 10**pmin
+                        rhomax = 10**pmax
+                        tau = 0.5*np.sum(a[ii][ntot+2*jj:ntot+2*jj+2]**2)
 
-                    # Draw samples between rhomax and rhomin, according to
-                    # an exponential distribution
-                    scale = 1 - np.exp(tau*(1.0/rhomax-1.0/rhomin))
-                    eta = np.random.rand(1) * scale
-                    rhonew = -tau / (np.log(1-eta)-tau/rhomax)
+                        # Draw samples between rhomax and rhomin, according to
+                        # an exponential distribution
+                        scale = 1 - np.exp(tau*(1.0/rhomax-1.0/rhomin))
+                        eta = np.random.rand(1) * scale
+                        rhonew = -tau / (np.log(1-eta)-tau/rhomax)
 
-                    newpars[signal['parindex']+jj] = np.log10(rhonew)
+                        newpars[signal['parindex']+jj] = np.log10(rhonew)
 
     return newpars
 
-def gibbs_sample_loglik_Phi(likob, a, curpars, loglik_PSD):
+def gibbs_sample_loglik_Phi(likob, a, curpars, loglik_PSD, ml=False):
     """
-    Sample the Phi-loglikelihood conditional. Some models can be done
-    analytically
+    Sample the Phi-loglikelihood conditional.
 
     @param likob:       the full likelihood object
     @param a:           list of arrays with all the Gibbs-only parameters
     @param curpars:     the current value of all non-Gibbs parameters
     @param loglik_PSD:  List of prepared likelihood/samplers for non-analytic
                         models
+    @param ml:          If True, return ML values (PSO), not a random sample
     """
     # First sample from the analytic signals
     newpars = gibbs_sample_loglik_Phi_an(likob, a, curpars)
@@ -732,12 +831,30 @@ def gibbs_sample_loglik_Phi(likob, a, curpars, loglik_PSD):
         # Update the sampler with the new Gibbs-coefficients
         psd.setNewData(a[psd.psrindex][psd.gindices])
         ndim = psd.dimensions()
-        p0 = newpars[psd.pindex:psd.pindex+ndim]
 
-        steps = ndim*40
-        psd.sampler.sample(p0, steps, thin=1, burn=10)
+        if ml:
+            # Use a particle swarm optimiser
+            nparticles = int(ndim**2/2) + 5*ndim
+            maxiterations = 500
 
-        newpars[psd.pindex:psd.pindex+ndim] = psd.sampler._chain[steps-1,:]
+            swarm = Swarm(nparticles, psd.pmin[psd.bvary], \
+                    psd.pmax[psd.bvary], psd.logposterior)
+
+            for ii in range(maxiterations):
+                swarm.iterateOnce()
+
+                if np.all(swarm.Rhat() < 1.02):
+                    # Convergence critirion satisfied!
+                    print "Phi converged in {0}".format(ii)
+                    break
+            newpars[psd.pindex:psd.pindex+ndim] = swarm.bestx
+        else:
+            p0 = newpars[psd.pindex:psd.pindex+ndim]
+
+            steps = ndim*40
+            psd.sampler.sample(p0, steps, thin=1, burn=10)
+
+            newpars[psd.pindex:psd.pindex+ndim] = psd.sampler._chain[steps-1,:]
 
     return newpars
 
@@ -787,7 +904,7 @@ def gibbs_prepare_loglik_Det(likob, curpars):
     return loglik_Det
 
 
-def gibbs_sample_loglik_Det(likob, curpars, loglik_Det):
+def gibbs_sample_loglik_Det(likob, curpars, loglik_Det, ml=False):
     """
     Sample the Phi-loglikelihood conditional. Some models can be done
     analytically
@@ -795,6 +912,7 @@ def gibbs_sample_loglik_Det(likob, curpars, loglik_Det):
     @param likob:       the full likelihood object
     @param curpars:     the current value of all non-Gibbs parameters
     @param loglik_Det:  List of prepared likelihood/samplers
+    @param ml:      If True, return ML values, not a random sample
     """
 
     # First sample from the analytic signals
@@ -804,12 +922,30 @@ def gibbs_sample_loglik_Det(likob, curpars, loglik_Det):
     for pdl in loglik_Det:
         ndim = pdl.dimensions()
         pdl.pstart = curpars.copy()
-        p0 = pdl.pstart[pdl.mask]
 
-        steps = ndim*20
-        pdl.sampler.sample(p0, steps, thin=1, burn=10)
+        if ml:
+            # Use a particle swarm optimiser
+            nparticles = int(ndim**2/2) + 5*ndim
+            maxiterations = 500         # Max iterations
 
-        newpars[pdl.mask] = pdl.sampler._chain[steps-1,:]
+            swarm = Swarm(nparticles, pdl.pmin[pdl.bvary], \
+                    pdl.pmax[pdl.bvary], pdl.logposterior)
+
+            for ii in range(maxiterations):
+                swarm.iterateOnce()
+
+                if np.all(swarm.Rhat() < 1.02):
+                    # Convergence critirion satisfied!
+                    print "Det converged in {0}".format(ii)
+                    break
+            newpars[pdl.mask] = swarm.bestx
+        else:
+            p0 = pdl.pstart[pdl.mask]
+
+            steps = ndim*20
+            pdl.sampler.sample(p0, steps, thin=1, burn=10)
+
+            newpars[pdl.mask] = pdl.sampler._chain[steps-1,:]
 
     return newpars
 
@@ -879,7 +1015,7 @@ def gibbs_prepare_loglik_corrPhi(likob, curpars):
     return loglik_corrPSD
 
 
-def gibbs_sample_loglik_corrPhi(likob, a, curpars, loglik_corrPSD):
+def gibbs_sample_loglik_corrPhi(likob, a, curpars, loglik_corrPSD, ml=False):
     """
     Sample the correlated Phi-loglikelihood conditional. Some models can be done
     analytically (latter not yet implemented)
@@ -889,6 +1025,7 @@ def gibbs_sample_loglik_corrPhi(likob, a, curpars, loglik_corrPSD):
     @param curpars:     the current value of all non-Gibbs parameters
     @param loglik_PSD:  List of prepared likelihood/samplers for non-analytic
                         models
+    @param ml:          If True, return ML values (PSO), not a random sample
     """
     newpars = curpars.copy()
 
@@ -900,12 +1037,30 @@ def gibbs_sample_loglik_corrPhi(likob, a, curpars, loglik_corrPSD):
         psd.setNewData(b, likob.Scor_inv, likob.Scor_ldet)
         ndim = psd.dimensions()
 
-        p0 = newpars[psd.pindex:psd.pindex+ndim]
+        if ml:
+            # Use a particle swarm optimiser
+            nparticles = int(ndim**2/2) + 5*ndim
+            maxiterations = 500
 
-        steps = ndim*40
-        psd.sampler.sample(p0, steps, thin=1, burn=10)
+            swarm = Swarm(nparticles, psd.pmin[psd.bvary], \
+                    psd.pmax[psd.bvary], psd.logposterior)
 
-        newpars[psd.pindex:psd.pindex+ndim] = psd.sampler._chain[steps-1,:]
+            for ii in range(maxiterations):
+                swarm.iterateOnce()
+
+                if np.all(swarm.Rhat() < 1.02):
+                    # Convergence critirion satisfied!
+                    print "corrPhi converged in {0}".format(ii)
+                    break
+            newpars[psd.pindex:psd.pindex+ndim] = swarm.bestx
+        else:
+            # Use an adaptive MCMC
+            p0 = newpars[psd.pindex:psd.pindex+ndim]
+
+            steps = ndim*40
+            psd.sampler.sample(p0, steps, thin=1, burn=10)
+
+            newpars[psd.pindex:psd.pindex+ndim] = psd.sampler._chain[steps-1,:]
 
     return newpars
 
@@ -1011,7 +1166,7 @@ def gibbs_psr_corrs(likob, psrindex, a):
 
 
 
-def gibbs_sample_a(likob, preva=None):
+def gibbs_sample_a(likob, preva=None, ml=False):
     """
     Assume that all the noise parameters have been set (N, Phi, Theta). Given
     that, return a sample from the coefficient/timing model parameters
@@ -1019,6 +1174,7 @@ def gibbs_sample_a(likob, preva=None):
     @param likob:   the full likelihood object
     @param preva:   the previous list of Gibbs coefficients. Defaults to all
                     zeros
+    @param ml:      If True, return ML values, not a random sample
 
     @return: list of coefficients/timing model parameters per pulsar
     """
@@ -1117,7 +1273,10 @@ def gibbs_sample_a(likob, preva=None):
 
         # Get a sample from the coefficient distribution
         aadd = np.dot(Li, np.random.randn(Li.shape[0]))
-        addcoefficients = ahat + aadd
+        if ml:
+            addcoefficients = ahat
+        else:
+            addcoefficients = ahat + aadd
 
         psr.gibbscoefficients = addcoefficients.copy()
         psr.gibbscoefficients[:psr.Mmat.shape[1]] = np.dot(psr.tmpConv, \
@@ -1152,6 +1311,116 @@ def gibbsQuantities(likob, parameters):
         likob.updateDetSources(parameters)
 
 
+def MLGibbs(likob, chainsdir, tol=1.0e-3, noWrite=False):
+    """
+    Run an iterative maximizer, utilising the blocked Gibbs likelihood
+    representation, that iteratively uses analytic expressions and a Particle
+    Swarm Optimiser.
+
+    @param likob:       The likelihood object, containing everything
+    @param chainsdir:   Where to save the MCMC chain
+    @param tol:         Fractional tolerance in parameters / stopping criterion
+    @param noWrite:     If True, do not write results to file
+    """
+    if not likob.likfunc in ['gibbs']:
+        raise ValueError("Likelihood not initialised for Gibbs sampling")
+
+    if not noWrite:
+        mlfilename = chainsdir + '/pso.txt'
+
+    # Save the description of all the parameters
+    likob.saveModelParameters(chainsdir + '/ptparameters.txt')
+
+    ndim = likob.dimensions         # The non-Gibbs model parameters
+    ncoeffs = np.sum(likob.npz)     # The Gibbs-only parameters/coefficients
+    pars = likob.pstart.copy()      # The Gibbs
+
+    # Make a list of all the blocked signal samplers (except for the coefficient
+    # samplers)
+    loglik_N = gibbs_prepare_loglik_N(likob, pars)
+    loglik_PSD = gibbs_prepare_loglik_Phi(likob, pars)
+    loglik_J = gibbs_prepare_loglik_J(likob, pars)
+    loglik_Det = gibbs_prepare_loglik_Det(likob, pars)
+    loglik_corrPSD = gibbs_prepare_loglik_corrPhi(likob, pars)
+
+    # The gibbs coefficients will be set by gibbs_sample_a
+    a = None
+
+    mlpars = (1 + 10*tol) * pars
+    fullml = np.zeros(ndim + ncoeffs)
+
+    # Keep track of iterations
+    iter = 0
+
+    while not np.all( (mlpars - pars) / pars < tol):
+        # Not converged yet
+        mlpars = pars.copy()
+        doneIteration = False
+
+        # At iteration:
+        iter += 1
+        sys.stdout.write('\rParticle Swarm Optimise iteration: {0}  (max = {1})'.\
+                        format(iter, np.max(mlpars - pars)/pars))
+        sys.stdout.flush()
+
+        # Calculate the required likelihood quantities
+        gibbsQuantities(likob, pars)
+
+        # If necessary, invert the correlation matrix Svec & Scor with Ffreqs_gw
+        # and Fmat_gw
+        if 'corrsig' in likob.gibbsmodel:
+            gibbs_prepare_correlations(likob)
+
+        while not doneIteration:
+            try:
+                # Generate new coefficients
+                a = gibbs_sample_a(likob, a, ml=True)
+
+                fullml[ndim:] = np.hstack(a)
+
+                doneIteration = True
+
+            except np.linalg.LinAlgError:
+                # Why does SVD sometimes not converge?
+                # Try different values...
+                iter += 1
+
+                if iter > 100:
+                    print "WARNING: numpy.linalg problems"
+
+            # Generate new white noise parameers
+            pars = gibbs_sample_loglik_N(likob, pars, loglik_N, ml=True)
+
+            # Generate new red noise parameters
+            pars = gibbs_sample_loglik_Phi(likob, a, pars, loglik_PSD, ml=True)
+
+            # Generate new correlated equad/jitter parameters
+            pars = gibbs_sample_loglik_J(likob, a, pars, loglik_J, ml=True)
+
+            # If we have 'm, sample from the deterministic sources
+            pars = gibbs_sample_loglik_Det(likob, pars, loglik_Det, ml=True)
+
+            if 'corrsig' in likob.gibbsmodel and likob.have_gibbs_corr:
+                # Generate new GWB parameters
+                pars = gibbs_sample_loglik_corrPhi(likob, a, pars, loglik_corrPSD, ml=True)
+
+        fullml[:ndim] = pars
+
+    # Great, found a ML value!
+    sys.stdout.write("PSO maximum found!\n")
+
+    # Open the file in append mode
+    if not noWrite:
+        mlfile = open(mlfilename, 'w')
+
+        mlfile.write('\t'.join(["%.17e"%\
+                (fullml[kk]) for kk in range(ndim+ncoeffs)]))
+        mlfile.write('\n')
+        mlfile.close()
+
+    return fullml
+
+
 
 def RunGibbs(likob, steps, chainsdir, noWrite=False):
     """
@@ -1177,6 +1446,7 @@ def RunGibbs(likob, steps, chainsdir, noWrite=False):
     @param likob:       The likelihood object, containing everything
     @param steps:       The number of full-circle Gibbs steps to take
     @param chainsdir:   Where to save the MCMC chain
+    @param noWrite:     If True, do not write results to file
     """
     if not likob.likfunc in ['gibbs']:
         raise ValueError("Likelihood not initialised for Gibbs sampling")
