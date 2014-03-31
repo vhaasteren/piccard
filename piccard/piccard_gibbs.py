@@ -65,43 +65,35 @@ class pulsarNoiseLL(object):
     This class represents the likelihood function in the block with
     white-noise-only parameters.
     """
-    residuals = None        # The residuals
-    Nvec = None             # The full noise vector
-    vNvec = []              # Which residuals a parameter affects (varying)
-    fNvec = []              # Which residuals a parameter affects (fixed)
-    vis_efac = []           # Is it an efac, or an equad?
-    fis_efac = []           # Is it an efac, or an equad?
-    pmin = None             # The minimum value for the parameters (varying)
-    pmax = None             # The maximum value for the parameters (varying)
-    pstart = None           # The start value for the parameters (varying)
-    pwidth = None           # The width value for the parameters (varying)
-    pindex = None           # Index of the parameters
-    psrindex = None         # Index of the pulsar
-    fval = None             # The current value for the parameters (fixed)
-    sampler = None          # Copy of the MCMC sampler
-    maskJvec = None         # To which avetoas does this Jvec apply? (only jitter)
 
     def __init__(self, residuals, psrindex, maskJvec=None):
         """
         @param residuals:   Initialise the residuals we'll work with
         @param psrindex:    Index of the pulsar this noise applies to
         """
-        self.vNvec = []
-        self.fNvec = []
-        self.vis_efac = []
-        self.fis_efac = []
+        self.vNvec = []                             # Mask residuals (varying)
+        self.fNvec = []                             # Mask residuals (fixed)
+        self.vis_efac = []                          # Is it an efac? (varying)
+        self.fis_efac = []                          # Is it an equad (fixed)
 
-        self.residuals = residuals
-        self.Nvec = np.zeros(len(residuals))
-        self.pmin = np.zeros(0)
-        self.pmax = np.zeros(0)
-        self.pstart = np.zeros(0)
-        self.pwidth = np.zeros(0)
-        self.fval = np.zeros(0)
-        self.pindex = np.zeros(0, dtype=np.int)
+        self.residuals = residuals                  # The residuals
+        self.Nvec = np.zeros(len(residuals))        # Full noise vector
+        self.pmin = np.zeros(0)                     # Minimum of prior domain
+        self.pmax = np.zeros(0)                     # Maximum of prior domain
+        self.pstart = np.zeros(0)                   # Start position
+        self.pwidth = np.zeros(0)                   # Initial step-size
+        self.fval = np.zeros(0)                     # Current value (non-varying)
+        self.pindex = np.zeros(0, dtype=np.int)     # Index of parameters
 
-        self.psrindex = psrindex
-        self.maskJvec = maskJvec
+        self.psrindex = psrindex                    # Inde xof pulsar
+        self.maskJvec = maskJvec                    # Selection mask Jvec
+
+        self.sampler = None                         # The PTMCMC sampler
+        self.singleChain = None     # How a long a ginle run is
+        self.fullChain = None       # Maximum of total chain
+        self.curStep = 0            # Current iteration
+        self.covUpdate = 400        # Number of iterations between AM covariance
+                                    # updates
 
 
     def addSignal(self, Nvec, is_efac, pmin, pmax, pstart, pwidth, index, fixed=False):
@@ -126,8 +118,92 @@ class pulsarNoiseLL(object):
             self.fis_efac.append(is_efac)
             self.fval = np.append(self.fval, pstart)
 
-    def setSampler(self, sampler):
-        self.sampler = sampler
+    def initSampler(self, singleChain=20, fullChain=20000, covUpdate=400):
+        """
+        Initialise the PTMCMC sampler for future repeated use
+
+        @param singleChain:     Lenth of a single small MCMC chain
+        @param fullChain:       Lenth of full chain that is used for
+                                cov-estimates
+        @param covUpdate:       Number of iterations before cov updates
+                                (should be multiple of singleChain)
+        """
+        ndim = self.dimensions()
+        cov = np.diag(self.pwidth**2)
+        self.sampler = ptmcmc.PTSampler(ndim, self.loglikelihood, \
+                self.logprior, cov=cov, outDir='./gibbs-chains/', \
+                verbose=False, nowrite=True)
+
+        self.singleChain = singleChain
+        self.fullChain = fullChain
+        self.curStep = 0
+        self.covUpdate = covUpdate
+
+    def runSampler(self, p0):
+        """
+        Run the MCMC sampler, starting from position p0, for self.singleChain
+        steps. Note: the covariance update length is also used as a length for
+        the differential evolution burn-in. There is no chain-thinning
+
+        @param p0:  Current value in parameter space
+
+        @return:    New/latest value in parameter space
+        """
+
+        # Run the sampler for a small minichain
+        self.sampler.sample(p0, self.curStep+self.singleChain, \
+                maxIter=self.fullChain, covUpdate=self.covUpdate, \
+                burn=self.covUpdate, i0=self.curStep, thin=1)
+
+        self.curStep += self.singleChain
+        retPos = self.sampler._chain[self.curStep-1, :]
+
+        # Subtract the mean off of the just-created samples. And because
+        # covUpdate is supposed to be a multiple of singleChain, this will not
+        # mess up the Adaptive Metropolis shizzle
+        self.sampler._chain[self.curStep-self.singleChain:self.curStep, :] = \
+                self.sampler._chain[self.curStep-self.singleChain:self.curStep, :] - \
+                np.mean(self.sampler._chain[self.curStep-self.singleChain:self.curStep, :])
+
+        # Check whether we're almost at the end of the chain
+        if self.fullChain - self.curStep <= self.covUpdate:
+            midStep = int(self.fullChain / 2)
+
+            # Copy the end half of the chain to the beginning
+            self.sampler._lnprob[:self.curStep-midStep] = \
+                    self.sampler._lnprob[midStep:self.curStep]
+            self.sampler._lnlike[:self.curStep-midStep] = \
+                    self.sampler._lnlike[midStep:self.curStep]
+            self.sampler._chain[:self.curStep-midStep, :] = \
+                    self.sampler._chain[midStep:self.curStep, :]
+            self.sampler._AMbuffer[:self.curStep-midStep, :] = \
+                    self.sampler._AMbuffer[midStep:self.curStep, :]
+            self.sampler._DEbuffer = self.sampler._AMbuffer[0:self.covUpdate]
+
+            # We are now at half the chain-length again
+            self.curStep = self.curStep - midStep
+
+        return retPos
+
+    def runPSO(self):
+        """
+        Run a particle swarm optimiser on the posterior, and return the optimum
+        """
+        ndim = self.dimensions()
+        nparticles = int(ndim**2/2) + 5*ndim
+        maxiterations = 500
+
+        swarm = Swarm(nparticles, self.pmin, self.pmax, self.logposterior)
+
+        for ii in range(maxiterations):
+            swarm.iterateOnce()
+
+            if np.all(swarm.Rhat() < 1.02):
+                # Convergence critirion satisfied!
+                # print "N converged in {0}".format(ii)
+                break
+
+        return swarm.bestx
 
     def setNewData(self, residuals):
         self.residuals = residuals
@@ -174,16 +250,6 @@ class pulsarPSDLL(object):
     Like pulsarNoiseLL, but for the power spectrum coefficients. Expects the
     matrix to be diagonal. Is always a function of amplitude and spectral index
     """
-    a = None
-    pmin = None
-    pmax = None
-    pstart = None
-    pwidth = None
-    pindex = None
-    bvary = None
-    sampler = None
-    gindices = None
-    psrindex = None
 
     def __init__(self, a, freqs, Tmax, pmin, pmax, pstart, pwidth, index, \
             psrindex, gindices, bvary):
@@ -211,6 +277,105 @@ class pulsarPSDLL(object):
         self.bvary = bvary
         self.Tmax = Tmax
 
+        self.sampler = None                         # The PTMCMC sampler
+        self.singleChain = None     # How a long a ginle run is
+        self.fullChain = None       # Maximum of total chain
+        self.curStep = 0            # Current iteration
+        self.covUpdate = 400        # Number of iterations between AM covariance
+
+    def initSampler(self, singleChain=20, fullChain=20000, covUpdate=400):
+        """
+        Initialise the PTMCMC sampler for future repeated use
+
+        @param singleChain:     Lenth of a single small MCMC chain
+        @param fullChain:       Lenth of full chain that is used for
+                                cov-estimates
+        @param covUpdate:       Number of iterations before cov updates
+                                (should be multiple of singleChain)
+        """
+        ndim = self.dimensions()
+        cov = np.diag(self.pwidth[self.bvary]**2)
+        self.sampler = ptmcmc.PTSampler(ndim, self.loglikelihood, \
+                self.logprior, cov=cov, outDir='./gibbs-chains/', \
+                verbose=False, nowrite=True)
+
+        self.singleChain = singleChain
+        self.fullChain = fullChain
+        self.curStep = 0
+        self.covUpdate = covUpdate
+
+
+    def runSampler(self, p0):
+        """
+        Run the MCMC sampler, starting from position p0, for self.singleChain
+        steps. Note: the covariance update length is also used as a length for
+        the differential evolution burn-in. There is no chain-thinning
+
+        @param p0:  Current value in parameter space
+
+        @return:    New/latest value in parameter space
+        """
+
+        # Run the sampler for a small minichain
+        self.sampler.sample(p0, self.curStep+self.singleChain, \
+                maxIter=self.fullChain, covUpdate=self.covUpdate, \
+                burn=self.covUpdate, i0=self.curStep, thin=1)
+
+        self.curStep += self.singleChain
+        retPos = self.sampler._chain[self.curStep-1, :]
+
+        # Subtract the mean off of the just-created samples. And because
+        # covUpdate is supposed to be a multiple of singleChain, this will not
+        # mess up the Adaptive Metropolis shizzle
+        self.sampler._chain[self.curStep-self.singleChain:self.curStep, :] = \
+                self.sampler._chain[self.curStep-self.singleChain:self.curStep, :] - \
+                np.mean(self.sampler._chain[self.curStep-self.singleChain:self.curStep, :])
+
+        # Check whether we're almost at the end of the chain
+        if self.fullChain - self.curStep <= self.covUpdate:
+            midStep = int(self.fullChain / 2)
+
+            # Copy the end half of the chain to the beginning
+            self.sampler._lnprob[:self.curStep-midStep] = \
+                    self.sampler._lnprob[midStep:self.curStep]
+            self.sampler._lnlike[:self.curStep-midStep] = \
+                    self.sampler._lnlike[midStep:self.curStep]
+            self.sampler._chain[:self.curStep-midStep, :] = \
+                    self.sampler._chain[midStep:self.curStep, :]
+            self.sampler._AMbuffer[:self.curStep-midStep, :] = \
+                    self.sampler._AMbuffer[midStep:self.curStep, :]
+            self.sampler._DEbuffer = self.sampler._AMbuffer[0:self.covUpdate]
+
+            # We are now at half the chain-length again
+            self.curStep = self.curStep - midStep
+
+        return retPos
+
+    def runPSO(self):
+        """
+        Run a particle swarm optimiser on the posterior, and return the optimum
+        """
+        ndim = self.dimensions()
+        nparticles = int(ndim**2/2) + 5*ndim
+        maxiterations = 500
+
+        swarm = Swarm(nparticles, self.pmin[self.bvary], self.pmax[self.bvary], self.logposterior)
+
+        for ii in range(maxiterations):
+            swarm.iterateOnce()
+
+            if np.all(swarm.Rhat() < 1.02):
+                # Convergence critirion satisfied!
+                # print "N converged in {0}".format(ii)
+                break
+
+        return swarm.bestx
+
+
+
+    def setNewData(self, a):
+        self.a = a
+
     def loglikelihood(self, parameters):
         pars = self.pstart.copy()
         pars[self.bvary] = parameters
@@ -231,12 +396,6 @@ class pulsarPSDLL(object):
     def logposterior(self, parameters):
         return self.logprior(parameters) + self.loglikelihood(parameters)
 
-    def setNewData(self, a):
-        self.a = a
-
-    def setSampler(self, sampler):
-        self.sampler = sampler
-
     def dimensions(self):
         return np.sum(self.bvary)
 
@@ -246,21 +405,6 @@ class corrPSDLL(object):
     """
     Like pulsarPSDLL, but now for correlated signals.
     """
-    b = None
-    pmin = None
-    pmax = None
-    pstart = None
-    pwidth = None
-    pindex = None
-    bvary = None
-    sampler = None
-    gindices = None
-    psrindex = None
-
-    Scor_inv = None
-    Scor_ldet = None
-
-    allPsrSame = False
 
     def __init__(self, b, freqs, Tmax, pmin, pmax, pstart, pwidth, index, \
             psrindex, gindices, bvary):
@@ -288,6 +432,133 @@ class corrPSDLL(object):
         self.gindices = gindices
         self.bvary = bvary
         self.Tmax = Tmax
+
+        self.allPsrSame = False
+        self.Scor_inv = None
+        self.Scor_ldet = None
+
+        self.sampler = None                         # The PTMCMC sampler
+        self.singleChain = None     # How a long a ginle run is
+        self.fullChain = None       # Maximum of total chain
+        self.curStep = 0            # Current iteration
+        self.covUpdate = 400        # Number of iterations between AM covariance
+
+
+    def initSampler(self, singleChain=20, fullChain=20000, covUpdate=400):
+        """
+        Initialise the PTMCMC sampler for future repeated use
+
+        @param singleChain:     Lenth of a single small MCMC chain
+        @param fullChain:       Lenth of full chain that is used for
+                                cov-estimates
+        @param covUpdate:       Number of iterations before cov updates
+                                (should be multiple of singleChain)
+        """
+        ndim = self.dimensions()
+        cov = np.diag(self.pwidth[self.bvary]**2)
+        self.sampler = ptmcmc.PTSampler(ndim, self.loglikelihood, \
+                self.logprior, cov=cov, outDir='./gibbs-chains/', \
+                verbose=False, nowrite=True)
+
+        self.singleChain = singleChain
+        self.fullChain = fullChain
+        self.curStep = 0
+        self.covUpdate = covUpdate
+
+    def runSampler(self, p0):
+        """
+        Run the MCMC sampler, starting from position p0, for self.singleChain
+        steps. Note: the covariance update length is also used as a length for
+        the differential evolution burn-in. There is no chain-thinning
+
+        @param p0:  Current value in parameter space
+
+        @return:    New/latest value in parameter space
+        """
+
+        # Run the sampler for a small minichain
+        self.sampler.sample(p0, self.curStep+self.singleChain, \
+                maxIter=self.fullChain, covUpdate=self.covUpdate, \
+                burn=self.covUpdate, i0=self.curStep, thin=1)
+
+        self.curStep += self.singleChain
+        retPos = self.sampler._chain[self.curStep-1, :]
+
+        # Subtract the mean off of the just-created samples. And because
+        # covUpdate is supposed to be a multiple of singleChain, this will not
+        # mess up the Adaptive Metropolis shizzle
+        self.sampler._chain[self.curStep-self.singleChain:self.curStep, :] = \
+                self.sampler._chain[self.curStep-self.singleChain:self.curStep, :] - \
+                np.mean(self.sampler._chain[self.curStep-self.singleChain:self.curStep, :])
+
+        # Check whether we're almost at the end of the chain
+        if self.fullChain - self.curStep <= self.covUpdate:
+            midStep = int(self.fullChain / 2)
+
+            # Copy the end half of the chain to the beginning
+            self.sampler._lnprob[:self.curStep-midStep] = \
+                    self.sampler._lnprob[midStep:self.curStep]
+            self.sampler._lnlike[:self.curStep-midStep] = \
+                    self.sampler._lnlike[midStep:self.curStep]
+            self.sampler._chain[:self.curStep-midStep, :] = \
+                    self.sampler._chain[midStep:self.curStep, :]
+            self.sampler._AMbuffer[:self.curStep-midStep, :] = \
+                    self.sampler._AMbuffer[midStep:self.curStep, :]
+            self.sampler._DEbuffer = self.sampler._AMbuffer[0:self.covUpdate]
+
+            # We are now at half the chain-length again
+            self.curStep = self.curStep - midStep
+
+        return retPos
+
+    def runPSO(self):
+        """
+        Run a particle swarm optimiser on the posterior, and return the optimum
+        """
+        ndim = self.dimensions()
+        nparticles = int(ndim**2/2) + 5*ndim
+        maxiterations = 500
+
+        swarm = Swarm(nparticles, self.pmin[self.bvary], self.pmax[self.bvary], self.logposterior)
+
+        for ii in range(maxiterations):
+            swarm.iterateOnce()
+
+            if np.all(swarm.Rhat() < 1.02):
+                # Convergence critirion satisfied!
+                # print "N converged in {0}".format(ii)
+                break
+
+        return swarm.bestx
+
+
+    def setNewData(self, b, Scor_inv, Scor_ldet):
+        """
+        Set new data at the beginning of each small MCMC chain
+
+        @param b:           New Gibbs modes
+        @param Scor_inv:    New pulsar correlation inverse
+        @param Scor_ldet:   New pulsar correlation log-det
+        """
+        self.b = b
+        self.Scor_inv = Scor_inv
+        self.Scor_ldet = Scor_ldet
+
+        self.numPsrFreqs = []
+        self.freqmask = np.zeros((len(self.b), len(self.freqs)), dtype=np.bool)
+        self.freqb = np.zeros((len(self.b), len(self.freqs)))
+
+        # Make masks that show which pulsar has how many frequencies
+        for ii in range(len(self.b)):
+            self.numPsrFreqs.append(len(self.b[ii]))
+            self.freqmask[ii,:len(self.b[ii])] = True
+
+        for ii in range(len(self.b)):
+            for jj in range(len(self.freqs)):
+                if self.freqmask[ii, jj]:
+                    self.freqb[ii, jj] = self.b[ii][jj]
+
+        self.allPsrSame = np.all(freqmask)
 
     def loglikelihood(self, parameters):
         pars = self.pstart.copy()
@@ -327,38 +598,6 @@ class corrPSDLL(object):
     def logposterior(self, parameters):
         return self.logprior(parameters) + self.loglikelihood(parameters)
 
-    def setNewData(self, b, Scor_inv, Scor_ldet):
-        """
-        Set new data at the beginning of each small MCMC chain
-
-        @param b:           New Gibbs modes
-        @param Scor_inv:    New pulsar correlation inverse
-        @param Scor_ldet:   New pulsar correlation log-det
-        """
-        self.b = b
-        self.Scor_inv = Scor_inv
-        self.Scor_ldet = Scor_ldet
-
-        self.numPsrFreqs = []
-        self.freqmask = np.zeros((len(self.b), len(self.freqs)), dtype=np.bool)
-        self.freqb = np.zeros((len(self.b), len(self.freqs)))
-
-        # Make masks that show which pulsar has how many frequencies
-        for ii in range(len(self.b)):
-            self.numPsrFreqs.append(len(self.b[ii]))
-            self.freqmask[ii,:len(self.b[ii])] = True
-
-        for ii in range(len(self.b)):
-            for jj in range(len(self.freqs)):
-                if self.freqmask[ii, jj]:
-                    self.freqb[ii, jj] = self.b[ii][jj]
-
-        self.allPsrSame = np.all(freqmask)
-
-
-    def setSampler(self, sampler):
-        self.sampler = sampler
-
     def dimensions(self):
         return np.sum(self.bvary)
 
@@ -391,6 +630,102 @@ class pulsarDetLL(object):
         self.pwidth = pwidth
         self.bvary = bvary
 
+        self.sampler = None                         # The PTMCMC sampler
+        self.singleChain = None     # How a long a ginle run is
+        self.fullChain = None       # Maximum of total chain
+        self.curStep = 0            # Current iteration
+        self.covUpdate = 400        # Number of iterations between AM covariance
+
+    def initSampler(self, singleChain=20, fullChain=20000, covUpdate=400):
+        """
+        Initialise the PTMCMC sampler for future repeated use
+
+        @param singleChain:     Lenth of a single small MCMC chain
+        @param fullChain:       Lenth of full chain that is used for
+                                cov-estimates
+        @param covUpdate:       Number of iterations before cov updates
+                                (should be multiple of singleChain)
+        """
+        ndim = self.dimensions()
+        cov = np.diag(self.pwidth[self.bvary]**2)
+        self.sampler = ptmcmc.PTSampler(ndim, self.loglikelihood, \
+                self.logprior, cov=cov, outDir='./gibbs-chains/', \
+                verbose=False, nowrite=True)
+
+        self.singleChain = singleChain
+        self.fullChain = fullChain
+        self.curStep = 0
+        self.covUpdate = covUpdate
+
+
+    def runSampler(self, p0):
+        """
+        Run the MCMC sampler, starting from position p0, for self.singleChain
+        steps. Note: the covariance update length is also used as a length for
+        the differential evolution burn-in. There is no chain-thinning
+
+        @param p0:  Current value in parameter space
+
+        @return:    New/latest value in parameter space
+        """
+
+        # Run the sampler for a small minichain
+        self.sampler.sample(p0, self.curStep+self.singleChain, \
+                maxIter=self.fullChain, covUpdate=self.covUpdate, \
+                burn=self.covUpdate, i0=self.curStep, thin=1)
+
+        self.curStep += self.singleChain
+        retPos = self.sampler._chain[self.curStep-1, :]
+
+        # Subtract the mean off of the just-created samples. And because
+        # covUpdate is supposed to be a multiple of singleChain, this will not
+        # mess up the Adaptive Metropolis shizzle
+        self.sampler._chain[self.curStep-self.singleChain:self.curStep, :] = \
+                self.sampler._chain[self.curStep-self.singleChain:self.curStep, :] - \
+                np.mean(self.sampler._chain[self.curStep-self.singleChain:self.curStep, :])
+
+        # Check whether we're almost at the end of the chain
+        if self.fullChain - self.curStep <= self.covUpdate:
+            midStep = int(self.fullChain / 2)
+
+            # Copy the end half of the chain to the beginning
+            self.sampler._lnprob[:self.curStep-midStep] = \
+                    self.sampler._lnprob[midStep:self.curStep]
+            self.sampler._lnlike[:self.curStep-midStep] = \
+                    self.sampler._lnlike[midStep:self.curStep]
+            self.sampler._chain[:self.curStep-midStep, :] = \
+                    self.sampler._chain[midStep:self.curStep, :]
+            self.sampler._AMbuffer[:self.curStep-midStep, :] = \
+                    self.sampler._AMbuffer[midStep:self.curStep, :]
+            self.sampler._DEbuffer = self.sampler._AMbuffer[0:self.covUpdate]
+
+            # We are now at half the chain-length again
+            self.curStep = self.curStep - midStep
+
+        return retPos
+
+    def runPSO(self):
+        """
+        Run a particle swarm optimiser on the posterior, and return the optimum
+        """
+        ndim = self.dimensions()
+        nparticles = int(ndim**2/2) + 5*ndim
+        maxiterations = 500
+
+        swarm = Swarm(nparticles, self.pmin[self.bvary], self.pmax[self.bvary], self.logposterior)
+
+        for ii in range(maxiterations):
+            swarm.iterateOnce()
+
+            if np.all(swarm.Rhat() < 1.02):
+                # Convergence critirion satisfied!
+                # print "N converged in {0}".format(ii)
+                break
+
+        return swarm.bestx
+
+
+
     def loglikelihood(self, parameters):
         """
         Calculate the conditional likelihood, as a function of the deterministic
@@ -422,9 +757,6 @@ class pulsarDetLL(object):
 
     def logposterior(self, parameters):
         return self.logprior(parameters) + self.loglikelihood(parameters)
-
-    def setSampler(self, sampler):
-        self.sampler = sampler
 
     def dimensions(self):
         return np.sum(self.bvary)
@@ -460,16 +792,10 @@ def gibbs_prepare_loglik_N(likob, curpars):
 
 
         temp = pnl.loglikelihood(pnl.pstart)
-
-        #"""
-        # Run a tiny MCMC of one correlation length, and return the parameters
         ndim = pnl.dimensions()
-        cov = np.diag(pnl.pwidth**2)
-        p0 = pnl.pstart
-        sampler = ptmcmc.PTSampler(ndim, pnl.loglikelihood, pnl.logprior, cov=cov, \
-                outDir='./gibbs-chains/', verbose=False, nowrite=True)
 
-        pnl.setSampler(sampler)
+        pnl.initSampler(singleChain=ndim*20, fullChain=ndim*8000, \
+                covUpdate=ndim*400)
 
     return loglik_N
 
@@ -488,29 +814,11 @@ def gibbs_sample_loglik_N(likob, curpars, loglik_N, ml=False):
         psr = likob.ptapsrs[pnl.psrindex]
         pnl.setNewData(psr.gibbsresiduals)
 
-        ndim = pnl.dimensions()
-        p0 = newpars[pnl.pindex]
-
         if ml:
-            # Use a particle swarm optimiser
-            nparticles = int(ndim**2/2) + 5*ndim
-            maxiterations = 500
-
-            swarm = Swarm(nparticles, pnl.pmin, pnl.pmax, pnl.logposterior)
-
-            for ii in range(maxiterations):
-                swarm.iterateOnce()
-
-                if np.all(swarm.Rhat() < 1.02):
-                    # Convergence critirion satisfied!
-                    print "N converged in {0}".format(ii)
-                    break
-            newpars[pnl.pindex] = swarm.bestx
+            newpars[pnl.pindex] = pnl.runPSO()
         else:
-            steps = ndim*20
-            pnl.sampler.sample(p0, steps, thin=1, burn=10)
-
-            newpars[pnl.pindex] = pnl.sampler._chain[steps-1,:]
+            p0 = newpars[pnl.pindex]
+            newpars[pnl.pindex] = pnl.runSampler(p0)
 
     return newpars
 
@@ -571,14 +879,11 @@ def gibbs_prepare_loglik_J(likob, curpars):
 
                 # Prepare the sampler
                 temp = pnl.loglikelihood(pnl.pstart)
+
                 ndim = pnl.dimensions()
-                cov = np.diag(pnl.pwidth**2)
-                p0 = pnl.pstart
-                sampler = ptmcmc.PTSampler(ndim, pnl.loglikelihood, pnl.logprior, cov=cov, \
-                        outDir='./gibbs-chains/', verbose=False, nowrite=True)
 
-                pnl.setSampler(sampler)
-
+                pnl.initSampler(singleChain=ndim*20, fullChain=ndim*8000, \
+                        covUpdate=ndim*400)
 
     return loglik_J
 
@@ -623,32 +928,11 @@ def gibbs_sample_loglik_J(likob, a, curpars, loglik_J, ml=False):
         res = a[ii][inds:inde][select]
         pnl.setNewData(res)
 
-        # Number of dimensions really is 'just' 1, but do it anyway
-        ndim = pnl.dimensions()
-
         if ml:
-            # Use a particle swarm optimiser
-            nparticles = int(ndim**2/2) + 5*ndim
-            maxiterations = 500
-
-            swarm = Swarm(nparticles, pnl.pmin, pnl.pmax, pnl.logposterior)
-
-            for ii in range(maxiterations):
-                swarm.iterateOnce()
-
-                if np.all(swarm.Rhat() < 1.02):
-                    # Convergence critirion satisfied!
-                    print "J converged in {0}".format(ii)
-                    break
-
-            newpars[pnl.pindex] = swarm.bestx
+            newpars[pnl.pindex] = pnl.runPSO()
         else:
             p0 = newpars[pnl.pindex]
-
-            steps = ndim*40
-            pnl.sampler.sample(p0, steps, thin=1, burn=10)
-
-            newpars[pnl.pindex] = pnl.sampler._chain[steps-1,:]
+            newpars[pnl.pindex] = pnl.runSampler(p0)
 
     return newpars
 
@@ -689,12 +973,9 @@ def gibbs_prepare_loglik_Phi(likob, curpars):
                             pindex, ii, np.arange(ntot, ntot+nfs), bvary))
                     psd = loglik_Phi[-1]
 
-                    cov = np.diag(pwidth[bvary]**2)
-                    p0 = pstart[bvary]
-                    sampler = ptmcmc.PTSampler(ndim, psd.loglikelihood, psd.logprior, cov=cov, \
-                            outDir='./gibbs-chains/', verbose=False, nowrite=True)
 
-                    psd.setSampler(sampler)
+                    psd.initSampler(singleChain=ndim*20, fullChain=ndim*8000, \
+                            covUpdate=ndim*400)
 
             elif signal['pulsarind'] == ii and signal['stype'] == 'dmpowerlaw':
                 bvary = signal['bvary']
@@ -723,12 +1004,8 @@ def gibbs_prepare_loglik_Phi(likob, curpars):
                                 ii, np.arange(ntot, ntot+nfdms), bvary))
                     psd = loglik_Phi[-1]
 
-                    cov = np.diag(pwidth[bvary]**2)
-                    p0 = pstart[bvary]
-                    sampler = ptmcmc.PTSampler(ndim, psd.loglikelihood, psd.logprior, cov=cov, \
-                            outDir='./gibbs-chains/', verbose=False, nowrite=True)
-
-                    psd.setSampler(sampler)
+                    psd.initSampler(singleChain=ndim*20, fullChain=ndim*8000, \
+                            covUpdate=ndim*400)
 
     return loglik_Phi
 
@@ -833,28 +1110,10 @@ def gibbs_sample_loglik_Phi(likob, a, curpars, loglik_PSD, ml=False):
         ndim = psd.dimensions()
 
         if ml:
-            # Use a particle swarm optimiser
-            nparticles = int(ndim**2/2) + 5*ndim
-            maxiterations = 500
-
-            swarm = Swarm(nparticles, psd.pmin[psd.bvary], \
-                    psd.pmax[psd.bvary], psd.logposterior)
-
-            for ii in range(maxiterations):
-                swarm.iterateOnce()
-
-                if np.all(swarm.Rhat() < 1.02):
-                    # Convergence critirion satisfied!
-                    print "Phi converged in {0}".format(ii)
-                    break
-            newpars[psd.pindex:psd.pindex+ndim] = swarm.bestx
+            newpars[psd.pindex:psd.pindex+ndim] = pnl.runPSO()
         else:
             p0 = newpars[psd.pindex:psd.pindex+ndim]
-
-            steps = ndim*40
-            psd.sampler.sample(p0, steps, thin=1, burn=10)
-
-            newpars[psd.pindex:psd.pindex+ndim] = psd.sampler._chain[steps-1,:]
+            newpars[psd.pindex:psd.pindex+ndim] = psd.runSampler(p0)
 
     return newpars
 
@@ -894,12 +1153,8 @@ def gibbs_prepare_loglik_Det(likob, curpars):
         loglik_Det.append(pulsarDetLL(likob, newpars, mask, pmin, pmax, pstart, pwidth, bvary))
         pdl = loglik_Det[-1]
 
-        cov = np.diag(pdl.pwidth**2)
-        p0 = pdl.pstart
-        sampler = ptmcmc.PTSampler(ndim, pdl.loglikelihood, pdl.logprior, cov=cov, \
-                outDir='./gibbs-chains/', verbose=False, nowrite=True)
-
-        pdl.setSampler(sampler)
+        pdl.initSampler(singleChain=ndim*20, fullChain=ndim*8000, \
+                covUpdate=ndim*400)
 
     return loglik_Det
 
@@ -924,28 +1179,10 @@ def gibbs_sample_loglik_Det(likob, curpars, loglik_Det, ml=False):
         pdl.pstart = curpars.copy()
 
         if ml:
-            # Use a particle swarm optimiser
-            nparticles = int(ndim**2/2) + 5*ndim
-            maxiterations = 500         # Max iterations
-
-            swarm = Swarm(nparticles, pdl.pmin[pdl.bvary], \
-                    pdl.pmax[pdl.bvary], pdl.logposterior)
-
-            for ii in range(maxiterations):
-                swarm.iterateOnce()
-
-                if np.all(swarm.Rhat() < 1.02):
-                    # Convergence critirion satisfied!
-                    print "Det converged in {0}".format(ii)
-                    break
-            newpars[pdl.mask] = swarm.bestx
+            newpars[pdl.mask] = pnl.runPSO()
         else:
             p0 = pdl.pstart[pdl.mask]
-
-            steps = ndim*20
-            pdl.sampler.sample(p0, steps, thin=1, burn=10)
-
-            newpars[pdl.mask] = pdl.sampler._chain[steps-1,:]
+            newpars[pdl.mask] = pdl.runSampler(p0)
 
     return newpars
 
@@ -1005,12 +1242,8 @@ def gibbs_prepare_loglik_corrPhi(likob, curpars):
                         pindex, -1, gindices, bvary))
                 psd = loglik_corrPSD[-1]
 
-                cov = np.diag(pwidth[bvary]**2)
-                p0 = pstart[bvary]
-                sampler = ptmcmc.PTSampler(ndim, psd.loglikelihood, psd.logprior, cov=cov, \
-                        outDir='./gibbs-chains/', verbose=False, nowrite=True)
-
-                psd.setSampler(sampler)
+                psd.initSampler(singleChain=ndim*20, fullChain=ndim*8000, \
+                        covUpdate=ndim*400)
 
     return loglik_corrPSD
 
@@ -1038,29 +1271,11 @@ def gibbs_sample_loglik_corrPhi(likob, a, curpars, loglik_corrPSD, ml=False):
         ndim = psd.dimensions()
 
         if ml:
-            # Use a particle swarm optimiser
-            nparticles = int(ndim**2/2) + 5*ndim
-            maxiterations = 500
-
-            swarm = Swarm(nparticles, psd.pmin[psd.bvary], \
-                    psd.pmax[psd.bvary], psd.logposterior)
-
-            for ii in range(maxiterations):
-                swarm.iterateOnce()
-
-                if np.all(swarm.Rhat() < 1.02):
-                    # Convergence critirion satisfied!
-                    print "corrPhi converged in {0}".format(ii)
-                    break
-            newpars[psd.pindex:psd.pindex+ndim] = swarm.bestx
+            newpars[pnl.pindex:psd.pindex+ndim] = psd.runPSO()
         else:
             # Use an adaptive MCMC
             p0 = newpars[psd.pindex:psd.pindex+ndim]
-
-            steps = ndim*40
-            psd.sampler.sample(p0, steps, thin=1, burn=10)
-
-            newpars[psd.pindex:psd.pindex+ndim] = psd.sampler._chain[steps-1,:]
+            newpars[pnl.pindex:psd.pindex+ndim] = pnl.runSampler(p0)
 
     return newpars
 

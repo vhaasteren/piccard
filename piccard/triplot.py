@@ -292,8 +292,9 @@ def triplot_homemade(chain, parlabels=None, plotparameters=None, name=None, ml=N
     plt.setp([a.get_xticklabels() for a in f.axes[:-0-2]], visible=False)
     """
 
-def triplot(samples, parlabels=None, plotparameters=None, name=None, ml=None, ml2=None):
-    if tri is None:
+def triplot(samples, parlabels=None, plotparameters=None, name=None, ml=None,
+        ml2=None, homemade=False):
+    if tri is None or homemade:
         triplot_homemade(samples, parlabels, plotparameters, name, ml, ml2)
         return
 
