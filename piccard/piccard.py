@@ -4442,7 +4442,7 @@ class ptaLikelihood(object):
                     bvary = [True, True, False]
                     pmin = [-20.0, 0.02, 1.0e-11]
                     pmax = [-10.0, 6.98, 3.0e-9]
-                    pstart = [-14.0, 2.01, 1.0e-10]
+                    pstart = [-15.0, 2.01, 1.0e-10]
                     pwidth = [0.3, 0.3, 5.0e-11]
                 elif noiseModel=='spectralModel':
                     bvary = [True, True, True]
