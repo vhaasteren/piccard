@@ -156,7 +156,7 @@ class pulsarNoiseLL(object):
                 burn=self.covUpdate, i0=self.curStep, thin=1)
 
         self.curStep += self.singleChain
-        retPos = self.sampler._chain[self.curStep-1, :]
+        retPos = self.sampler._chain[self.curStep-1, :].copy()
 
         # Subtract the mean off of the just-created samples. And because
         # covUpdate is supposed to be a multiple of singleChain, this will not
@@ -230,6 +230,7 @@ class pulsarNoiseLL(object):
 
     def logprior(self, parameters):
         bok = -np.inf
+        #bok = -1e99
         if np.all(self.pmin <= parameters) and np.all(parameters <= self.pmax):
             bok = 0
 
@@ -315,14 +316,13 @@ class pulsarPSDLL(object):
 
         @return:    New/latest value in parameter space
         """
-
         # Run the sampler for a small minichain
         self.sampler.sample(p0, self.curStep+self.singleChain, \
                 maxIter=self.fullChain, covUpdate=self.covUpdate, \
                 burn=self.covUpdate, i0=self.curStep, thin=1)
 
         self.curStep += self.singleChain
-        retPos = self.sampler._chain[self.curStep-1, :]
+        retPos = self.sampler._chain[self.curStep-1, :].copy()
 
         # Subtract the mean off of the just-created samples. And because
         # covUpdate is supposed to be a multiple of singleChain, this will not
@@ -387,6 +387,7 @@ class pulsarPSDLL(object):
 
     def logprior(self, parameters):
         bok = -np.inf
+        #bok = -1e99
         if np.all(self.pmin[self.bvary] <= parameters) and \
                 np.all(parameters <= self.pmax[self.bvary]):
             bok = 0
@@ -482,7 +483,7 @@ class corrPSDLL(object):
                 burn=self.covUpdate, i0=self.curStep, thin=1)
 
         self.curStep += self.singleChain
-        retPos = self.sampler._chain[self.curStep-1, :]
+        retPos = self.sampler._chain[self.curStep-1, :].copy()
 
         # Subtract the mean off of the just-created samples. And because
         # covUpdate is supposed to be a multiple of singleChain, this will not
@@ -558,7 +559,7 @@ class corrPSDLL(object):
                 if self.freqmask[ii, jj]:
                     self.freqb[ii, jj] = self.b[ii][jj]
 
-        self.allPsrSame = np.all(freqmask)
+        self.allPsrSame = np.all(self.freqmask)
 
     def loglikelihood(self, parameters):
         pars = self.pstart.copy()
@@ -570,7 +571,7 @@ class corrPSDLL(object):
         xi2 = 0
         ldet = 0
 
-        if self.allPsrSame:
+        if self.allPsrSame and False:
             nfreqs = len(pcdoubled)
             dotprod = np.dot(self.freqb[:,0], np.dot(self.Scor_inv, \
                     self.freqb[:,0]))
@@ -589,6 +590,7 @@ class corrPSDLL(object):
 
     def logprior(self, parameters):
         bok = -np.inf
+        #bok = -1e99
         if np.all(self.pmin[self.bvary] <= parameters) and \
                 np.all(parameters <= self.pmax[self.bvary]):
             bok = 0
@@ -675,7 +677,7 @@ class pulsarDetLL(object):
                 burn=self.covUpdate, i0=self.curStep, thin=1)
 
         self.curStep += self.singleChain
-        retPos = self.sampler._chain[self.curStep-1, :]
+        retPos = self.sampler._chain[self.curStep-1, :].copy()
 
         # Subtract the mean off of the just-created samples. And because
         # covUpdate is supposed to be a multiple of singleChain, this will not
@@ -749,6 +751,7 @@ class pulsarDetLL(object):
         Only return 0 when the parameters are within the prior domain
         """
         bok = -np.inf
+        #bok = -1e99
         if np.all(self.pmin[self.bvary] <= parameters) and \
                 np.all(parameters <= self.pmax[self.bvary]):
             bok = 0
@@ -833,16 +836,10 @@ def gibbs_prepare_loglik_J(likob, curpars):
     loglik_J = []
 
     for ii, psr in enumerate(likob.ptapsrs):
-        #zindex = np.sum(likob.npz[:ii])
-        zindex = 0          # Per pulsar basis
         nzs = likob.npz[ii]
-        mindex = np.sum(likob.npm[:ii])
         nms = likob.npm[ii]
-        findex = np.sum(likob.npf[:ii])
         nfs = likob.npf[ii]
-        fdmindex = np.sum(likob.npfdm[:ii])
         nfdms = likob.npfdm[ii]
-        uindex = np.sum(likob.npu[:ii])
         npus = likob.npu[ii]
 
         # Figure out where to start counting
@@ -1275,7 +1272,7 @@ def gibbs_sample_loglik_corrPhi(likob, a, curpars, loglik_corrPSD, ml=False):
         else:
             # Use an adaptive MCMC
             p0 = newpars[psd.pindex:psd.pindex+ndim]
-            newpars[pnl.pindex:psd.pindex+ndim] = pnl.runSampler(p0)
+            newpars[psd.pindex:psd.pindex+ndim] = psd.runSampler(p0)
 
     return newpars
 
@@ -1292,6 +1289,7 @@ def gibbs_prepare_correlations(likob):
 
         # There actually is a signal, so invert the correlation covariance
         try:
+            """
             U, s, Vt = sl.svd(likob.Scor)
 
             if not np.all(s > 0):
@@ -1300,11 +1298,15 @@ def gibbs_prepare_correlations(likob):
             likob.Scor_inv = np.dot(U * (1.0/s), Vt)
             #likob.Scor_Li = U * (1.0 / np.sqrt(s))      # Do we need this?
             likob.Scor_ldet = np.sum(np.log(s))
+            """
+            cf = sl.cho_factor(likob.Scor)
+            likob.Scor_inv = sl.cho_solve(cf, np.eye(likob.Scor.shape[0]))
+            likob.Scor_ldet = 2*np.sum(np.log(np.diag(cf[0])))
 
         except ValueError:
             print "WTF?"
-            print "Look in wtf.txt for the Scor matrix"
-            np.savetxt("wtf.txt", likob.Scor)
+            print "Look in scor.txt for the Scor matrix"
+            np.savetxt("scor.txt", likob.Scor)
             raise
             
     else:
@@ -1331,7 +1333,6 @@ def gibbs_psr_corrs(likob, psrindex, a):
     # First select the slice we'll need from the correlation matrix
     temp = np.arange(len(likob.ptapsrs))
     psrslice = np.delete(temp, psrindex)
-    #corr_inv = likob.Scor_inv[:,psrslice]       # Specific slice of inverse
 
     # The quadratic offset we'll return
     pPvec = np.zeros(psr.Fmat.shape[1])
@@ -1357,25 +1358,13 @@ def gibbs_psr_corrs(likob, psrindex, a):
 
         corrmode_offset.append(ntot)
 
-
-    # For every mode, build the b vector
-    for ii, freq in enumerate(psr.Ffreqs):
-        # We are not even sure if all pulsars have this frequency, so be
-        # careful. Just create them on the fly
-        b = []
-        A = []
-        for jj in psrslice:
-            if ii < likob.ptapsrs[jj].Fmat.shape[1]:
-                # Have it, add to the sum
-                b.append(a[jj][corrmode_offset[jj]+ii])
-                A.append(likob.Scor_inv[psrindex,jj] / freq)
-
-        # Make numpy arrays
-        b = np.array(b)
-        A = np.array(A)
-
-        # Ok, we have the two vectors. Now fill the next element of
-        pPvec[ii] = np.sum(b * A)
+    for jj in psrslice:
+        psrj = likob.ptapsrs[jj]
+        minfreqs = min(len(psrj.Ffreqs), len(psr.Ffreqs))
+        inda = corrmode_offset[jj]
+        indb = corrmode_offset[jj] + minfreqs
+        pPvec[:minfreqs] += a[jj][inda:indb] * \
+                likob.Scor_inv[psrindex,jj] / likob.Svec[:minfreqs]
 
     return (pSinv_vec, pPvec)
 
@@ -1397,19 +1386,18 @@ def gibbs_sample_a(likob, preva=None, ml=False):
     if preva is None:
         preva = []
         for ii, psr in enumerate(likob.ptapsrs):
-            preva.append(np.zeros(likob.npz[ii]))
+            # We have random indices, with amplitude of about 10ns
+            preva.append(np.random.randn(likob.npz[ii])*1.0e-8)
 
     a = preva
 
     for ii, psr in enumerate(likob.ptapsrs):
-        #zindex = np.sum(likob.npz[:ii])
         nzs = likob.npz[ii]
         nms = likob.npm[ii]
         findex = np.sum(likob.npf[:ii])
         nfs = likob.npf[ii]
         fdmindex = np.sum(likob.npfdm[:ii])
         nfdms = likob.npfdm[ii]
-        uindex = np.sum(likob.npu[:ii])
         npus = likob.npu[ii]
 
         # Make ZNZ and Sigma
@@ -1439,6 +1427,7 @@ def gibbs_sample_a(likob, preva=None, ml=False):
         if 'jitter' in likob.gibbsmodel:
             ind = range(zindex, zindex+npus)
             Sigma[ind, ind] += 1.0 / psr.Jvec
+            zindex += npus
 
         if 'corrsig' in likob.gibbsmodel and likob.have_gibbs_corr:
             (pSinv_vec, pPvec) = gibbs_psr_corrs(likob, ii, a)
@@ -1446,6 +1435,7 @@ def gibbs_sample_a(likob, preva=None, ml=False):
             ind = range(zindex, zindex + nfs)
             Sigma[ind, ind] += pSinv_vec
             ENx[ind] -= pPvec
+            zindex += nfs
 
         try:
             #raise np.linalg.LinAlgError("")
@@ -1482,8 +1472,14 @@ def gibbs_sample_a(likob, preva=None, ml=False):
                 ahat = np.dot(Sigi, ENx)
         except ValueError:
             print "WTF?"
-            print "Look in wtf.txt for the Sigma matrix"
-            np.savetxt("wtf.txt", Sigma)
+            print "Look in sigma.txt for the Sigma matrix"
+            np.savetxt("sigma.txt", Sigma)
+            np.savetxt("phivec.txt", likob.Phivec[findex:findex+nfs])
+            np.savetxt('nvec.txt', psr.Nvec)
+
+            np.savetxt("znz.txt", ZNZ)
+            np.savetxt("ENx.txt", ENx)
+
             raise
 
         # Get a sample from the coefficient distribution
@@ -1518,7 +1514,7 @@ def gibbsQuantities(likob, parameters):
 
     # Place only correlated signals (GWB) in the Phi matrix, and the rest in the
     # noise vectors
-    likob.constructPhiAndTheta(parameters, make_matrix=True, \
+    likob.constructPhiAndTheta(parameters, make_matrix=False, \
             noise_vec=True, gibbs_expansion=True)
 
 
