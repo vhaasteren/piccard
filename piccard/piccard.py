@@ -4292,9 +4292,9 @@ class ptaLikelihood(object):
             dmFrequencyLines=None, \
                                         # [0, 3, 2, ..., 4]
             orderFrequencyLines=False, \
-            compression = 'frequencies', \
-            evalCompressionComplement = True, \
-            likfunc='mark1'):
+            compression = 'None', \
+            evalCompressionComplement = False, \
+            likfunc='mark2'):
         # We have to determine the number of frequencies we'll need
         numNoiseFreqs = np.zeros(len(self.ptapsrs), dtype=np.int)
         numDMFreqs = np.zeros(len(self.ptapsrs), dtype=np.int)
