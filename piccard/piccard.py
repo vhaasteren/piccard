@@ -3103,7 +3103,7 @@ class ptaPulsar(object):
             else:
                 Ft_4 = Ft_3
 
-            if 'corrsig' in gibbsmodel:
+            if 'correx' in gibbsmodel:
                 self.Zmat = np.append(Ft_4, self.Fmat, axis=1)
             else:
                 self.Zmat = Ft_4
@@ -3541,7 +3541,7 @@ class ptaLikelihood(object):
 
     # Gibbs 'signals': which coefficients are included? Do this more elegantly
     # in the future. Possible values for now:
-    # design, rednoise, dm, jitter, corrsig
+    # design, rednoise, dm, jitter, correx/corrim
     gibbsmodel = []
 
     dimensions = 0
@@ -3584,6 +3584,8 @@ class ptaLikelihood(object):
     Muvec = None        #                             mark11        (Jitter)
     Svec = None         #                                     gibbs (GWB PSD)
     Scor = None         #                                     gibbs (GWB corr)
+    Scor_im = None      #                                     gibbs (GWB impl)
+    Scor_im_cf = None   #                                     gibbs (GWB impl)
     Sigma = None        #        mark3, mark?, mark6                (everything)
     GNGldet = None      # mark1, mark3, mark?, mark6                (log-det)
 
@@ -4294,6 +4296,7 @@ class ptaLikelihood(object):
             orderFrequencyLines=False, \
             compression = 'None', \
             evalCompressionComplement = False, \
+            explicitGWBcomponents = True, \
             likfunc='mark2'):
         # We have to determine the number of frequencies we'll need
         numNoiseFreqs = np.zeros(len(self.ptapsrs), dtype=np.int)
@@ -4396,7 +4399,8 @@ class ptaLikelihood(object):
                     signals.append(newsignal)
 
             if incCEquad or incJitter:
-                gibbsmodel.append('jitter')
+                if not 'jitter' in gibbsmodel:
+                    gibbsmodel.append('jitter')
                 if separateCEquads:
                     for flagval in uflagvals:
                         newsignal = OrderedDict({
@@ -4430,7 +4434,8 @@ class ptaLikelihood(object):
                     signals.append(newsignal)
 
             if incRedNoise:
-                gibbsmodel.append('rednoise')
+                if not 'rednoise' in gibbsmodel:
+                    gibbsmodel.append('rednoise')
                 if noiseModel=='spectrum':
                     nfreqs = numNoiseFreqs[ii]
                     bvary = [True]*nfreqs
@@ -4470,7 +4475,8 @@ class ptaLikelihood(object):
                 signals.append(newsignal)
 
             if incDM:
-                gibbsmodel.append('dm')
+                if not 'dm' in gibbsmodel:
+                    gibbsmodel.append('dm')
                 if dmModel=='dmspectrum':
                     nfreqs = numDMFreqs[ii]
                     bvary = [True]*nfreqs
@@ -4712,8 +4718,10 @@ class ptaLikelihood(object):
                     del Umat
 
         if incGWB:
-            if not 'corrsig' in gibbsmodel:
-                gibbsmodel.append('corrsig')
+            if not 'correx' in gibbsmodel and explicitGWBcomponents:
+                gibbsmodel.append('correx')
+            elif not 'corrim' in gibbsmodel and not explicitGWBcomponents:
+                gibbsmodel.append('corrim')
             if gwbModel=='spectrum':
                 nfreqs = np.max(numNoiseFreqs)
                 bvary = [True]*nfreqs
@@ -4745,8 +4753,10 @@ class ptaLikelihood(object):
             signals.append(newsignal)
 
         if incClock:
-            if not 'corrsig' in gibbsmodel:
-                gibbsmodel.append('corrsig')
+            if not 'correx' in gibbsmodel and explicitGWBcomponents:
+                gibbsmodel.append('correx')
+            elif not 'corrim' in gibbsmodel and not explicitGWBcomponents:
+                gibbsmodel.append('corrim')
             if clockModel=='spectrum':
                 nfreqs = np.max(numNoiseFreqs)
                 bvary = [True]*nfreqs
@@ -4778,8 +4788,10 @@ class ptaLikelihood(object):
             signals.append(newsignal)
 
         if incDipole:
-            if not 'corrsig' in gibbsmodel:
-                gibbsmodel.append('corrsig')
+            if not 'correx' in gibbsmodel and explicitGWBcomponents:
+                gibbsmodel.append('correx')
+            elif not 'corrim' in gibbsmodel and not explicitGWBcomponents:
+                gibbsmodel.append('corrim')
             if dipoleModel=='spectrum':
                 nfreqs = np.max(numNoiseFreqs)
                 bvary = [True]*nfreqs
@@ -4811,8 +4823,10 @@ class ptaLikelihood(object):
             signals.append(newsignal)
 
         if incAniGWB:
-            if not 'corrsig' in gibbsmodel:
-                gibbsmodel.append('corrsig')
+            if not 'correx' in gibbsmodel and explicitGWBcomponents:
+                gibbsmodel.append('correx')
+            elif not 'corrim' in gibbsmodel and not explicitGWBcomponents:
+                gibbsmodel.append('corrim')
             nclm = (lAniGWB+1)**2-1
             clmvary = [True]*nclm
             clmmin = [-5.0]*nclm
@@ -4851,8 +4865,10 @@ class ptaLikelihood(object):
             signals.append(newsignal)
 
         if incPixelGWB:
-            if not 'corrsig' in gibbsmodel:
-                gibbsmodel.append('corrsig')
+            if not 'correx' in gibbsmodel and explicitGWBcomponents:
+                gibbsmodel.append('correx')
+            elif not 'corrim' in gibbsmodel and not explicitGWBcomponents:
+                gibbsmodel.append('corrim')
             if pixelgwbModel=='spectrum':
                 nfreqs = np.max(numNoiseFreqs)
                 bvary = [True]*(nfreqs + 2*npixels)
@@ -5452,7 +5468,7 @@ class ptaLikelihood(object):
                                     psr.name})
                         index += 1
 
-                if 'corrsig' in self.gibbsmodel:
+                if 'correx' in self.gibbsmodel or 'corrim' in self.gibbsmodel:
                     for ii in range(self.Fmat_gw.shape[1]):
                         flagname = "Corr-sig-"+psr.name
                         flagvalue = str(psr.Ffreqs[ii])
@@ -5930,7 +5946,7 @@ class ptaLikelihood(object):
                         if gibbs_expansion:
                             # Expand in spectrum and correlations
                             self.Svec += pcdoubled
-                            self.Scor = corrmat     # Yes, well, there can be only one
+                            self.Scor = corrmat.copy()     # Yes, well, there can be only one
                 elif m2signal['stype'] == 'dmpowerlaw':
                     Amp = 10**sparameters[0]
                     Si = sparameters[1]

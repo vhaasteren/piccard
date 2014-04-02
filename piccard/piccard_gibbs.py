@@ -606,6 +606,237 @@ class corrPSDLL(object):
 
 
 
+class implicitPSDLL(object):
+    """
+    Like pulsarPSDLL, but now for all power-law PSD signals.
+
+    This likelihood class assumes that we have 3 * npsr + 3 parameters, and it
+    will fail if this is not True. This functionality will be expanded in the
+    future
+    """
+
+    def __init__(self, b, freqs, Tmax, pmin, pmax, pstart, pwidth, pmask, \
+            gindices, bvary, likob):
+        """
+        @param b:           The Fourier components of the signal
+                            (list for pulsars)
+        @param freqs:       The frequencies of the signal, single array,
+                            match between pulsars. Pulsars allowed to have fewer
+                            modes
+        @param pmin:        Minimum value of the parameters prior domain
+        @param pmax:        Maximum value of the parameters prior domain
+        @param pwidth:      Initial step-size of this parameter
+        @param pmask:       Boolean mask indicating the relevant parameters
+        @param gindices:    The indices of the relevant Gibbs-parameters
+        @param bvary:       Which parameters are actually varying
+        @param likob:       The full likelihood object (need it for comm)
+        """
+
+        self.b = b
+        self.freqs = freqs
+        self.pmin = pmin
+        self.pmax = pmax
+        self.pstart = pstart
+        self.pwidth = pwidth
+        self.pmask = pmask
+        self.gindices = gindices
+        self.bvary = bvary
+        self.Tmax = Tmax
+        self.likob = likob
+
+        self.allPsrSame = False
+        self.Scor = None
+        self.psr_pcdoubled = None
+        self.gw_pcdoubled = None
+
+        self.sampler = None                         # The PTMCMC sampler
+        self.singleChain = None     # How a long a ginle run is
+        self.fullChain = None       # Maximum of total chain
+        self.curStep = 0            # Current iteration
+        self.covUpdate = 400        # Number of iterations between AM covariance
+
+
+    def initSampler(self, singleChain=20, fullChain=20000, covUpdate=400):
+        """
+        Initialise the PTMCMC sampler for future repeated use
+
+        @param singleChain:     Lenth of a single small MCMC chain
+        @param fullChain:       Lenth of full chain that is used for
+                                cov-estimates
+        @param covUpdate:       Number of iterations before cov updates
+                                (should be multiple of singleChain)
+        """
+        ndim = self.dimensions()
+        cov = np.diag(self.pwidth[self.bvary]**2)
+        self.sampler = ptmcmc.PTSampler(ndim, self.loglikelihood, \
+                self.logprior, cov=cov, outDir='./gibbs-chains/', \
+                verbose=False, nowrite=True)
+
+        self.singleChain = singleChain
+        self.fullChain = fullChain
+        self.curStep = 0
+        self.covUpdate = covUpdate
+
+    def runSampler(self, p0):
+        """
+        Run the MCMC sampler, starting from position p0, for self.singleChain
+        steps. Note: the covariance update length is also used as a length for
+        the differential evolution burn-in. There is no chain-thinning
+
+        @param p0:  Current value in parameter space
+
+        @return:    New/latest value in parameter space
+        """
+
+        # Run the sampler for a small minichain
+        self.sampler.sample(p0, self.curStep+self.singleChain, \
+                maxIter=self.fullChain, covUpdate=self.covUpdate, \
+                burn=self.covUpdate, i0=self.curStep, thin=1)
+
+        self.curStep += self.singleChain
+        retPos = self.sampler._chain[self.curStep-1, :].copy()
+
+        # Subtract the mean off of the just-created samples. And because
+        # covUpdate is supposed to be a multiple of singleChain, this will not
+        # mess up the Adaptive Metropolis shizzle
+        self.sampler._chain[self.curStep-self.singleChain:self.curStep, :] = \
+                self.sampler._chain[self.curStep-self.singleChain:self.curStep, :] - \
+                np.mean(self.sampler._chain[self.curStep-self.singleChain:self.curStep, :])
+
+        # Check whether we're almost at the end of the chain
+        if self.fullChain - self.curStep <= self.covUpdate:
+            midStep = int(self.fullChain / 2)
+
+            # Copy the end half of the chain to the beginning
+            self.sampler._lnprob[:self.curStep-midStep] = \
+                    self.sampler._lnprob[midStep:self.curStep]
+            self.sampler._lnlike[:self.curStep-midStep] = \
+                    self.sampler._lnlike[midStep:self.curStep]
+            self.sampler._chain[:self.curStep-midStep, :] = \
+                    self.sampler._chain[midStep:self.curStep, :]
+            self.sampler._AMbuffer[:self.curStep-midStep, :] = \
+                    self.sampler._AMbuffer[midStep:self.curStep, :]
+            self.sampler._DEbuffer = self.sampler._AMbuffer[0:self.covUpdate]
+
+            # We are now at half the chain-length again
+            self.curStep = self.curStep - midStep
+
+        return retPos
+
+    def runPSO(self):
+        """
+        Run a particle swarm optimiser on the posterior, and return the optimum
+        """
+        ndim = self.dimensions()
+        nparticles = int(ndim**2/2) + 5*ndim
+        maxiterations = 500
+
+        swarm = Swarm(nparticles, self.pmin[self.bvary], self.pmax[self.bvary], self.logposterior)
+
+        for ii in range(maxiterations):
+            swarm.iterateOnce()
+
+            if np.all(swarm.Rhat() < 1.02):
+                # Convergence critirion satisfied!
+                # print "N converged in {0}".format(ii)
+                break
+
+        return swarm.bestx
+
+
+    def setNewData(self, b, Scor):
+        """
+        Set new data at the beginning of each small MCMC chain
+
+        @param b:           New Gibbs modes
+        @param Scor:        New pulsar correlation matrix of corr sig
+        """
+        self.b = b
+        self.Scor = Scor
+
+        self.numPsrFreqs = []
+        self.freqmask = np.zeros((len(self.b), len(self.freqs)), dtype=np.bool)
+        self.freqb = np.zeros((len(self.b), len(self.freqs)))
+
+        # Make masks that show which pulsar has how many frequencies
+        for ii in range(len(self.b)):
+            self.numPsrFreqs.append(len(self.b[ii]))
+            self.freqmask[ii,:len(self.b[ii])] = True
+
+        for ii in range(len(self.b)):
+            for jj in range(len(self.freqs)):
+                if self.freqmask[ii, jj]:
+                    self.freqb[ii, jj] = self.b[ii][jj]
+
+        self.allPsrSame = np.all(self.freqmask)
+
+
+    def calcCoeffs(self, parameters):
+        """
+        Pre-calculate the PSD coefficients
+        """
+        pars = self.pstart.copy()
+        pars[self.bvary] = parameters
+
+        freqpy = self.freqs * pic_spy
+        self.gw_pcdoubled = ((10**(2*pars[-3])) * pic_spy**3 / (12*np.pi*np.pi * self.Tmax)) * freqpy ** (-pars[-2])
+        psr_pcdoubled = []
+        for ii in range(int((len(pars)-3)/3)):
+            psr_pcdoubled.append(
+                    ((10**(2*pars[3*ii])) * pic_spy**3 / \
+                            (12*np.pi*np.pi * self.Tmax)) * \
+                            freqpy ** (-pars[3*ii+1]))
+        self.psr_pcdoubled = np.array(psr_pcdoubled)
+
+
+    def loglikelihood(self, parameters):
+        xi2 = 0
+        ldet = 0
+        cov = None
+
+        self.calcCoeffs(parameters)
+
+        self.likob.Scor_im = []
+        self.likob.Scor_im_cf = []
+        for ii, gw_pc in enumerate(self.gw_pcdoubled):
+            if ii % 2 == 0:
+                # Re-evaluate the cholesky decomposition of the covariance
+                # matrix. (same for all sine & cosine terms)
+                msk = self.freqmask[:, ii]
+                psrcoeff = self.psr_pcdoubled[msk, ii]
+
+                cov = self.Scor[msk,:][:,msk] * self.gw_pcdoubled[ii] + \
+                        np.diag(psrcoeff)
+
+                cov_cf = sl.cho_factor(cov)
+
+            # Append twice, not once
+            self.likob.Scor_im.append(cov)
+            self.likob.Scor_im_cf.append(cov_cf)
+
+            x = self.freqb[msk, ii]
+            ldet += 2*np.sum(np.log(np.diag(cov_cf[0])))
+            xi2 += np.dot(x, sl.cho_solve(cov_cf, x))
+
+        return -0.5 * xi2 - 0.5 * ldet
+
+
+    def logprior(self, parameters):
+        bok = -np.inf
+        #bok = -1e99
+        if np.all(self.pmin[self.bvary] <= parameters) and \
+                np.all(parameters <= self.pmax[self.bvary]):
+            bok = 0
+
+        return bok
+
+    def logposterior(self, parameters):
+        return self.logprior(parameters) + self.loglikelihood(parameters)
+
+    def dimensions(self):
+        return np.sum(self.bvary)
+
+
 
 class pulsarDetLL(object):
     """
@@ -1244,7 +1475,6 @@ def gibbs_prepare_loglik_corrPhi(likob, curpars):
 
     return loglik_corrPSD
 
-
 def gibbs_sample_loglik_corrPhi(likob, a, curpars, loglik_corrPSD, ml=False):
     """
     Sample the correlated Phi-loglikelihood conditional. Some models can be done
@@ -1268,13 +1498,135 @@ def gibbs_sample_loglik_corrPhi(likob, a, curpars, loglik_corrPSD, ml=False):
         ndim = psd.dimensions()
 
         if ml:
-            newpars[pnl.pindex:psd.pindex+ndim] = psd.runPSO()
+            newpars[psd.pindex:psd.pindex+ndim] = psd.runPSO()
         else:
             # Use an adaptive MCMC
             p0 = newpars[psd.pindex:psd.pindex+ndim]
             newpars[psd.pindex:psd.pindex+ndim] = psd.runSampler(p0)
 
     return newpars
+
+
+def gibbs_prepare_loglik_imPhi(likob, curpars):
+    """
+    Prepares the likelihood objects for the power-spectra of all PSD signals in
+    the case the correlated PSD coefficients are not modelled explicitly
+
+    @param likob:       the full likelihood object
+    @param a:           list of arrays with all the Gibbs-only parameters
+    @param curpars:     the current value of all parameters
+    """
+
+    loglik_imPSD = []
+
+    # Require one PL spectrum per pulsar, and one correlated signal per pulsar
+    pmin = np.array([])
+    pmax = np.array([])
+    pstart = np.array([])
+    pwidth = np.array([])
+    bvary = np.array([], dtype=np.bool)
+    gindices = []
+    b = []
+    sigmask = np.array([0]*len(curpars), dtype=np.bool)
+
+    for ii, psr in enumerate(likob.ptapsrs):
+        sigs = likob.getSignalNumbersFromDict(likob.ptasignals, stype='powerlaw', \
+                corr='single', psrind=ii)
+        if len(sigs) != 1:
+            raise ValueError("Pulsar {0} has no powerlaw signal")
+
+        signal = likob.ptasignals[sigs[0]]
+
+        nms = likob.npm[ii]
+        nfs = likob.npf[ii]
+        nfdms = likob.npfdm[ii]
+        npus = likob.npu[ii]
+
+        # Save the indices of the Gibbs parameters
+        ntot = 0
+        if 'design' in likob.gibbsmodel:
+            ntot += nms
+
+        gindices.append(np.arange(ntot, ntot+nfs))
+        b.append(np.zeros(nfs))
+
+        bvary = np.append(bvary, signal['bvary'])
+        pstart = np.append(pstart, signal['pstart'])
+        pmin = np.append(pmin, signal['pmin'])
+        pmax = np.append(pmax, signal['pmax'])
+        pwidth = np.append(pwidth, signal['pwidth'])
+
+        pindex = signal['parindex']
+        sigmask[pindex:pindex+2] = True
+
+    sigs = likob.getSignalNumbersFromDict(likob.ptasignals, stype='powerlaw', \
+            corr='gr', psrind=-1)
+    if len(sigs) != 1:
+        print "Sigs = ", sigs
+        raise ValueError("Likob has no correlated powerlaw signal")
+
+    signal = likob.ptasignals[sigs[0]]
+    bvary = np.append(bvary, signal['bvary'])
+    pstart = np.append(pstart, signal['pstart'])
+    pmin = np.append(pmin, signal['pmin'])
+    pmax = np.append(pmax, signal['pmax'])
+    pwidth = np.append(pwidth, signal['pwidth'])
+    Tmax = signal['Tmax']
+    pindex = signal['parindex']
+    sigmask[pindex:pindex+2] = True
+
+    # Set the start parameters of the mini-chain
+    pstart[bvary] = curpars[sigmask]
+    ndim = np.sum(bvary)
+
+    loglik_imPSD.append(implicitPSDLL(b, likob.Ffreqs_gw, Tmax, pmin, pmax, \
+            pstart, pwidth, sigmask, gindices, bvary, likob))
+    psd = loglik_imPSD[-1]
+
+    psd.initSampler(singleChain=ndim*10, fullChain=ndim*8000, \
+                        covUpdate=ndim*200)
+
+    return loglik_imPSD
+
+
+def gibbs_sample_loglik_imPhi(likob, a, curpars, loglik_imPSD, ml=False,
+        runchain=True):
+    """
+    Sample the correlated Phi-loglikelihood conditional. Some models can be done
+    analytically (latter not yet implemented)
+
+    @param likob:       the full likelihood object
+    @param a:           list of arrays with all the Gibbs-only parameters
+    @param curpars:     the current value of all non-Gibbs parameters
+    @param loglik_PSD:  List of prepared likelihood/samplers for non-analytic
+                        models
+    @param ml:          If True, return ML values (PSO), not a random sample
+    @param runchain:    If False, do not run the chain (just calculate loglik)
+    """
+    newpars = curpars.copy()
+
+    for psd in loglik_imPSD:
+        b = []
+        for ii, ind in enumerate(psd.gindices):
+            b.append(a[ii][ind])
+
+        psd.setNewData(b, likob.Scor)
+
+        if ml:
+            newpars[pmask] = psd.runPSO()
+        else:
+            # Use an adaptive MCMC
+            p0 = newpars[psd.pmask]
+
+            if runchain:
+                newpars[psd.pmask] = psd.runSampler(p0)
+            else:
+                temp = psd.logposterior(p0)
+
+    return newpars
+
+
+
 
 
 def gibbs_prepare_correlations(likob):
@@ -1312,7 +1664,7 @@ def gibbs_prepare_correlations(likob):
     else:
         likob.have_gibbs_corr = False
 
-def gibbs_psr_corrs(likob, psrindex, a):
+def gibbs_psr_corrs_ex(likob, psrindex, a):
     """
     Get the Gibbs coefficient quadratic offsets for the correlated signals, for
     a specific pulsar
@@ -1369,27 +1721,89 @@ def gibbs_psr_corrs(likob, psrindex, a):
     return (pSinv_vec, pPvec)
 
 
+def gibbs_psr_corrs_im(likob, psrindex, a):
+    """
+    Get the Gibbs coefficient quadratic offsets for the correlated signals, for
+    a specific pulsar, when the correlated signal is not modelled explicitly
+    with it's own Fourier coefficients
 
-def gibbs_sample_a(likob, preva=None, ml=False):
+    @param likob:       The full likelihood object
+    @param psrindex:    Index of the pulsar
+    @param a:           List of Gibbs coefficient of all pulsar (of previous step)
+
+    @return:    (pSinv_vec, pPvec), the quadratic offsets
+    """
+    psr = likob.ptapsrs[psrindex]
+
+    Sinv = []
+    pSinv_vec = np.zeros(likob.npf[psrindex])
+    for ii, Scf in enumerate(likob.Scor_im_cf):
+        Sinv.append(sl.cho_solve(Scf, np.eye(Scf[0].shape[0])))
+
+        if ii < likob.npf[psrindex]:
+            pSinv_vec[ii] = Sinv[-1][psrindex, psrindex]
+
+    # The inverse of the GWB correlations are easy
+    #pSinv_vec = (1.0 / likob.Svec[:likob.npf[psrindex]]) * \
+    #        likob.Scor_inv[psrindex,psrindex]
+
+    # For the quadratic offsets, we'll need to do some splice magic
+    # First select the slice we'll need from the correlation matrix
+    temp = np.arange(len(likob.ptapsrs))
+    psrslice = np.delete(temp, psrindex)
+
+    # The quadratic offset we'll return
+    pPvec = np.zeros(psr.Fmat.shape[1])
+
+    # Pre-compute the GWB-index offsets of all the pulsars
+    corrmode_offset = []
+    for ii in range(len(likob.ptapsrs)):
+        nms = likob.npm[ii]
+        nfs = likob.npf[ii]
+
+        ntot = 0
+        if 'design' in likob.gibbsmodel:
+            ntot += nms
+
+        corrmode_offset.append(ntot)
+
+
+    for jj in psrslice:
+        psrj = likob.ptapsrs[jj]
+        minfreqs = min(len(psrj.Ffreqs), len(psr.Ffreqs))
+        inda = corrmode_offset[jj]
+        indb = corrmode_offset[jj] + minfreqs
+        #pPvec[:minfreqs] += a[jj][inda:indb] * \
+        #        likob.Scor_inv[psrindex,jj] / likob.Svec[:minfreqs]
+        for ii in range(minfreqs):
+            pPvec[ii] += Sinv[ii][psrindex, jj] * a[jj][inda+ii]
+
+    return (pSinv_vec, pPvec)
+
+
+
+
+def gibbs_sample_a(likob, a, ml=False):
     """
     Assume that all the noise parameters have been set (N, Phi, Theta). Given
     that, return a sample from the coefficient/timing model parameters
 
     @param likob:   the full likelihood object
-    @param preva:   the previous list of Gibbs coefficients. Defaults to all
-                    zeros
+    @param a:       the previous list of Gibbs coefficients.
     @param ml:      If True, return ML values, not a random sample
 
     @return: list of coefficients/timing model parameters per pulsar
     """
 
+    """
     if preva is None:
         preva = []
         for ii, psr in enumerate(likob.ptapsrs):
             # We have random indices, with amplitude of about 10ns
             preva.append(np.random.randn(likob.npz[ii])*1.0e-8)
+            psr.gibbsresiduals = psr.detresiduals.copy()
+    """
 
-    a = preva
 
     for ii, psr in enumerate(likob.ptapsrs):
         nzs = likob.npz[ii]
@@ -1414,7 +1828,15 @@ def gibbs_sample_a(likob, preva=None, ml=False):
             # Do nothing, she'll be 'right
             zindex += nms
 
-        if 'rednoise' in likob.gibbsmodel:
+        if 'corrim' in likob.gibbsmodel:
+            (pSinv_vec, pPvec) = gibbs_psr_corrs_im(likob, ii, a)
+
+            ind = range(zindex, zindex + nfs)
+            Sigma[ind, ind] += pSinv_vec
+            ENx[ind] -= pPvec
+            zindex += nfs
+        elif 'rednoise' in likob.gibbsmodel:
+            # Don't do this if it is included in corrim
             ind = range(zindex, zindex+nfs)
             Sigma[ind, ind] += 1.0 / likob.Phivec[findex:findex+nfs]
             zindex += nfs
@@ -1429,8 +1851,8 @@ def gibbs_sample_a(likob, preva=None, ml=False):
             Sigma[ind, ind] += 1.0 / psr.Jvec
             zindex += npus
 
-        if 'corrsig' in likob.gibbsmodel and likob.have_gibbs_corr:
-            (pSinv_vec, pPvec) = gibbs_psr_corrs(likob, ii, a)
+        if 'correx' in likob.gibbsmodel and likob.have_gibbs_corr:
+            (pSinv_vec, pPvec) = gibbs_psr_corrs_ex(likob, ii, a)
 
             ind = range(zindex, zindex + nfs)
             Sigma[ind, ind] += pSinv_vec
@@ -1438,38 +1860,46 @@ def gibbs_sample_a(likob, preva=None, ml=False):
             zindex += nfs
 
         try:
-            #raise np.linalg.LinAlgError("")
             # Use a QR decomposition for the inversions
             Qs,Rs = sl.qr(Sigma) 
 
-            Qsb = np.dot(Qs.T, np.eye(Sigma.shape[0])) # computing Q^T*b (project b onto the range of A)
-            Sigi = sl.solve(Rs,Qsb) # solving R*x = Q^T*b
+            #Qsb = np.dot(Qs.T, np.eye(Sigma.shape[0])) # computing Q^T*b (project b onto the range of A)
+            #Sigi = sl.solve(Rs,Qsb) # solving R*x = Q^T*b
+            Sigi = sl.solve(Rs,Qs.T) # solving R*x = Q^T*b
             
             # Ok, we've got the inverse... now what? Do SVD?
             U, s, Vt = sl.svd(Sigi)
             Li = U * np.sqrt(s)
 
             ahat = np.dot(Sigi, ENx)
-
-        except np.linalg.LinAlgError:
-            print "ERROR in QR decomp"
+        except (np.linalg.LinAlgError, ValueError):
             try:
-                cfL = sl.cholesky(Sigma, lower=True)
-                cf = (cfL, True)
+                print "ERROR in QR. Doing SVD"
 
-                # Calculate the inverse Cholesky factor (can we do this faster?)
-                cfLi = sl.cho_factor(cfL, lower=True)
-                Li = sl.cho_solve(cfLi, np.eye(Sigma.shape[0]))
-
-                ahat = sl.cho_solve(cf, ENx)
-            except np.linalg.LinAlgError:
                 U, s, Vt = sl.svd(Sigma)
                 if not np.all(s > 0):
-                    raise ValueError("ERROR: Sigma singular according to SVD")
+                    raise np.linalg.LinAlgError
+                    #raise ValueError("ERROR: Sigma singular according to SVD")
                 Sigi = np.dot(U * (1.0/s), Vt)
                 Li = U * (1.0 / np.sqrt(s))
 
                 ahat = np.dot(Sigi, ENx)
+            except np.linalg.LinAlgError:
+                try:
+                    print "ERROR in SVD. Doing Cholesky"
+
+                    cfL = sl.cholesky(Sigma, lower=True)
+                    cf = (cfL, True)
+
+                    # Calculate the inverse Cholesky factor (can we do this faster?)
+                    cfLi = sl.cho_factor(cfL, lower=True)
+                    Li = sl.cho_solve(cfLi, np.eye(Sigma.shape[0]))
+
+                    ahat = sl.cho_solve(cf, ENx)
+                except np.linalg.LinAlgError:
+                    # Come up with some better exception handling
+                    print "ERROR in Cholesky. Help!"
+                    raise
         except ValueError:
             print "WTF?"
             print "Look in sigma.txt for the Sigma matrix"
@@ -1488,6 +1918,14 @@ def gibbs_sample_a(likob, preva=None, ml=False):
             addcoefficients = ahat
         else:
             addcoefficients = ahat + aadd
+
+        # Test the coefficients for nans and infs
+        nonan = np.all(np.logical_not(np.isnan(addcoefficients)))
+        noinf = np.all(np.logical_not(np.isinf(addcoefficients)))
+        if not (nonan and noinf):
+            np.savetxt('ahat.txt', ahat)
+            np.savetxt('aadd.txt', aadd)
+            raise ValueError("Have inf or nan in solution")
 
         psr.gibbscoefficients = addcoefficients.copy()
         psr.gibbscoefficients[:psr.Mmat.shape[1]] = np.dot(psr.tmpConv, \
@@ -1549,10 +1987,17 @@ def MLGibbs(likob, chainsdir, tol=1.0e-3, noWrite=False):
     # Make a list of all the blocked signal samplers (except for the coefficient
     # samplers)
     loglik_N = gibbs_prepare_loglik_N(likob, pars)
-    loglik_PSD = gibbs_prepare_loglik_Phi(likob, pars)
     loglik_J = gibbs_prepare_loglik_J(likob, pars)
     loglik_Det = gibbs_prepare_loglik_Det(likob, pars)
-    loglik_corrPSD = gibbs_prepare_loglik_corrPhi(likob, pars)
+
+    if not 'corrim' in likob.gibbsmodel:
+        loglik_PSD = gibbs_prepare_loglik_Phi(likob, pars)
+        loglik_corrPSD = gibbs_prepare_loglik_corrPhi(likob, pars)
+        loglik_imPSD = []
+    else:
+        loglik_PSD = []
+        loglik_corrPSD = []
+        loglik_imPSD = gibbs_prepare_loglik_imPhi(likob, pars)
 
     # The gibbs coefficients will be set by gibbs_sample_a
     a = None
@@ -1579,7 +2024,7 @@ def MLGibbs(likob, chainsdir, tol=1.0e-3, noWrite=False):
 
         # If necessary, invert the correlation matrix Svec & Scor with Ffreqs_gw
         # and Fmat_gw
-        if 'corrsig' in likob.gibbsmodel:
+        if 'correx' in likob.gibbsmodel:
             gibbs_prepare_correlations(likob)
 
         while not doneIteration:
@@ -1611,7 +2056,9 @@ def MLGibbs(likob, chainsdir, tol=1.0e-3, noWrite=False):
             # If we have 'm, sample from the deterministic sources
             pars = gibbs_sample_loglik_Det(likob, pars, loglik_Det, ml=True)
 
-            if 'corrsig' in likob.gibbsmodel and likob.have_gibbs_corr:
+            pars = gibbs_sample_loglik_imPhi(likob, a, pars, loglik_imPSD, ml=True)
+
+            if 'correx' in likob.gibbsmodel and likob.have_gibbs_corr:
                 # Generate new GWB parameters
                 pars = gibbs_sample_loglik_corrPhi(likob, a, pars, loglik_corrPSD, ml=True)
 
@@ -1684,13 +2131,33 @@ def RunGibbs(likob, steps, chainsdir, noWrite=False):
     # Make a list of all the blocked signal samplers (except for the coefficient
     # samplers)
     loglik_N = gibbs_prepare_loglik_N(likob, pars)
-    loglik_PSD = gibbs_prepare_loglik_Phi(likob, pars)
     loglik_J = gibbs_prepare_loglik_J(likob, pars)
     loglik_Det = gibbs_prepare_loglik_Det(likob, pars)
-    loglik_corrPSD = gibbs_prepare_loglik_corrPhi(likob, pars)
 
-    # The gibbs coefficients will be set by gibbs_sample_a
-    a = None
+    if not 'corrim' in likob.gibbsmodel:
+        loglik_PSD = gibbs_prepare_loglik_Phi(likob, pars)
+        loglik_corrPSD = gibbs_prepare_loglik_corrPhi(likob, pars)
+        loglik_imPSD = []
+    else:
+        loglik_PSD = []
+        loglik_corrPSD = []
+        loglik_imPSD = gibbs_prepare_loglik_imPhi(likob, pars)
+        likob.Scor_im = []
+        likob.Scor_im_cf = []
+
+
+    # The gibbs coefficients are initially set to 5ns random, each
+    a = []
+    for ii, psr in enumerate(likob.ptapsrs):
+        gibbsQuantities(likob, pars)
+        a.append(np.random.randn(likob.npz[ii])*5.0e-9)
+        psr.gibbsresiduals = psr.detresiduals.copy()
+
+    if 'corrim' in likob.gibbsmodel:
+        # We need to sample the correlated signals once to obtain the matrices
+        # for the sampling of the coefficients
+        temp = gibbs_sample_loglik_imPhi(likob, a, pars, loglik_imPSD,
+                runchain=False)
 
     samples = np.zeros((min(dumpint, steps), ndim+ncoeffs))
     stepind = 0
@@ -1703,7 +2170,7 @@ def RunGibbs(likob, steps, chainsdir, noWrite=False):
 
         # If necessary, invert the correlation matrix Svec & Scor with Ffreqs_gw
         # and Fmat_gw
-        if 'corrsig' in likob.gibbsmodel:
+        if 'correx' in likob.gibbsmodel:
             gibbs_prepare_correlations(likob)
 
         while not doneIteration:
@@ -1715,15 +2182,19 @@ def RunGibbs(likob, steps, chainsdir, noWrite=False):
 
                 doneIteration = True
 
-            except np.linalg.LinAlgError:
+            except (np.linalg.LinAlgError, ValueError):
                 # Why does SVD sometimes not converge?
                 # Try different values...
                 iter += 1
 
                 if iter > 100:
                     print "WARNING: numpy.linalg problems"
+                    #raise
 
-            # Generate new white noise parameers
+                # Just try again
+                raise
+
+            # Generate new white noise parameters
             pars = gibbs_sample_loglik_N(likob, pars, loglik_N)
 
             # Generate new red noise parameters
@@ -1735,9 +2206,11 @@ def RunGibbs(likob, steps, chainsdir, noWrite=False):
             # If we have 'm, sample from the deterministic sources
             pars = gibbs_sample_loglik_Det(likob, pars, loglik_Det)
 
-            if 'corrsig' in likob.gibbsmodel and likob.have_gibbs_corr:
+            if 'correx' in likob.gibbsmodel and likob.have_gibbs_corr:
                 # Generate new GWB parameters
                 pars = gibbs_sample_loglik_corrPhi(likob, a, pars, loglik_corrPSD)
+
+            pars = gibbs_sample_loglik_imPhi(likob, a, pars, loglik_imPSD)
 
         samples[stepind, :ndim] = pars
 

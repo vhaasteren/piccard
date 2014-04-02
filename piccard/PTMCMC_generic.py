@@ -211,7 +211,8 @@ class PTSampler(object):
                     sys.stdout.flush()
 
                     # write output covariance matrix
-                    np.save(self.outDir + '/cov.npy', self.cov)
+                    if not self.nowrite:
+                        np.save(self.outDir + '/cov.npy', self.cov)
 
             # stop
             if self.MPIrank == 0 and iter >= Niter-1:
