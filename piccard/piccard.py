@@ -3116,8 +3116,12 @@ class ptaPulsar(object):
             # model parameters
             MtM = np.dot(self.Mmat.T, self.Mmat)
             MtGc = np.dot(self.Mmat.T, self.Gcmat)
-            cf = sl.cho_factor(MtM)
-            self.tmpConv = sl.cho_solve(cf, MtGc)
+            try:
+                cf = sl.cho_factor(MtM)
+                self.tmpConv = sl.cho_solve(cf, MtGc)
+            except np.linalg.LinAlgError:
+                U, s, Vh = sl.svd(MtM)
+                self.tmpConv = np.dot(np.dot(Vh.T, np.dot(np.diag(1.0/s), U.T)), MtGc)
 
             if write != 'none':
                 # Write all these quantities to the HDF5 file
