@@ -2189,10 +2189,10 @@ def RunGibbs(likob, steps, chainsdir, noWrite=False):
 
                 if iter > 100:
                     print "WARNING: numpy.linalg problems"
-                    #raise
+                    raise
 
                 # Just try again
-                raise
+                #raise
 
             # Generate new white noise parameters
             pars = gibbs_sample_loglik_N(likob, pars, loglik_N)
