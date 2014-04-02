@@ -3204,6 +3204,7 @@ class ptaPulsar(object):
         self.AoGr = np.array(h5df.getData(self.name, 'pic_AoGr',
             dontread=(not self.twoComponentNoise)))
         self.Ffreqs = np.array(h5df.getData(self.name, 'pic_Ffreqs'))
+        self.Dvec = np.array(h5df.getData(self.name, 'pic_Dvec'))
 
         if ndmf > 0:
             self.Fdmfreqs = np.array(h5df.getData(self.name, 'pic_Fdmfreqs'))
@@ -3238,7 +3239,6 @@ class ptaPulsar(object):
                 #dontread=(memsave and not self.twoComponentNoise)))
             self.Fdmmat = np.array(h5df.getData(self.name, 'pic_Fdmmat', dontread=memsave))
             #self.Dmat = np.array(h5df.getData(self.name, 'pic_Dmat', dontread=memsave))
-            self.Dvec = np.array(h5df.getData(self.name, 'pic_Dvec'))
             self.DF = np.array(h5df.getData(self.name, 'pic_DF', dontread=memsave))
             self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat', dontread=memsave))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
@@ -3335,7 +3335,6 @@ class ptaPulsar(object):
             #    dontread=(memsave and not self.twoComponentNoise)))
             self.Fdmmat = np.array(h5df.getData(self.name, 'pic_Fdmmat', dontread=memsave))
             #self.Dmat = np.array(h5df.getData(self.name, 'pic_Dmat', dontread=memsave))
-            self.Dvec = np.array(h5df.getData(self.name, 'pic_Dvec', dontread=memsave))
             self.DF = np.array(h5df.getData(self.name, 'pic_DF', dontread=memsave))
             self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat', dontread=memsave))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
@@ -3380,7 +3379,6 @@ class ptaPulsar(object):
             #    dontread=(memsave and not self.twoComponentNoise)))
             self.Fdmmat = np.array(h5df.getData(self.name, 'pic_Fdmmat', dontread=memsave))
             #self.Dmat = np.array(h5df.getData(self.name, 'pic_Dmat'))
-            self.Dvec = np.array(h5df.getData(self.name, 'pic_Dvec'))
             self.DF = np.array(h5df.getData(self.name, 'pic_DF'))
             self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat'))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
@@ -3448,7 +3446,6 @@ class ptaPulsar(object):
             #    dontread=(memsave and not self.twoComponentNoise)))
             self.Fdmmat = np.array(h5df.getData(self.name, 'pic_Fdmmat', dontread=memsave))
             #self.Dmat = np.array(h5df.getData(self.name, 'pic_Dmat'))
-            self.Dvec = np.array(h5df.getData(self.name, 'pic_Dvec'))
             self.DF = np.array(h5df.getData(self.name, 'pic_DF'))
             self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat'))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
