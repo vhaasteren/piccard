@@ -5476,7 +5476,7 @@ class ptaLikelihood(object):
                                     psr.name})
                         index += 1
 
-                if 'correx' in self.gibbsmodel or 'corrim' in self.gibbsmodel:
+                if 'correx' in self.gibbsmodel:
                     for ii in range(self.Fmat_gw.shape[1]):
                         flagname = "Corr-sig-"+psr.name
                         flagvalue = str(psr.Ffreqs[ii])
