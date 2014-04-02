@@ -5189,6 +5189,10 @@ class ptaLikelihood(object):
                 stype='equad', corr='single')
         separateEfacs = (numEfacs + numEquads + numJits) > 2
 
+        # When doing Gibbs, we really do not want to separate this stuff
+        if  likfunc in ['gibbs', 'mark11']:
+            separateEfacs[:] = True
+
         # Modify design matrices, and create pulsar Auxiliary quantities
         for pindex, m2psr in enumerate(self.ptapsrs):
             # If we model DM variations, we will need to include QSD
