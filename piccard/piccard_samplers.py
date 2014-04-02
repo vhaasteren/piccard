@@ -1521,8 +1521,12 @@ def reconstructDM(likob, chainfile, outputdir, burnin=0, thin=1, \
             # Re-scale the MDMmat to reconstruct DM, not residuals
             DDMmat = ((1.0 / lo_psr.Dvec) * MDMmat.T).T
             
-            Mtot = np.append(DDMmat, lo_psr.Fdmmat, axis=1)
-            totind = np.append(MDMind, np.where(Fdmind)[0])
+            if len(dmparlist) > 0:
+                Mtot = np.append(DDMmat, lo_psr.Fdmmat, axis=1)
+                totind = np.append(MDMind, np.where(Fdmind)[0])
+            else:
+                Mtot = lo_psr.Fdmmat
+                totind = np.where(Fdmind)[0]
 
             # Better have a pretty thin chain, 'cause this will take a lot of
             # memory! :)
