@@ -1804,6 +1804,8 @@ def gibbs_sample_a(likob, a, ml=False):
             psr.gibbsresiduals = psr.detresiduals.copy()
     """
 
+    npsrs = len(likob.ptapsrs)
+    xi2 = np.zeros(npsrs)
 
     for ii, psr in enumerate(likob.ptapsrs):
         nzs = likob.npz[ii]
@@ -1914,6 +1916,11 @@ def gibbs_sample_a(likob, a, ml=False):
 
         # Get a sample from the coefficient distribution
         aadd = np.dot(Li, np.random.randn(Li.shape[0]))
+        # See what happens if we use numpy
+        # aadd = np.random.multivariate_normal(np.zeros(Sigi.shape[0]), \
+        #        Sigi)
+        #numpy.random.multivariate_normal(mean, cov[, size])
+
         if ml:
             addcoefficients = ahat
         else:
@@ -1937,7 +1944,9 @@ def gibbs_sample_a(likob, a, ml=False):
         psr.gibbssubresiduals = np.dot(psr.Zmat, addcoefficients)
         psr.gibbsresiduals = psr.detresiduals - psr.gibbssubresiduals
 
-    return a
+        xi2[ii] = np.sum(psr.gibbsresiduals**2 / psr.Nvec)
+
+    return a, xi2
 
 
 
@@ -2118,6 +2127,10 @@ def RunGibbs(likob, steps, chainsdir, noWrite=False):
         chainfile = open(chainfilename, 'w')
         chainfile.close()
 
+        xi2filename = chainsdir + '/xi2.txt'
+        xi2file = open(xi2filename, 'w')
+        xi2file.close()
+
         # Also save the residuals for all pulsars
         likob.saveResiduals(chainsdir)
 
@@ -2176,7 +2189,7 @@ def RunGibbs(likob, steps, chainsdir, noWrite=False):
         while not doneIteration:
             try:
                 # Generate new coefficients
-                a = gibbs_sample_a(likob, a)
+                a, xi2 = gibbs_sample_a(likob, a)
 
                 samples[stepind, ndim:] = np.hstack(a)
 
@@ -2233,6 +2246,15 @@ def RunGibbs(likob, steps, chainsdir, noWrite=False):
                     chainfile.write('\n')
                 chainfile.close()
             stepind = 0
+
+        if not noWrite:
+            xi2file = open(xi2filename, 'a+')
+
+            xi2file.write('{0}\t'.format(step))
+            xi2file.write('\t'.join(["%.17e"%\
+                    (xi2[kk]) for kk in range(len(xi2))]))
+            xi2file.write('\n')
+            xi2file.close()
 
         percent = (step * 100.0 / steps)
         sys.stdout.write("\rGibbs: %d%%" %percent)
