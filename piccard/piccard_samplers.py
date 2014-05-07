@@ -833,7 +833,7 @@ def makeResidualsPlot(ax, toas, residuals, toaerrs, flags, \
 
 def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
         parametersfile=None, sampler='auto', make1dplots=True, \
-        maxpages=-1):
+        maxpages=-1, skipTMP=False):
     """
     Given an MCMC chain file, and an output directory, make all the results
     plots
@@ -846,6 +846,11 @@ def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
     @param sampler:     What method was used to generate the mcmc chain
                         (auto=autodetect). Options:('emcee', 'MultiNest',
                         'ptmcmc')
+    @param make1dplots: whether or not we make the efac/equad/jitter-only pages
+    @param maxpages:    How many pages for the timing model/other triplots we'll
+                        have at maximum
+    @param skipTMP:     Whether or not we'll make triangle plots for the timing
+                        model parameters
     """
     # Read the mcmc chain
     (llf, lpf, chainf, labels, pulsarid, pulsarname, stype, mlpso, mlpsopars) = \
@@ -1141,7 +1146,7 @@ def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
             # Deselect these parameters for plotting
             dopar = np.logical_and(dopar, np.logical_not(ind))
 
-            if np.sum(ind) > 1:
+            if np.sum(ind) > 1 and not skipTMP:
                 # Make a triplot
                 npagemax = 8
                 npages = int(np.sum(ind) / npagemax)
@@ -1192,7 +1197,7 @@ def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
                     #plt.savefig(fileout+'.eps')
                     #plt.close(fig)
                 sys.stdout.write("\n")
-            elif np.sum(ind) == 1:
+            elif np.sum(ind) == 1 and not skipTMP:
                 # Make a 1D plot
                 # Make a single plot
                 pn = (np.array(pulsarname)[ind])[0]

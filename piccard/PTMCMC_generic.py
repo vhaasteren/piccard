@@ -146,9 +146,9 @@ class PTSampler(object):
             self.temp = self.ladder[self.MPIrank]
 
             # set up output file
-            fname = self.outDir + '/chain_{0}.txt'.format(self.temp)
+            self.fname = self.outDir + '/chain_{0}.txt'.format(self.temp)
             if not self.nowrite:
-                self._chainfile = open(fname, 'w')
+                self._chainfile = open(self.fname, 'w')
                 self._chainfile.close()
 
 
@@ -202,7 +202,7 @@ class PTSampler(object):
             # write to file
             if iter % isave == 0:
                 if not self.nowrite:
-                    self._writeToFile(fname, iter, isave, thin)
+                    self._writeToFile(self.fname, iter, isave, thin)
                 if self.MPIrank == 0 and self.verbose:
                     sys.stdout.write('\r')
                     sys.stdout.write('Finished %2.2f percent in %f s Acceptance rate = %g'\
