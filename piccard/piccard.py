@@ -3123,6 +3123,14 @@ class ptaPulsar(object):
                 U, s, Vh = sl.svd(MtM)
                 self.tmpConv = np.dot(np.dot(Vh.T, np.dot(np.diag(1.0/s), U.T)), MtGc)
 
+            # Also store the inverse
+            try:
+                Qs,Rs = sl.qr(self.tmpConv)
+                self.tmpConvi = sl.solve(Rs, Qs.T)
+            except np.linalg.LinAlgError:
+                U, s, Vt = sl.svd(self.tmpConv)
+                self.tmpConvi = np.dot(U * (1.0 / s), Vt)
+
             if write != 'none':
                 # Write all these quantities to the HDF5 file
                 h5df.addData(self.name, 'pic_Gr', self.Gr)
