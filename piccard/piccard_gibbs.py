@@ -12,13 +12,26 @@ from .piccard import *
 from .piccard_pso import *
 from . import PTMCMC_generic as ptmcmc
 
+
 """
 This file implements a blocked Gibbs sampler. Gibbs sampling is a special case
 of Metropolis-Hastings, and in Pulsar Timing data analysis it can be used to
 increase the mixing rate of the chain. We still use the PAL/PAL2 version of
 PTMCMC_generic to do the actual MCMC steps, but the steps are performed in
 parameter blocks.
+
+
+Note: this is the second incarnation of the Gibbs sampler, that uses partially
+overlapping blocks. The overlap is in the quadratic parameters.
 """
+
+
+
+
+
+
+
+
 
 def gibbs_prepare_get_quadratic_cov(likob):
     """
@@ -62,31 +75,6 @@ def gibbs_prepare_get_quadratic_cov(likob):
 
     return (lz, lcov)
 
-def gibbs_prepare_rednoise_freqshapes(likob):
-    """
-    Not all pulsars have the same number of frequencies in the model. This
-    function prepares a frequency mask, that selects which pulsars have which
-    frequencies. The mask is saved in the likelihood object
-
-    @param likob:       Full likelihood object
-    """
-    maxfreqs = np.max(likob.npf)
-    likob.freqmask = np.zeros((len(likob.ptapsrs), maxfreqs), dtype=np.bool)
-    likob.freqb = np.zeros((len(likob.ptapsrs), maxfreqs))
-
-    for ii in range(likob.ptapsrs):
-        likob.freqmask[ii, :likob.npf[ii]] = True
-
-def gibbs_set_freqb(likob, b):
-    """
-    Instead of having a list with all the red noise Fourier modes, we place them
-    in a numpy array here
-    """
-    if len(b) != len(likob.ptapsrs):
-        raise ValueError('Incompatible mode match')
-
-    for ii in range(likob.freqb.shape[0]):
-        likob.freqb[ii,likob.freqmask[ii,:]] = b[ii]
 
 def gibbs_construct_mode_covariance(likob, mode):
     """

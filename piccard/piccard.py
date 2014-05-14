@@ -1521,9 +1521,14 @@ class ptaPulsar(object):
     toaerrs = None
     prefitresiduals = None
     residuals = None
-    detresiduals = None     # Residuals after subtraction of deterministic sources
-    gibbsresiduals = None     # Residuals used in Gibbs sampling  (QUESTION: why no parameter?)
+    detresiduals = None         # Residuals after subtraction of deterministic sources
+    gibbsresiduals = None       # Residuals used in Gibbs sampling  (QUESTION: why no parameter?)
     gibbscoefficients = None    # Coefficients used in Gibbs sampling  (QUESTION: why no parameter?)
+    gibbsresiduals_sub = None   # Residuals subtracted from detresiduals
+    gibbsresiduals_M = None     # Residuals subtracted in the Gibbs conditional for TM
+    gibbsresiduals_D = None     # Residuals subtracted in the Gibbs conditional for DM
+    gibbsresiduals_F = None     # Residuals subtracted the Gibbs conditional for RN
+    gibbsresiduals_U = None     # Residuals subtracted the Gibbs conditional for Jitter
     freqs = None
     #unitconversion = None
     Gmat = None
@@ -3108,6 +3113,8 @@ class ptaPulsar(object):
             else:
                 self.Zmat = Ft_4
 
+            psr.gibbscoefficients = np.zeros(self.Zmat.shape[1])
+
             self.Wvec = np.zeros(self.Mmat.shape[0]-self.Mmat.shape[1])
             self.Wovec = np.zeros(0)
             self.Gr = np.dot(self.Hmat.T, self.residuals)
@@ -3585,6 +3592,10 @@ class ptaLikelihood(object):
     npm = None      # Number of columns of design matrix (full design matrix)
     npz = None      # Number of columns of Zmat
     Tmax = None     # One Tmax to rule them all...
+
+    # Which pulsars have which red noise frequencies...
+    freqmask = None     # Mask which have which
+    freqb = None        # Quadratic Fourier coefficients, in a 2D-array
 
     # The Phi, Theta, and Sigma matrices
     Phi = None          # mark1, mark3, mark?, mark6                (Noise & corr)
@@ -4163,6 +4174,14 @@ class ptaLikelihood(object):
 
             if self.likfunc in ['mark4ln', 'mark9', 'mark10']:
                 self.npff[ii] += len(psr.SFfreqs)
+
+            # These quantities are mostly used in Gibbs sampling, for when we
+            # are numerically dealing with the quadratic coefficients.
+            maxfreqs = np.max(self.npf)
+            self.freqmask = np.zeros((npsrs, maxfreqs), dtype=np.bool)
+            self.freqb = np.zeros((npsrs, maxfreqs))
+            for jj, psr in enumerate(self.ptapsrs):
+                self.freqmask[jj, :self.npf[jj]] = True
 
             #if self.likfunc in ['mark1', 'mark3', 'mark4', 'mark4ln', 'mark11']:
             self.npu[ii] = len(psr.avetoas)
@@ -5667,6 +5686,7 @@ class ptaLikelihood(object):
         return (signame, signameshort, parmin, parmax, freqs)
 
 
+
     """
     Loop over all signals, and fill the diagonal pulsar noise covariance matrix
     (based on efac/equad)
@@ -6094,6 +6114,266 @@ class ptaLikelihood(object):
             if psr.twoComponentNoise:
                 Gr = np.dot(psr.Hmat.T, psr.detresiduals)
                 psr.AGr = np.dot(psr.Amat.T, Gr)
+
+
+
+    def setSinglePsrNoise(self, parameters, selection=None, pp=0):
+        """
+        Same as setPsrNoise, but now for a single pulsar
+        
+        @param parameters:  the full array of parameters
+        @param selection::  mask of signals to include
+        @param pp:          index of pulsar to do
+        """
+
+        psr = likob.ptapsrs[pp]
+
+        # Re-set all the pulsar noise vectors
+        if psr.twoComponentNoise:
+            psr.Nwvec[:] = 0
+            psr.Nwovec[:] = 0
+        #else:
+        psr.Nvec[:] = 0
+        psr.Jvec[:] = 0
+
+        if selection is None:
+            selection = np.array([1]*len(self.ptasignals), dtype=np.bool)
+
+        # Loop over all white noise signals, and fill the pulsar Nvec
+        for ss, m2signal in enumerate(self.ptasignals):
+            if m2signal['pulsarind'] == pp and selection[ss]:
+                if m2signal['stype'] == 'efac':
+                    if m2signal['npars'] == 1:
+                        pefac = parameters[m2signal['parindex']]
+                    else:
+                        pefac = m2signal['pstart'][0]
+
+                    if psr.twoComponentNoise:
+                        psr.Nwvec += psr.Wvec * pefac**2
+
+                        if len(psr.Wovec) > 0:
+                            psr.Nwovec += psr.Wovec * pefac**2
+
+                    psr.Nvec += m2signal['Nvec'] * pefac**2
+                elif m2signal['stype'] == 'equad':
+                    if m2signal['npars'] == 1:
+                        pequadsqr = 10**(2*parameters[m2signal['parindex']])
+                    else:
+                        pequadsqr = 10**(2*m2signal['pstart'][0])
+
+                    if psr.twoComponentNoise:
+                        psr.Nwvec += pequadsqr
+                        psr.Nwovec += pequadsqr
+
+                    psr.Nvec += m2signal['Nvec'] * pequadsqr
+                elif m2signal['stype'] == 'jitter':
+                    if m2signal['npars'] == 1:
+                        pequadsqr = 10**(2*parameters[m2signal['parindex']])
+                    else:
+                        pequadsqr = 10**(2*m2signal['pstart'][0])
+
+                    psr.Jvec += m2signal['Jvec'] * pequadsqr
+
+    def setTheta(self, parameters, selection=None, pp=0):
+        """
+        Same as constructPhiAndTheta, but now for a single pulsar and only DM
+        variations (Theta)
+        
+        @param parameters:  the full array of parameters
+        @param selection::  mask of signals to include
+        @param pp:          index of pulsar to do
+        """
+        psr = likob.ptapsrs[pp]
+
+        # Re-set the relevant parts of Theta
+        inds = np.sum(self.npfdm[:pp])
+        inde = inds + self.npfdm[pp]
+        self.Thetavec[inds:inde] = 0
+
+        if selection is None:
+            selection = np.array([1]*len(self.ptasignals), dtype=np.bool)
+
+        # Loop over all signals, and fill the phi matrix
+        #for m2signal in self.ptasignals:
+        for ss, m2signal in enumerate(self.ptasignals):
+            if m2signal['pulsarind'] == pp and selection[ss]:
+                # Create a parameters array for this particular signal
+                sparameters = m2signal['pstart'].copy()
+                sparameters[m2signal['bvary']] = \
+                        parameters[m2signal['parindex']:m2signal['parindex']+m2signal['npars']]
+                if m2signal['stype'] == 'dmspectrum':
+                    if m2signal['corr'] == 'single':
+                        findex = np.sum(self.npffdm[:m2signal['pulsarind']])
+                        nfreq = int(self.npfdm[m2signal['pulsarind']]/2)
+
+                        pcdoubled = np.array([sparameters, sparameters]).T.flatten()
+
+                        # Fill the Theta matrix
+                        self.Thetavec[findex:findex+2*nfreq] += 10**pcdoubled
+                elif m2signal['stype'] == 'dmpowerlaw':
+                    Amp = 10**sparameters[0]
+                    Si = sparameters[1]
+
+                    if m2signal['corr'] == 'single':
+                        findex = np.sum(self.npffdm[:m2signal['pulsarind']])
+                        nfreq = int(self.npfdm[m2signal['pulsarind']]/2)
+                        freqpy = self.ptapsrs[m2signal['pulsarind']].Fdmfreqs * pic_spy
+                        # TODO: change the units of the DM signal
+                        pcdoubled = (Amp**2 * pic_spy**3 / (12*np.pi*np.pi * m2signal['Tmax'])) * freqpy ** (-Si)
+
+                        # Fill the Theta matrix
+                        self.Thetavec[findex:findex+2*nfreq] += pcdoubled
+                elif m2signal['stype'] == 'dmfrequencyline':
+                    # For a DM frequency line, the DFF is assumed to be set elsewhere
+                    findex = np.sum(self.npffdm[:m2signal['pulsarind']]) + \
+                            self.npfdm[m2signal['pulsarind']] + 2*m2signal['npsrdmfreqindex']
+
+                    pcdoubled = np.array([sparameters[1], sparameters[1]])
+                    self.Thetavec[findex:findex+2] += 10**pcdoubled
+
+    def setPhi(self, parameters, selection=None, gibbs_expansion=False):
+        """
+        Same as constructPhiAndTheta, but now only for the red noise/GWB signal
+        
+        @param parameters:      the full array of parameters
+        @param selection::      mask of signals to include
+        @param gibbs_expansion: Place correlated signals (only) in two
+                                tensor-product components
+
+        Note: to clarify, this function will not populate Phi. Only Phivec, and
+        optionally the correlated Gibbs expansion units.
+        """
+
+        self.Phivec[:] = 0      # ''
+        self.Thetavec[:] = 0    # ''
+        self.Svec[:] = 0
+        self.Scor[:] = 0
+        npsrs = len(self.ptapsrs)
+
+        if selection is None:
+            selection = np.array([1]*len(self.ptasignals), dtype=np.bool)
+
+        # Loop over all signals, and fill the phi matrix
+        #for m2signal in self.ptasignals:
+        for ss in range(len(self.ptasignals)):
+            m2signal = self.ptasignals[ss]
+            if selection[ss]:
+                # Create a parameters array for this particular signal
+                sparameters = m2signal['pstart'].copy()
+                sparameters[m2signal['bvary']] = \
+                        parameters[m2signal['parindex']:m2signal['parindex']+m2signal['npars']]
+                if m2signal['stype'] == 'spectrum':
+                    if m2signal['corr'] == 'single':
+                        findex = np.sum(self.npff[:m2signal['pulsarind']])
+                        # nfreq = int(self.npf[m2signal['pulsarind']]/2)
+                        nfreq = m2signal['npars']
+
+                        # Pcdoubled is an array where every element of the parameters
+                        # of this m2signal is repeated once (e.g. [1, 1, 3, 3, 2, 2, 5, 5, ...]
+
+                        pcdoubled = np.array([sparameters, sparameters]).T.flatten()
+
+                        self.Phivec[findex:findex+2*nfreq] += 10**pcdoubled
+                    elif m2signal['corr'] in ['gr', 'uniform', 'dipole', \
+                                              'anisotropicgwb', 'pixelgwb']:
+                        nfreq = m2signal['npars']
+
+                        if m2signal['corr'] in ['gr', 'uniform', 'dipole']:
+                            pcdoubled = np.array([sparameters, sparameters]).T.flatten()
+                            corrmat = m2signal['corrmat']
+                        elif m2signal['corr'] == 'anisotropicgwb':
+                            nclm = m2signal['aniCorr'].clmlength()
+                            # These indices do not seem right at all!
+                            pcdoubled = np.array([\
+                                    sparameters[:-nclm],\
+                                    sparameters[:-nclm]]).T.flatten()
+                            clm = sparameters[-nclm:]
+                            corrmat = m2signal['aniCorr'].corrmat(clm)
+                        elif m2signal['corr'] == 'pixelgwb':
+                            npixels = m2signal['aniCorr'].npixels
+                            pixpars = sparameters[-2*npixels:]
+                            corrmat = m2signal['aniCorr'].corrmat(pixpars)
+                            pcdoubled = np.array([sparameters[:-2*npixels], \
+                                    sparameters[:-2*npixels]]).T.flatten()
+
+
+                        if gibbs_expansion:
+                            # Expand in spectrum and correlations
+                            self.Svec += 10**pcdoubled
+                            self.Scor = corrmat.copy()     # Yes, well, there can be only one
+                elif m2signal['stype'] == 'powerlaw':
+                    Amp = 10**sparameters[0]
+                    Si = sparameters[1]
+
+                    if m2signal['corr'] == 'single':
+                        findex = np.sum(self.npff[:m2signal['pulsarind']])
+                        nfreq = int(self.npf[m2signal['pulsarind']]/2)
+                        freqpy = self.ptapsrs[m2signal['pulsarind']].Ffreqs * pic_spy
+                        pcdoubled = (Amp**2 * pic_spy**3 / (12*np.pi*np.pi * m2signal['Tmax'])) * freqpy ** (-Si)
+
+                        self.Phivec[findex:findex+2*nfreq] += pcdoubled
+                    elif m2signal['corr'] in ['gr', 'uniform', 'dipole', \
+                                              'anisotropicgwb', 'pixelgwb']:
+                        freqpy = m2signal['Ffreqs'] * pic_spy
+                        pcdoubled = (Amp**2 * pic_spy**3 / (12*np.pi*np.pi * m2signal['Tmax'])) * freqpy ** (-Si)
+                        nfreq = len(freqpy)
+
+                        if m2signal['corr'] in ['gr', 'uniform', 'dipole']:
+                            corrmat = m2signal['corrmat']
+                        elif m2signal['corr'] == 'anisotropicgwb':
+                            nclm = m2signal['aniCorr'].clmlength()
+                            clm = sparameters[-nclm:]
+                            corrmat = m2signal['aniCorr'].corrmat(clm)
+                        elif m2signal['corr'] == 'pixelgwb':
+                            pixpars = sparameters[3:]
+                            corrmat = m2signal['aniCorr'].corrmat(pixpars)
+
+                        if gibbs_expansion:
+                            # Expand in spectrum and correlations
+                            self.Svec += pcdoubled
+                            self.Scor = corrmat.copy()
+                elif m2signal['stype'] == 'spectralModel':
+                    Amp = 10**sparameters[0]
+                    alpha = sparameters[1]
+                    fc = 10**sparameters[2] / pic_spy
+
+                    if m2signal['corr'] == 'single':
+                        findex = np.sum(self.npff[:m2signal['pulsarind']])
+                        nfreq = int(self.npf[m2signal['pulsarind']]/2)
+                        freqpy = self.ptapsrs[m2signal['pulsarind']].Ffreqs
+                        pcdoubled = (Amp * pic_spy**3 / m2signal['Tmax']) * ((1 + (freqpy/fc)**2)**(-0.5*alpha))
+
+                        self.Phivec[findex:findex+2*nfreq] += pcdoubled
+                    elif m2signal['corr'] in ['gr', 'uniform', 'dipole', \
+                                              'anisotropicgwb', 'pixelgwb']:
+                        freqpy = self.ptapsrs[0].Ffreqs * pic_spy
+                        pcdoubled = (Amp * pic_spy**3 / m2signal['Tmax']) / \
+                                ((1 + (freqpy/fc)**2)**(-0.5*alpha))
+                        nfreq = len(freqpy)
+
+                        if m2signal['corr'] in ['gr', 'uniform', 'dipole']:
+                            corrmat = m2signal['corrmat']
+                        elif m2signal['corr'] == 'anisotropicgwb':
+                            nclm = m2signal['aniCorr'].clmlength()
+                            # These indices don't seem right. Check the -nclm part
+                            clm = sparameters[-nclm:m2signal['parindex']+m2signal['npars']]
+                            corrmat = m2signal['aniCorr'].corrmat(clm)
+                        elif m2signal['corr'] == 'pixelgwb':
+                            pixpars = sparameters[3:]
+                            corrmat = m2signal['aniCorr'].corrmat(pixpars)
+
+                        if gibbs_expansion:
+                            # Expand in spectrum and correlations
+                            self.Svec += pcdoubled
+                            self.Scor = corrmat.copy()     # Yes, well, there can be only one
+                elif m2signal['stype'] == 'frequencyline':
+                    # For a frequency line, the FFmatrix is assumed to be set elsewhere
+                    findex = np.sum(self.npff[:m2signal['pulsarind']]) + \
+                            self.npf[m2signal['pulsarind']] + 2*m2signal['npsrfreqindex']
+
+                    pcdoubled = np.array([sparameters[1], sparameters[1]])
+
+                    self.Phivec[findex:findex+2] += 10**pcdoubled
 
 
 
@@ -8113,6 +8393,8 @@ class ptaLikelihood(object):
                 -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) \
                 +0.5*rGSigmaGr - 0.5*PhiLD - 0.5*SigmaLD - 0.5*ThetaLD
 
+    
+
 
     """
     mark11 loglikelihood of the pta model/likelihood implementation
@@ -8167,6 +8449,564 @@ class ptaLikelihood(object):
 
         return -0.5*np.sum(self.npobs)*np.log(2*np.pi) \
                 -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet)
+
+    # Now we will define the Gibbs likelihood functions, all preceded with
+    # gibbs_.... First a few extra auxiliary functions to make that possible
+
+    def gibbs_set_freqb(self, b):
+        """
+        Instead of having a list with all the red noise Fourier modes, we place them
+        in a numpy array here
+
+        @param b:   a list (yes, a list) of numpy arrays of quadratic
+                    coefficients. In this case, the Fourier modes
+        """
+        if len(b) != len(self.ptapsrs):
+            raise ValueError('Incompatible mode match')
+
+        for ii in range(self.freqb.shape[0]):
+            self.freqb[ii,self.freqmask[ii,:]] = b[ii]
+
+    def gibbs_construct_mode_covariance(self, mode):
+        """
+        Given the mode number, this function calculates the full-pulsar correlation
+        matrix of the red noise/GWs. Data is used from likob.Phivec, and likob.Scor,
+        and likob.Svec. Remember that likob.Scor is contains only the correlations
+        of one single (the last in the array) signal. So this only works for one
+        correlated signal in the model (for now).
+
+        @param mode:    The Fourier mode number
+        """
+        gw_pcdoubled = self.Svec
+        msk = self.freqmask[:, mode]
+
+        cov = self.Scor[msk,:][:,msk] * gw_pcdoubled[mode]
+        for ii, psr in self.ptapsrs:
+            ind = np.sum(msk[:ii])
+            cov[ind, ind] += self.Phivec[self.nfs[ii]+mode]
+
+        return cov
+
+    def gibbs_get_signal_mask(self, pp, stypes):
+        """
+        Given the pulsar number, get the parameter mask for the requested
+        parameters
+
+        @param pp:      Pulsar number. -2 means all
+        @param stypes:  Which signals to include (e.g. ['efac', 'equad'])
+
+        @return:    Boolean mask that indicates which parameters are selected
+        """
+        ndims = self.dimensions
+        msk = np.zeros(ndims, dtype=np.bool)
+
+        for ss, m2signal in enumerate(self.ptasignals):
+            if (m2signal['pulsarind'] == pp or pp == -2) and \
+                    m2signal['stype'] in stypes:
+                inds = m2signal['parindex']
+                inde = inds + m2signal['npars']
+                msk[inds:inde] = True
+
+        return msk
+
+    def gibbs_update_auxiliaries(self):
+        """
+        After we have chosen new white-noise parameters, we need to update the
+        auxiliary quantities that we need for the Woodbury expansions. These
+        are:
+
+        We need rGr, rGu, rGD, rGF, but for each of these, the r is different.
+        The r has some quadratic parameters subtracted. We therefore need the
+        following quantities, so we can quickly build those.
+        - Ni (trivial)
+        - GcNiGc_inv
+        - NiGc
+
+        With these, we can reconstruct the following when r is set:
+        - rGr
+        - rGU
+        - rGD
+        - rGF
+
+        Further, we make
+        - GNGldet (per pulsar)
+        - DGGNGGD (per pulsar, DM variations)
+        - UGGNGGU (per pulsar, Jitter)
+        - FGGNGGF (one for whole array, red-noise/GWB)
+
+        Note: we do not use the two-component noise model here.
+        """
+        # We assume that all the noise vectors have been set appropriately
+        for ii, psr in enumerate(self.ptapsrs):
+            findex = np.sum(self.npf[:ii])
+            nfreq = int(self.npf[ii]/2)
+            fdmindex = np.sum(self.npfdm[:ii])
+            nfreqdm = int(self.npfdm[ii]/2)
+            uindex = np.sum(self.npu[:ii])
+            nus = self.npu[ii]
+
+            #Nir = psr.detresiduals / psr.Nvec
+            NiGc = ((1.0/psr.Nvec) * psr.Gcmat.T).T
+            GcNiGc = np.dot(psr.Gcmat.T, NiGc)
+            NiU = ((1.0/psr.Nvec) * psr.Umat.T).T
+            #GcNir = np.dot(NiGc.T, psr.detresiduals)
+            GcNiU = np.dot(NiGc.T, psr.Umat)
+
+            try:
+                cf = sl.cho_factor(GcNiGc)
+                self.GNGldet[ii] = np.sum(np.log(psr.Nvec)) + \
+                        2*np.sum(np.log(np.diag(cf[0])))
+                GcNiGcr = sl.cho_solve(cf, GcNir)
+                GcNiGcU = sl.cho_solve(cf, GcNiU)
+            except np.linalg.LinAlgError:
+                print "MAJOR ERROR"
+
+        
+
+    def gibbs_update_residuals(self, aparameters, pp, \
+            nqind_m, nqind_f, nqind_d, nqind_u, \
+            which='all'):
+        """
+        The different Gibbs conditionals require different quadratic parameters
+        to be subtracted from the residuals, depending on which parameters are
+        kept fixed. This function updates the residuals
+
+        @param aparameters: All the model parameters, including the quadratic
+                            pars
+        @param pp:          Index of pulsar for which we'll do it
+        @param nqind_m:     Index in parameter array for timing model
+        @param nqind_f:     Index in parameter array for red noise
+        @param nqind_d:     Index in parameter array for DM variations
+        @param nqind_u:     Index in parameter array for jitter
+
+        @param which:       Which residuals to update. Options: all, tm, red,
+                            dm, jitter
+        """
+        psr = self.ptapsrs[pp]
+
+        indarr = np.array([nqind_m, nqind_f, nqind_d, nqind_u])
+        if np.all(indarr == -1):
+            raise ValueError("No valid indices provided")
+        inds = indarr[indarr > -1][0]
+
+        if which == 'all':
+            Zmat = psr.Zmat
+            psr.gibbscoefficients = aparameters[nqind_m:psr.Zmat.shape[1]]
+            psr.gibbsresiduals_sub = np.dot(Zmat, psr.gibbscoefficients)
+            psr.gibbsresiduals = psr.detresiduals - psr.gibbsresiduals_sub
+        elif which == 'tm':
+            if nqind_m < 0:
+                raise ValueError("No valid index for timing model")
+
+            Zmat = psr.Gcmat
+            gibbscoefficients = aparameters[nqind_m:psr.Zmat.shape[1]]
+            psr.gibbsresiduals_M = np.dot(Zmat, gibbscoefficients)
+        elif which == 'red':
+            if nqind_f < 0:
+                raise ValueError("No valid index for red noise")
+
+            Zmat = psr.Fmat
+            gibbscoefficients = aparameters[nqind_f:psr.Zmat.shape[1]]
+            psr.gibbsresiduals_F = np.dot(Zmat, gibbscoefficients)
+        elif which == 'dm':
+            if nqind_d < 0:
+                raise ValueError("No valid index for DM variations")
+
+            Zmat = psr.Fdmmat
+            gibbscoefficients = aparameters[nqind_d:psr.Zmat.shape[1]]
+            psr.gibbsresiduals_D = np.dot(Zmat, gibbscoefficients)
+        elif which == 'jitter':
+            if nqind_u < 0:
+                raise ValueError("No valid index for Jitter")
+
+            Zmat = psr.Umat
+            gibbscoefficients = aparameters[nqind_u:psr.Zmat.shape[1]]
+            psr.gibbsresiduals_U = np.dot(Zmat, gibbscoefficients)
+
+
+    def gibbs_full_loglikelihood(self, aparameters):
+        """
+        Within the Gibbs sampler, we would still like to have access to the
+        loglikelihood value, even though it is not necessarily used for the sampling
+        itself. This function evaluates the ll.
+
+        This function does not set any of the noise/correlation auxiliaries. It
+        assumes that has been done earlier in the Gibbs step. Also, it assumes the
+        Gibbsresiduals have been set properly.
+
+        NOTE:   the timing model parameters are assumed to be in the basis of Gcmat,
+                not Mmat. This for numerical stability (really doesn't work
+                otherwise).
+
+        @param aparameters: All the model parameters, including the quadratic pars
+        @param coeffs:      List of all the Gibbs coefficients per pulsar
+
+        @return:            The log-likelihood
+        """
+
+        ndim = self.dimensions     # This does not include the quadratic parameters
+        quadparind = ndim + 0       # Index of quadratic parameters
+
+        # Now we also know the position of the hyper parameters
+        allparameters = aparameters.copy()
+        parameters = allparameters[:ndim]
+
+        # Set the white noise
+        self.setPsrNoise(parameters)
+
+        # Set the red noise / DM correction quantities. Use the Gibbs expansion to
+        # build the per-frequency Phi-matrix
+        self.constructPhiAndTheta(parameters, make_matrix=False, \
+                noise_vec=True, gibbs_expansion=True)
+
+        if self.haveDetSources:
+            self.updateDetSources(parameters)
+
+        ksi = []        # Timing model parameters
+        a = []          # Red noise / GWB Fourier modes
+        d = []          # DM variation Fourier modes
+        j = []          # Jitter/epochave residuals
+
+        for ii, psr in enumerate(self.ptapsrs):
+            nzs = self.npz[ii]
+            nms = self.npm[ii]
+            findex = np.sum(self.npf[:ii])
+            nfs = self.npf[ii]
+            fdmindex = np.sum(self.npfdm[:ii])
+            nfdms = self.npfdm[ii]
+            npus = self.npu[ii]
+
+            ntot = 0
+            nqind = quadparind + 0
+            nqind_m = -1
+            nqind_f = -1
+            nqind_d = -1
+            nqind_u = -1
+            if 'design' in self.gibbsmodel:
+                #allparameters[nqind:nqind+nms] = np.dot(psr.tmpConvi, allparameters[nqind:nqind+nms])
+                ksi.append(allparameters[nqind:nqind+nms])
+                ntot += nms
+                nqind_m = nqind
+                nqind += nms
+            if 'rednoise' in self.gibbsmodel:
+                a.append(allparameters[nqind:nqind+nfs])
+                ntot += nfs
+                nqind_f = nqind
+                nqind += nfs
+            if 'dm' in self.gibbsmodel:
+                d.append(allparameters[nqind:nqind+nfdms])
+                ntot += nfdms
+                nqind_dm = nqind
+                nqind += nfdms
+            if 'jitter' in self.gibbsmodel:
+                j.append(allparameters[nqind:nqind+npus])
+                ntot += npus
+                nqind_u = nqind
+                nqind += npus
+
+            # Calculate the quadratic parameter subtracted residuals
+            #psr.gibbscoefficients = allparameters[quadparind:quadparind+ntot]
+            #psr.gibbsresiduals_sub = np.dot(psr.Zmat, psr.gibbscoefficients)
+            #psr.gibbsresiduals = psr.detresiduals - psr.gibbsresiduals_sub
+            self.gibbs_update_residuals(allparameters, ii, \
+                    nqind_m, nqind_f, nqind_dm, nqind_u, which='all')
+
+            quadparind += ntot
+
+        # Now evaluate the various quadratic forms
+        xi2 = 0
+        ldet = 0
+        for ii, psr in enumerate(self.ptapsrs):
+            # The quadratic form of the residuals
+            xi2 += np.sum(psr.gibbsresiduals ** 2 / psr.Nvec)
+            ldet += np.sum(np.log(psr.Nvec))
+
+            # Jitter is done per pulsar
+            if 'jitter' in self.gibbsmodel:
+                xi2 += np.sum(j[ii] ** 2 / psr.Jvec)
+                ldet += np.sum(np.log(psr.Jvec))
+
+        # Quadratic form of red noise, done for full array
+        if 'rednoise' in self.gibbsmodel:
+            # Do some fancy stuff here per frequency
+            if len(self.ptapsrs) > 1:
+                # Loop over all frequencies
+                for ii in range(0, len(self.Svec), 2):
+                    msk = self.freqmask[:, ii]
+
+                    # The covariance between sin/cos modes is identical
+                    cov = self.gibbs_construct_mode_covariance(ii)
+                    cf = sl.cho_factor(cov)
+
+                    # Cosine mode
+                    bc = self.freqb[msk, ii]
+                    Lx = sl.cho_solve(cf, bc)
+                    xi2 += np.sum(Lx**2)
+                    ldet += 2*np.sum(np.log(np.diag(cf[0])))
+
+                    # Sine mode
+                    bs = self.freqb[msk, ii+1]
+                    Lx = sl.cho_solve(cf, bs)
+                    xi2 += np.sum(Lx**2)
+                    ldet += 2*np.sum(np.log(np.diag(cf[0])))
+            else:
+                # Single pulsar. Just combine the correlated and noise frequencies
+                pcd = self.Phivec + self.Svec
+                xi2 += np.sum(np.hstack(a)**2 / pcd)
+                ldet += np.sum(np.log(pcd))
+
+        # Quadratic form of DM variations, for full array
+        if 'dm' in self.gibbsmodel:
+            xi2 += np.sum(np.hstack(d)**2 / self.Thetavec)
+            ldet += np.sum(np.log(self.Thetavec))
+
+        return -0.5*np.sum(self.npobs)*np.log(2*np.pi) - 0.5*xi2 - 0.5*ldet
+
+    def gibbs_psr_noise_loglikelihood(self, parameters, pp, mask, allpars):
+        """
+        The conditional loglikelihood for the subset of white noise parameters
+        (EFAC and EQUAD, and possibly jitter later on).
+
+        @param parameters:      The hyper-parameter array
+        @param pp:              Index of the pulsar we are treating
+        @param mask:            The mask to use for the full set of parameters
+        @param allpars:         The vector of all hyper paramertes parmaeters
+        """
+        psr = self.ptapsrs[pp]
+
+        # Set the parameters
+        apars = allpars.copy()
+        apars[msk] = parameters
+        self.setSinglePsrNoise(apars, pp=pp)
+
+        return -0.5 * np.sum(psr.gibbs_residuals_N**2 / psr.Nvec) -\
+                0.5 * np.sum(np.log(psr.Nvec))
+
+    def gibbs_psr_DM_loglikelihood(self, parameters, pp, mask, allpars):
+        """
+        The conditional loglikelihood for the subset of DM hyper-parameters. It
+        assumes the red noise and quadratic parameters are kept fixed. The DM
+        coefficients and the timing model parameters are analytically
+        marginalised over. The rest of the coefficients are subtracted from the
+        residuals already.
+
+        @param parameters:      The hyper-parameter array
+        @param pp:              Index of the pulsar we are treating
+        @param mask:            The mask to use for the full set of parameters
+        @param allpars:         The vector of all hyper parameters parmaeters
+        """
+        psr = self.ptapsrs[pp]
+
+        # Obtain the Thetavec indices we need
+        inds = np.sum(self.npfdm[:pp])
+        inde = inds + self.npfdm[pp]
+
+        # Set the parameters
+        apars = allpars.copy()
+        apars[msk] = parameters
+        self.setTheta(apars, pp=pp)
+
+        # Required auxiliaries from the noise-construction:
+        # DGGNGGD   (per-pulsar, G adjusted for DMVs)
+        # rGD       (per-pulsar, G adjusted for DMVs)
+        #    --- perhaps we need to save NiD, in order to allow r to vary
+        # rGr_D     (per-pulsar, G adjusted for DMVs)
+        #    --- don't know how to do that one...
+        # GNGldet_D   (per-pulsar, G adjusted for DMVs)
+
+        ThetaLD = np.sum(np.log(self.Thetavec[inds:inde]))
+
+        Sigma = self.DGGNGGD[pp] + np.diag(1.0 / self.Thetavec[inds:inde])
+
+        try:
+            cf = sl.cho_factor(Sigma)
+            SigmaLD = 2*np.sum(np.log(np.diag(cf[0])))
+            rGSigmaGr = np.dot(self.rGD[pp], sl.cho_solve(cf, self.rGD[pp]))
+        except np.linalg.LinAlgError:
+            U, s, Vh = sl.svd(Sigma)
+            if not np.all(s > 0):
+                raise ValueError("ERROR: Sigma singular according to SVD")
+            SigmaLD = np.sum(np.log(s))
+            rGSigmaGr = np.dot(self.rGD[pp], np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, self.rGD[pp]))))
+
+        # Return the conditional marginalised log-likelihood
+        return -0.5*np.sum(self.rGr_D[pp]) - 0.5*self.GNGldet_D[pp] \
+                + 0.5*rGSigmaGr - 0.5*SigmaLD - 0.5*ThetaLD
+
+
+    def gibbs_psr_J_loglikelihood(self, parameters, pp, mask, allpars):
+        """
+        The conditional loglikelihood for the subset of jitter hyper-parameters. It
+        assumes the red noise/DM and quadratic parameters are kept fixed. The
+        jitter/correlated-equad coefficients and the timing model parameters are
+        analytically marginalised over. The rest of the coefficients are
+        subtracted from the residuals already.
+
+        @param parameters:      The hyper-parameter array
+        @param pp:              Index of the pulsar we are treating
+        @param mask:            The mask to use for the full set of parameters
+        @param allpars:         The vector of all hyper parameters parmaeters
+
+        Note: right now this marginalises over some timing model. This seems
+              unnecessary. Jitter should not be correlated at all with the timing
+              model. Just use fully subtracted residuals, and no auxiliaries
+              will be necessary
+        """
+        psr = self.ptapsrs[pp]
+
+        # Obtain the Thetavec indices we need
+        inds = np.sum(self.npfdm[:pp])
+        inde = inds + self.npfdm[pp]
+
+        # Set the parameters
+        apars = allpars.copy()
+        apars[msk] = parameters
+        self.setSinglePsrNoise(apars, pp=pp)
+
+        # Required auxiliaries from the noise-construction:
+        # UGGNGGU   (per-pulsar, G adjusted for Jitter)
+        # rGU       (per-pulsar, G adjusted for Jitter)
+        #    --- perhaps we need to save NiU, in order to allow r to vary
+        # rGr_U     (per-pulsar, G adjusted for Jitter)
+        #    --- don't know how to do that one...
+        # GNGldet_U   (per-pulsar, G adjusted for Jitter)
+
+        JLD = np.sum(np.log(psr.Jvec))
+
+        Sigma = self.UGGNGGU[pp] + np.diag(1.0 / psr.Jvec)
+
+        try:
+            cf = sl.cho_factor(Sigma)
+            SigmaLD = 2*np.sum(np.log(np.diag(cf[0])))
+            rGSigmaGr = np.dot(self.rGU[pp], sl.cho_solve(cf, self.rGU[pp]))
+        except np.linalg.LinAlgError:
+            U, s, Vh = sl.svd(Sigma)
+            if not np.all(s > 0):
+                raise ValueError("ERROR: Sigma singular according to SVD")
+            SigmaLD = np.sum(np.log(s))
+            rGSigmaGr = np.dot(self.rGU[pp], np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, self.rGU[pp]))))
+
+        # Return the conditional marginalised log-likelihood
+        return -0.5*np.sum(self.rGr_U[pp]) - 0.5*self.GNGldet_U[pp] \
+                + 0.5*rGSigmaGr - 0.5*SigmaLD - 0.5*JLD
+
+
+
+    def gibbs_Phi_loglikelihood(self, parameters, mask, allpars):
+        """
+        The conditional loglikelihood for the subset of red-noise/GWB
+        hyper-parameters. It assumes the DMV parameters are kept fixed. The red
+        noise/GWB coefficients and the timing model parameters are analytically
+        marginalised over. The rest of the coefficients are subtracted from the
+        residuals already.
+
+        @param parameters:      The hyper-parameter array
+        @param mask:            The mask to use for the full set of parameters
+        @param allpars:         The vector of all hyper parameters parmaeters
+        """
+        beSlow = True       # Do not use frequency optimisation (yet)
+
+        # Set the parameters
+        apars = allpars.copy()
+        apars[msk] = parameters
+
+        if beSlow:
+            self.constructPhiAndTheta(apars, make_matrix=True)
+        else:
+            self.setPhi(apars, gibbs_expansion=True) 
+
+        # Required auxiliaries from the noise-construction:
+        # FGGNGGF   (per-pulsar, G adjusted for red noise)
+        # rGF       (per-pulsar, G adjusted for red noise)
+        #    --- perhaps we need to save NiD, in order to allow r to vary
+        # rGr_F     (per-pulsar, G adjusted for red noise)
+        #    --- don't know how to do that one...
+        # GNGldet_F   (per-pulsar, G adjusted for red noise)
+
+        if len(self.ptapsrs) == 1:
+            # No fancy tricks required
+            Phivec = self.Phivec + self.Svec
+            Phiinv = 1.0 / Phivec
+
+            PhiLD = np.sum(np.log(self.Phivec))
+            Sigma = self.FGGNGGF + np.diag(Phiinv)
+        else:
+            if beSlow:
+                try:
+                    cf = sl.cho_factor(self.Phi)
+                    Phiinv = sl.cho_solve(cf, np.eye(self.Phi.shape[0]))
+                    PhiLD = 2*np.sum(np.log(np.diag(cf[0])))
+
+                    Sigma = self.FGGNGGF + Phiinv
+                except np.linalg.LinAlgError:
+                    raise
+            else:
+                Sigma = self.FGGNGGF.copy()
+
+                # We need to do some index magic in this section with masks and such
+                msk_ind = np.zeros(self.freqmask.shape, dtype=np.int)
+                msk_ind[self.freqmask] = np.arange(np.sum(freqmask))
+
+                # Perform the inversion of Phi per frequency. Is much much faster
+                PhiLD = 0
+                for mode in range(0, self.freqmask.shape[1], 2):
+                    rncov = gibbs_construct_mode_covariance(mode)
+                    try:
+                        cf = sl.cho_factor(rncov)
+                        rncov_inv = sl.cho_solve(cf, np.eye(rncov.shape[0]))
+
+                        # Add the determinant twice
+                        PhiLD += 4 * np.sum(np.log(np.diag(cf[0])))
+                    except np.linalg.LinAlgError:
+                        try:
+                            Qs,Rs = sl.qr(rncov)
+                            rncov_inv = sl.solve(Rs, Qs.T)
+
+                            # Add the determinant twice
+                            PhiLD += 2 * np.sum(np.log(np.diag(Rs)))
+                        except np.linalg.LinAlgError:
+                            U, s, Vh = sl.svd(rncov)
+                            if not np.all(s > 0):
+                                raise ValueError("ERROR: Sigma singular according to SVD")
+                            rncov_inv = np.dot(U * (1.0/s), Vh)
+
+                            # Add the determinant twice
+                            PhiLD += 2 * np.sum(np.log(s))
+                    
+                    # Ok, we have the inverse for the individual modes. Now add them
+                    # to the full sigma matrix
+
+                    # Firstly the Cosine mode
+                    newmsk = np.zeros(self.freqmask.shape, dtype=np.bool)
+                    newmsk[:, mode] = self.freqmask[:, mode]
+                    mode_ind = msk_ind[newmsk]
+                    Sigma[[mode_ind],mode_ind] += rncov_inv
+
+                    # Secondly the Sine mode
+                    newmsk[:] = False
+                    newmsk[:, mode+1] = self.freqmask[:, mode+1]
+                    mode_ind = msk_ind[newmsk]
+                    Sigma[[mode_ind],mode_ind] += rncov_inv
+
+
+        # With Sigma constructed, we can invert it
+        try:
+            cf = sl.cho_factor(Sigma)
+            SigmaLD = 2*np.sum(np.log(np.diag(cf[0])))
+            rGSigmaGr = np.dot(self.rGF, sl.cho_solve(cf, self.rGF))
+        except np.linalg.LinAlgError:
+            U, s, Vh = sl.svd(Sigma)
+            if not np.all(s > 0):
+                raise ValueError("ERROR: Sigma singular according to SVD")
+            SigmaLD = np.sum(np.log(s))
+            rGSigmaGr = np.dot(self.rGF, np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, self.rGF))))
+
+        # Return the conditional marginalised log-likelihood
+        return -0.5*np.sum(self.rGr_F[pp]) - 0.5*self.GNGldet_F[pp] \
+                + 0.5*rGSigmaGr - 0.5*SigmaLD - 0.5*PhiLD
+
+
+
 
 
 
