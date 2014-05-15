@@ -36,7 +36,9 @@ class PTSampler(object):
     """
 
     def __init__(self, ndim, logl, logp, cov, comm=MPI.COMM_WORLD, \
-                 outDir='./chains', verbose=True, nowrite=False):
+                 outDir='./chains', verbose=True, nowrite=False, \
+                 loglargs=[], loglkwargs={}, \
+                 logpargs=[], logpkwargs={}):
 
         # MPI initialization
         self.comm = comm
@@ -44,8 +46,8 @@ class PTSampler(object):
         self.nchain = self.comm.Get_size()
 
         self.ndim = ndim
-        self.logl = logl
-        self.logp = logp
+        self.logl = _function_wrapper(logl, loglargs, loglkwargs)
+        self.logp = _function_wrapper(logp, logpargs, logpkwargs)
         self.outDir = outDir
         self.verbose = verbose
         self.nowrite = nowrite
@@ -731,6 +733,30 @@ class PTSampler(object):
         return q, qxy
 
     # TODO: jump statistics
+
+
+
+class _function_wrapper(object):
+    """
+    This is a hack to make the likelihood function pickleable when ``args``
+    or ``kwargs`` are also included.
+
+    """
+    def __init__(self, f, args, kwargs):
+        self.f = f
+        self.args = args
+        self.kwargs = kwargs
+
+    def __call__(self, x):
+        return self.f(x, *self.args, **self.kwargs)
+   
+
+
+
+
+
+
+
 
 
 

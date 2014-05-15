@@ -1569,6 +1569,9 @@ class ptaPulsar(object):
     Emat = None
     EEmat = None
     Zmat = None         # For the Gibbs sampling, this is the Fmat/Emat
+    Zmat_F = None       # For the Gibbs sampling, this is the Fmat/Emat
+    Zmat_D = None
+    Zmat_U = None
     Gr = None
     GGr = None
     GtF = None
@@ -2339,6 +2342,47 @@ class ptaPulsar(object):
         else:
             raise IOError, "Invalid compression argument"
 
+    def getZmat(self, gibbsmodel, which='all'):
+        """
+        Return Zmat, given the gibbsmodel, and which sources to include
+
+        @param gibbsmodel:  List of which quadratics are available
+        @param which:       Which quadratics to vary (not fixed)
+                            Options: all, F, D, U
+        """
+        nf = self.Fmat.shape[1]
+        ndmf = self.Fdmmat.shape[1]
+
+        if 'design' in gibbsmodel:
+            Ft_1 = self.Gcmat.copy()
+        else:
+            Ft_1 = np.zeros((self.Gcmat.shape[0], 0))
+
+        if nf > 0 and 'rednoise' in gibbsmodel and \
+                (which == 'all' or which == 'F'):
+            Ft_2 = np.append(Ft_1, self.Fmat, axis=1)
+        else:
+            Ft_2 = Ft_1
+
+        if ndmf > 0 and 'dm' in gibbsmodel and \:
+            (which == 'all' or which == 'D'):
+            Ft_3 = np.append(Ft_2, self.DF, axis=1)
+        else:
+            Ft_3 = Ft_2
+
+        if 'jitter' in gibbsmodel and \
+            (which == 'all' or which == 'U'):
+            Ft_4 = np.append(Ft_3, self.Umat, axis=1)
+        else:
+            Ft_4 = Ft_3
+
+        if 'correx' in gibbsmodel and \
+            (which == 'all' or which == 'F'):
+            Zmat = np.append(Ft_4, self.Fmat, axis=1)
+        else:
+            Zmat = Ft_4
+
+        return Zmat
 
     """
     For every pulsar, quite a few Auxiliary quantities (like GtF etc.) are
@@ -3088,30 +3132,10 @@ class ptaPulsar(object):
             pass
 
         if likfunc == 'gibbs' or write == 'all':
-            if 'design' in gibbsmodel:
-                Ft_1 = self.Gcmat.copy()
-            else:
-                Ft_1 = np.zeros((self.Gcmat.shape[0], 0))
-
-            if 'rednoise' in gibbsmodel:
-                Ft_2 = np.append(Ft_1, self.Fmat, axis=1)
-            else:
-                Ft_2 = Ft_1
-
-            if ndmf > 0 and 'dm' in gibbsmodel:
-                Ft_3 = np.append(Ft_2, self.DF, axis=1)
-            else:
-                Ft_3 = Ft_2
-
-            if 'jitter' in gibbsmodel:
-                Ft_4 = np.append(Ft_3, self.Umat, axis=1)
-            else:
-                Ft_4 = Ft_3
-
-            if 'correx' in gibbsmodel:
-                self.Zmat = np.append(Ft_4, self.Fmat, axis=1)
-            else:
-                self.Zmat = Ft_4
+            self.Zmat = self.getZmat(gibbsmodel, which='all')
+            self.Zmat_F = self.getZmat(gibbsmodel, which='F')
+            self.Zmat_D = self.getZmat(gibbsmodel, which='D')
+            self.Zmat_U = self.getZmat(gibbsmodel, which='U')
 
             psr.gibbscoefficients = np.zeros(self.Zmat.shape[1])
 
@@ -3624,6 +3648,26 @@ class ptaLikelihood(object):
     EGGNGGE = None      #                      mark6
     ZGGNGGZ = None      #                              gibbs
     NGGF = None         #        mark3, mark?  mark6
+
+
+    # Gibbs auxiliaries
+    GcNiGc_inv = []
+    NiGc = []
+    GcNiGcF = []
+    GcNiGcD = []
+    GcNiGcU = []
+    NiF = []
+    NiD = []
+    NiU = []
+    rGr_F = np.zeros(0)
+    rGr_D = np.zeros(0)
+    rGr_U = np.zeros(0)
+    rGD = []
+    rGU = []
+    #rGF = np.zeros(0)
+    DGGNGGD = []
+    UGGNGGU = []
+    #FGGNGGF = np.zeros((0, 0))
 
     # Whether we have already called the likelihood in one call, so we can skip
     # some things in comploglikelihood
@@ -4286,6 +4330,51 @@ class ptaLikelihood(object):
             self.Fmat_gw = self.ptapsrs[ind].Fmat.copy()
             self.Ffreqs_gw = self.ptapsrs[ind].Ffreqs.copy()
 
+            # For the blocked Gibbs sampler with marginalised posteriors
+            # conditionals, we quite a few auxiliaries
+            self.GcNiGc_inv = []
+            self.NiGc = []
+            self.GcNiGcF = []
+            self.GcNiGcD = []
+            self.GcNiGcU = []
+            self.NiF = []
+            self.NiD = []
+            self.NiU = []
+            self.rGr_F = np.zeros(npsrs)
+            self.rGr_D = np.zeros(npsrs)
+            self.rGr_U = np.zeros(npsrs)
+            self.rGD = []
+            self.rGU = []
+            self.rGF = np.zeros(np.sum(self.npff))
+            self.DGGNGGD = []
+            self.UGGNGGU = []
+            self.FGGNGGF = np.zeros((np.sum(self.npff), np.sum(self.npff)))
+
+            for ii, psr in enumerate(self.ptapsrs):
+                self.GcNiGc_inv.append(np.zeros(\
+                        psr.Gcmat.shape[1], psr.Gcmat.shape[1]))
+                self.NiGc.append(np.zeros(psr.Gcmat.shape))
+
+                if 'rednoise' in self.gibbsmodel:
+                    self.GcNiGcF.append(\
+                            np.zeros((psr.Gcmat.shape[1], self.npff[ii])))
+                    self.NiF.append(np.zeros(psr.Fmat.shape))
+
+                if 'dm' in self.gibbsmodel:
+                    self.GcNiGcD.append(\
+                            np.zeros((psr.Gcmat.shape[1], self.npffdm[ii])))
+                    self.NiD.append(np.zeros(psr.DF.shape))
+                    self.rGD.append(np.zeros(self.npffdm[ii]))
+                    self.DGGNGGD.append(np.zeros(\
+                            (self.npffdm[ii], self.npffdm[ii])))
+
+                if 'jitter' in self.gibbsmodel:
+                    self.GcNiGcU.append(\
+                            np.zeros((psr.Gcmat.shape[1], self.npu[ii])))
+                    self.NiU.append(np.zeros(psr.Umat.shape))
+                    self.rGU.append(np.zeros(self.npu[ii]))
+                    self.UGGNGGU.append(np.zeros(\
+                            (self.npu[ii], self.npu[ii])))
 
 
     """
@@ -8476,6 +8565,9 @@ class ptaLikelihood(object):
         correlated signal in the model (for now).
 
         @param mode:    The Fourier mode number
+        @param calcInv: Whether we need the inverse matrix, too
+
+        NOTE: Only use Cholesky for now. Do we need mor
         """
         gw_pcdoubled = self.Svec
         msk = self.freqmask[:, mode]
@@ -8486,6 +8578,27 @@ class ptaLikelihood(object):
             cov[ind, ind] += self.Phivec[self.nfs[ii]+mode]
 
         return cov
+
+    def gibbs_construct_all_freqcov(self):
+        """
+        The Scor and Phivec quantities have been set. This function creates the
+        Cholesky factors and inverses of all the full-array frequency
+        components. All is saved in the lists Scor_im_cf, Scor_im_inv, which are
+        lists, with entries for all frequencies (not modes)
+        """
+        self.Scor_im_cf = []
+        self.Scor_im_inv = []
+
+        for mode in range(0, self.freqmask.shape[1], 2):
+            rncov = gibbs_construct_mode_covariance(mode)
+
+            try:
+                self.Scor_im_cf.append(sl.cho_factor(rncov))
+                cf = self.Scor_im_cf[-1]
+                self.Scor_im_inv.append(sl.cho_solve(cf, np.eye(rncov.shape[0])))
+            except np.linalg.LinAlgError:
+                print "rncov not positive definite!"
+                raise
 
     def gibbs_get_signal_mask(self, pp, stypes):
         """
@@ -8521,9 +8634,17 @@ class ptaLikelihood(object):
         - Ni (trivial)
         - GcNiGc_inv
         - NiGc
+        - GcNiGcF
+        - GcNiGcD
+        - GcNiGcU
+        - NiF
+        - NiD
+        - NiU
 
         With these, we can reconstruct the following when r is set:
-        - rGr
+        - rGr_F
+        - rGr_D
+        - rGr_U
         - rGU
         - rGD
         - rGF
@@ -8546,24 +8667,110 @@ class ptaLikelihood(object):
             nus = self.npu[ii]
 
             #Nir = psr.detresiduals / psr.Nvec
-            NiGc = ((1.0/psr.Nvec) * psr.Gcmat.T).T
+            self.NiGc[ii] = ((1.0/psr.Nvec) * psr.Gcmat.T).T
             GcNiGc = np.dot(psr.Gcmat.T, NiGc)
-            NiU = ((1.0/psr.Nvec) * psr.Umat.T).T
-            #GcNir = np.dot(NiGc.T, psr.detresiduals)
-            GcNiU = np.dot(NiGc.T, psr.Umat)
-
             try:
                 cf = sl.cho_factor(GcNiGc)
                 self.GNGldet[ii] = np.sum(np.log(psr.Nvec)) + \
                         2*np.sum(np.log(np.diag(cf[0])))
-                GcNiGcr = sl.cho_solve(cf, GcNir)
-                GcNiGcU = sl.cho_solve(cf, GcNiU)
+                self.GcNiGc_inv[ii] = sl.cho_solve(cf, np.eye(GcNiGc.shape[1]))
             except np.linalg.LinAlgError:
-                print "MAJOR ERROR"
+                print "Singular matrix GcNiGc (Cholesky). Update to QR!!"
+                raise
 
+            if 'rednoise' in self.gibbsmodel:
+                self.NiF[ii] = ((1.0/psr.Nvec) * psr.Fmat.T).T
+                GcNiF = np.dot(self.NiGc[ii].T, psr.Fmat)
+                self.GcNiGcF[ii] = np.dot(self.GcNiGc_inv[ii], GcNiF)
+                self.FGGNGGF[findex:findex+2*nfreq, findex:findex+2*nfreq] = \
+                        np.dot(self.NiF[ii].T, psr.Fmat) - \
+                        np.dot(GcNiF.T, self.GcNiGcF[ii])
+
+            if 'dm' in self.gibbsmodel:
+                self.NiD[ii] = ((1.0/psr.Nvec) * psr.DF.T).T
+                GcNiD = np.dot(self.NiGc[ii].T, psr.DF)
+                self.GcNiGcD[ii] = np.dot(self.GcNiGc_inv[ii], GcNiD)
+                self.DGGNGGD[ii] = np.dot(self.NiD[ii].T, psr.DF) - \
+                        np.dot(GcNiD.T, self.GcNiGcD[ii])
+
+            if 'jitter' in self.gibbsmodel:
+                self.NiU[ii] = ((1.0/psr.Nvec) * psr.Umat.T).T
+                GcNiU = np.dot(self.NiGc[ii].T, psr.Umat)
+                self.GcNiGcU[ii] = np.dot(self.GcNiGc_inv[ii], GcNiU)
+                self.UGGNGGU[ii] = np.dot(self.NiU[ii].T, psr.Umat) - \
+                        np.dot(GcNiU.T, self.GcNiGcU[ii])
+
+
+    def gibbs_update_auxiliaries_r(self):
+        """
+        This function is run after new quadratic parameters/deterministic
+        parameters have been determined, resulting in an updated residual
+        vector. Because of the new residual vector, we need to update rGr, rGU,
+        rGD, and rGF. We do that in this function.
+        """
+        # We assume that all the noise vectors have been set appropriately
+        for ii, psr in enumerate(self.ptapsrs):
+            findex = np.sum(self.npf[:ii])
+            nfreq = int(self.npf[ii]/2)
+            fdmindex = np.sum(self.npfdm[:ii])
+            nfreqdm = int(self.npfdm[ii]/2)
+            uindex = np.sum(self.npu[:ii])
+            nus = self.npu[ii]
+
+
+            # First, actually deterimine the new residual vectors. We assume the
+            # subtractables have been set already
+            r_F = psr.detresiduals.copy()
+            r_D = psr.detresiduals.copy()
+            r_U = psr.detresiduals.copy()
+
+            if 'design' in self.gibbsmodel:
+                # Eventually, Jitter will not marginalise over anything
+                # r_U -= psr.gibbsresiduals_M
+                pass
+
+            if 'rednoise' in self.gibbsmodel:
+                r_D -= psr.gibbsresiduals_F
+                r_U -= psr.gibbsresiduals_F
+
+            if 'dm' in self.gibbsmodel:
+                r_F -= psr.gibbsresiduals_D
+                r_U -= psr.gibbsresiduals_D
+
+            if 'jitter' in self.gibbsmodel:
+                r_F -= psr.gibbsresiduals_U
+                r_D -= psr.gibbsresiduals_U
+
+            # Now the residuals are correct. Now make rGF, and rGr
+            if 'rednoise' in self.gibbsmodel:
+                Nir = r_F / psr.Nvec
+                GcNir = np.dot(self.NiGc[ii].T, r_F)
+                GcNiGcr = np.dot(self.GcNiGc_inv[ii], GcNir)
+
+                self.rGr_F[ii] = np.dot(r_F, Nir) - np.dot(GcNir, GcNiGcr)
+                self.rGF[findex:findex+2*nfreq] = np.dot(r_F, self.NiF[ii]) - \
+                        np.dot(GcNir, self.GcNiGcF[ii])
+
+            if 'dm' in self.gibbsmodel:
+                Nir = r_D / psr.Nvec
+                GcNir = np.dot(self.NiGc[ii].T, r_D)
+                GcNiGcr = np.dot(self.GcNiGc_inv[ii], GcNir)
+
+                self.rGr_D[ii] = np.dot(r_D, Nir) - np.dot(GcNir, GcNiGcr)
+                self.rGD[ii] = np.dot(r_D, self.NiD[ii]) - \
+                        np.dot(GcNir, self.GcNiGcD[ii])
+
+            if 'jitter' in self.gibbsmodel:
+                Nir = r_U / psr.Nvec
+                GcNir = np.dot(self.NiGc[ii].T, r_U)
+                GcNiGcr = np.dot(self.GcNiGc_inv[ii], GcNir)
+
+                self.rGr_U[ii] = np.dot(r_U, Nir) - np.dot(GcNir, GcNiGcr)
+                self.rGU[ii] = np.dot(r_U, self.NiU[ii]) - np.dot(GcNir, \
+                        self.GcNiGcU[ii])
         
 
-    def gibbs_update_residuals(self, aparameters, pp, \
+    def gibbs_update_subresiduals(self, aparameters, pp, \
             nqind_m, nqind_f, nqind_d, nqind_u, \
             which='all'):
         """
@@ -8579,8 +8786,9 @@ class ptaLikelihood(object):
         @param nqind_d:     Index in parameter array for DM variations
         @param nqind_u:     Index in parameter array for jitter
 
-        @param which:       Which residuals to update. Options: all, tm, red,
+        @param which:       Which residuals to update. Options: full, all, tm, red,
                             dm, jitter
+                            (full = only full model, all means everything)
         """
         psr = self.ptapsrs[pp]
 
@@ -8589,33 +8797,33 @@ class ptaLikelihood(object):
             raise ValueError("No valid indices provided")
         inds = indarr[indarr > -1][0]
 
-        if which == 'all':
+        if (which == 'full' or which = 'all') and 'design' in self.gibbsmodel:
             Zmat = psr.Zmat
             psr.gibbscoefficients = aparameters[nqind_m:psr.Zmat.shape[1]]
             psr.gibbsresiduals_sub = np.dot(Zmat, psr.gibbscoefficients)
             psr.gibbsresiduals = psr.detresiduals - psr.gibbsresiduals_sub
-        elif which == 'tm':
+        if (which == 'tm' or which = 'all'):
             if nqind_m < 0:
                 raise ValueError("No valid index for timing model")
 
             Zmat = psr.Gcmat
             gibbscoefficients = aparameters[nqind_m:psr.Zmat.shape[1]]
             psr.gibbsresiduals_M = np.dot(Zmat, gibbscoefficients)
-        elif which == 'red':
+        if (which == 'red' or which = 'all') and 'rednoise' in self.gibbsmodel:
             if nqind_f < 0:
                 raise ValueError("No valid index for red noise")
 
             Zmat = psr.Fmat
             gibbscoefficients = aparameters[nqind_f:psr.Zmat.shape[1]]
             psr.gibbsresiduals_F = np.dot(Zmat, gibbscoefficients)
-        elif which == 'dm':
+        if (which == 'dm' or which = 'all') and 'dm' in self.gibbsmodel:
             if nqind_d < 0:
                 raise ValueError("No valid index for DM variations")
 
-            Zmat = psr.Fdmmat
+            Zmat = psr.DF
             gibbscoefficients = aparameters[nqind_d:psr.Zmat.shape[1]]
             psr.gibbsresiduals_D = np.dot(Zmat, gibbscoefficients)
-        elif which == 'jitter':
+        if (which == 'jitter' or which = 'all') and 'jitter' in self.gibbsmodel:
             if nqind_u < 0:
                 raise ValueError("No valid index for Jitter")
 
@@ -8623,8 +8831,264 @@ class ptaLikelihood(object):
             gibbscoefficients = aparameters[nqind_u:psr.Zmat.shape[1]]
             psr.gibbsresiduals_U = np.dot(Zmat, gibbscoefficients)
 
+    def gibbs_update_allsubresiduals(self, aparameters, pp, which='all'):
+        """
+        For pulsar pp, create all the subtracted residual vectors.
 
-    def gibbs_full_loglikelihood(self, aparameters):
+        @param aparameters: All the model parameters, including the quadratic
+                            pars
+        @param pp:          Index of the pulsar
+        @param which:       Which residuals to update. Default = all of 'm
+        """
+        psr = self.ptapsrs[pp]
+
+        nzs = self.npz[pp]
+        nms = self.npm[pp]
+        findex = np.sum(self.npf[:pp])
+        nfs = self.npf[pp]
+        fdmindex = np.sum(self.npfdm[:pp])
+        nfdms = self.npfdm[pp]
+        npus = self.npu[pp]
+
+        ndim = self.dimensions     # This does not include the quadratic parameters
+        quadparind = ndim + np.sum(self.npz[:pp])
+
+        ksi = []        # Timing model parameters
+        a = []          # Red noise / GWB Fourier modes
+        d = []          # DM variation Fourier modes
+        j = []          # Jitter/epochave residuals
+
+        ntot = 0
+        nqind = quadparind + 0
+        nqind_m = -1
+        nqind_f = -1
+        nqind_d = -1
+        nqind_u = -1
+        if 'design' in self.gibbsmodel:
+            #allparameters[nqind:nqind+nms] = np.dot(psr.tmpConvi, allparameters[nqind:nqind+nms])
+            ksi.append(allparameters[nqind:nqind+nms])
+            ntot += nms
+            nqind_m = nqind
+            nqind += nms
+        if 'rednoise' in self.gibbsmodel:
+            a.append(allparameters[nqind:nqind+nfs])
+            ntot += nfs
+            nqind_f = nqind
+            nqind += nfs
+        if 'dm' in self.gibbsmodel:
+            d.append(allparameters[nqind:nqind+nfdms])
+            ntot += nfdms
+            nqind_dm = nqind
+            nqind += nfdms
+        if 'jitter' in self.gibbsmodel:
+            j.append(allparameters[nqind:nqind+npus])
+            ntot += npus
+            nqind_u = nqind
+            nqind += npus
+
+        # Calculate the quadratic parameter subtracted residuals
+        #psr.gibbscoefficients = allparameters[quadparind:quadparind+ntot]
+        #psr.gibbsresiduals_sub = np.dot(psr.Zmat, psr.gibbscoefficients)
+        #psr.gibbsresiduals = psr.detresiduals - psr.gibbsresiduals_sub
+        self.gibbs_update_subresiduals(allparameters, pp, \
+                nqind_m, nqind_f, nqind_dm, nqind_u, which='all')
+
+    def gibbs_get_initial_quadratics(self, pp):
+        """
+        Given a pulsar number, return an initial value for the quadratic
+        parameters based on absolutely nothing
+        """
+        qarr = np.zeros(self.npz[pp])
+        ind = 0
+        nms = self.npm[pp]
+        nfs = self.npf[pp]
+        nfdms = self.npfdm[pp]
+        npus = self.npu[pp]
+
+        if 'design' in self.gibbsmodel:
+            qarr[ind:ind+nms] = 0.0
+            ind += nms
+        if 'rednoise' in self.gibbsmodel:
+            qarr[ind:ind+nfs] = 2.0e-9 * np.random.randn(nfs)
+            ind += nfs
+        if 'dm' in self.gibbsmodel:
+            qarr[ind:ind+nfdms] = 2.0e-9 * np.random.randn(nfdms)
+            ind += nfdms
+        if 'jitter' in self.gibbsmodel:
+            qarr[ind:ind+npus] = 2.0e-9 * np.random.randn(npus)
+            ind += npus
+
+        return qarr
+
+
+    def gibbs_sample_quadratics(self, parameters, a, pp, which='all', ml=False):
+        """
+        Given the values of the hyper parameters, generate new quadratic
+        parameters for pulsar pp.
+
+        @param parameters:  The hyper-parameters of the likelihood
+        @param a:           List of all quadratic parameters
+        @param pp:          For which pulsar to generate the quadratics
+        @param which:       Which quadratics to generate and which to fix
+        @param ml:          Whether to provide ML estimates, or to sample
+        """
+        npsrs = len(self.ptapsrs)
+        xi2 = np.zeros(npsrs)
+        b = []
+
+        nzs = self.npz[pp]
+        nms = self.npm[pp]
+        findex = np.sum(self.npf[:pp])
+        nfs = self.npf[pp]
+        fdmindex = np.sum(self.npfdm[:pp])
+        nfdms = self.npfdm[pp]
+        npus = self.npu[pp]
+
+        psr = self.ptapsrs[pp]
+        if which == 'all':
+            Zmat = psr.Zmat
+        elif which == 'F':
+            Zmat = psr.Zmat_F
+        elif which == 'D':
+            Zmat = psr.Zmat_D
+        elif which == 'U':
+            Zmat = psr.Zmat_U
+
+        # Make ZNZ and Sigma
+        ZNZ = np.dot(psr.Zmat.T, ((1.0/psr.Nvec) * psr.Zmat.T).T)
+        Sigma = ZNZ.copy()
+
+        # ahat is the slice ML value for the coefficients. Need ENx
+        ENx = np.dot(psr.Zmat.T, psr.detresiduals / psr.Nvec)
+
+        # Depending on what signals are in the Gibbs model, we'll have to add
+        # prior-covariances to ZNZ
+        zindex = 0
+        if 'design' in self.gibbsmodel:
+            # Do nothing, she'll be 'right
+            zindex += nms
+
+        if 'corrim' in self.gibbsmodel:
+            (pSinv_vec, pPvec) = gibbs_psr_corrs_im(self, pp, a)
+
+            ind = range(zindex, zindex + nfs)
+            Sigma[ind, ind] += pSinv_vec
+            ENx[ind] -= pPvec
+            zindex += nfs
+        elif 'rednoise' in self.gibbsmodel:
+            # Don't do this if it is included in corrim
+            ind = range(zindex, zindex+nfs)
+            Sigma[ind, ind] += 1.0 / self.Phivec[findex:findex+nfs]
+            zindex += nfs
+
+        if 'dm' in self.gibbsmodel:
+            ind = range(zindex, zindex+nfdms)
+            Sigma[ind, ind] += 1.0 / self.Thetavec[fdmindex:fdmindex+nfdms]
+            zindex += nfdms
+
+        if 'jitter' in self.gibbsmodel:
+            ind = range(zindex, zindex+npus)
+            Sigma[ind, ind] += 1.0 / psr.Jvec
+            zindex += npus
+
+        if 'correx' in self.gibbsmodel and self.have_gibbs_corr:
+            (pSinv_vec, pPvec) = gibbs_psr_corrs_ex(self, pp, a)
+
+            ind = range(zindex, zindex + nfs)
+            Sigma[ind, ind] += pSinv_vec
+            ENx[ind] -= pPvec
+            zindex += nfs
+
+        try:
+            # Use a QR decomposition for the inversions
+            Qs,Rs = sl.qr(Sigma) 
+
+            #Qsb = np.dot(Qs.T, np.eye(Sigma.shape[0])) # computing Q^T*b (project b onto the range of A)
+            #Sigi = sl.solve(Rs,Qsb) # solving R*x = Q^T*b
+            Sigi = sl.solve(Rs,Qs.T) # solving R*x = Q^T*b
+            
+            # Ok, we've got the inverse... now what? Do SVD?
+            U, s, Vt = sl.svd(Sigi)
+            Li = U * np.sqrt(s)
+
+            ahat = np.dot(Sigi, ENx)
+        except (np.linalg.LinAlgError, ValueError):
+            try:
+                print "ERROR in QR. Doing SVD"
+
+                U, s, Vt = sl.svd(Sigma)
+                if not np.all(s > 0):
+                    raise np.linalg.LinAlgError
+                    #raise ValueError("ERROR: Sigma singular according to SVD")
+                Sigi = np.dot(U * (1.0/s), Vt)
+                Li = U * (1.0 / np.sqrt(s))
+
+                ahat = np.dot(Sigi, ENx)
+            except np.linalg.LinAlgError:
+                try:
+                    print "ERROR in SVD. Doing Cholesky"
+
+                    cfL = sl.cholesky(Sigma, lower=True)
+                    cf = (cfL, True)
+
+                    # Calculate the inverse Cholesky factor (can we do this faster?)
+                    cfLi = sl.cho_factor(cfL, lower=True)
+                    Li = sl.cho_solve(cfLi, np.eye(Sigma.shape[0]))
+
+                    ahat = sl.cho_solve(cf, ENx)
+                except np.linalg.LinAlgError:
+                    # Come up with some better exception handling
+                    print "ERROR in Cholesky. Help!"
+                    raise
+        except ValueError:
+            print "WTF?"
+            print "Look in sigma.txt for the Sigma matrix"
+            np.savetxt("sigma.txt", Sigma)
+            np.savetxt("phivec.txt", self.Phivec[findex:findex+nfs])
+            np.savetxt('nvec.txt', psr.Nvec)
+
+            np.savetxt("znz.txt", ZNZ)
+            np.savetxt("ENx.txt", ENx)
+
+            raise
+
+        # Get a sample from the coefficient distribution
+        aadd = np.dot(Li, np.random.randn(Li.shape[0]))
+        # See what happens if we use numpy
+        # aadd = np.random.multivariate_normal(np.zeros(Sigi.shape[0]), \
+        #        Sigi)
+        #numpy.random.multivariate_normal(mean, cov[, size])
+
+        if ml:
+            addcoefficients = ahat
+        else:
+            addcoefficients = ahat + aadd
+
+        # Test the coefficients for nans and infs
+        nonan = np.all(np.logical_not(np.isnan(addcoefficients)))
+        noinf = np.all(np.logical_not(np.isinf(addcoefficients)))
+        if not (nonan and noinf):
+            np.savetxt('ahat.txt', ahat)
+            np.savetxt('aadd.txt', aadd)
+            raise ValueError("Have inf or nan in solution")
+
+        psr.gibbscoefficients = addcoefficients.copy()
+        psr.gibbscoefficients[:psr.Mmat.shape[1]] = np.dot(psr.tmpConv, \
+                addcoefficients[:psr.Mmat.shape[1]])
+
+        # We save the quadratic parameters separately
+        a[pp] = psr.gibbscoefficients
+        b.append(addcoefficients)
+        psr.gibbssubresiduals = np.dot(psr.Zmat, addcoefficients)
+        psr.gibbsresiduals = psr.detresiduals - psr.gibbssubresiduals
+
+        xi2[pp] = np.sum(psr.gibbsresiduals**2 / psr.Nvec)
+
+    return a, b, xi2
+
+
+
+    def gibbs_full_loglikelihood(self, aparameters, resetCorInv=True):
         """
         Within the Gibbs sampler, we would still like to have access to the
         loglikelihood value, even though it is not necessarily used for the sampling
@@ -8640,6 +9104,7 @@ class ptaLikelihood(object):
 
         @param aparameters: All the model parameters, including the quadratic pars
         @param coeffs:      List of all the Gibbs coefficients per pulsar
+        @param resetCorInv: Re-evaluate the Scor_im_cf and Scor_im_inv lists
 
         @return:            The log-likelihood
         """
@@ -8661,6 +9126,9 @@ class ptaLikelihood(object):
 
         if self.haveDetSources:
             self.updateDetSources(parameters)
+
+        if resetCorInv:
+            self.gibbs_construct_all_freqcov()
 
         ksi = []        # Timing model parameters
         a = []          # Red noise / GWB Fourier modes
@@ -8708,8 +9176,8 @@ class ptaLikelihood(object):
             #psr.gibbscoefficients = allparameters[quadparind:quadparind+ntot]
             #psr.gibbsresiduals_sub = np.dot(psr.Zmat, psr.gibbscoefficients)
             #psr.gibbsresiduals = psr.detresiduals - psr.gibbsresiduals_sub
-            self.gibbs_update_residuals(allparameters, ii, \
-                    nqind_m, nqind_f, nqind_dm, nqind_u, which='all')
+            self.gibbs_update_subresiduals(allparameters, ii, \
+                    nqind_m, nqind_f, nqind_dm, nqind_u, which='full')
 
             quadparind += ntot
 
@@ -8735,8 +9203,9 @@ class ptaLikelihood(object):
                     msk = self.freqmask[:, ii]
 
                     # The covariance between sin/cos modes is identical
-                    cov = self.gibbs_construct_mode_covariance(ii)
-                    cf = sl.cho_factor(cov)
+                    #cov = self.gibbs_construct_mode_covariance(ii)
+                    #cf = sl.cho_factor(cov)
+                    cf = self.Scor_im_cf[int(ii / 2)]
 
                     # Cosine mode
                     bc = self.freqb[msk, ii]
@@ -8781,6 +9250,9 @@ class ptaLikelihood(object):
 
         return -0.5 * np.sum(psr.gibbs_residuals_N**2 / psr.Nvec) -\
                 0.5 * np.sum(np.log(psr.Nvec))
+
+    def gibbs_psr_noise_logprior(self, parameters, pp, mask, allpars):
+        return 0.0
 
     def gibbs_psr_DM_loglikelihood(self, parameters, pp, mask, allpars):
         """
@@ -8832,6 +9304,9 @@ class ptaLikelihood(object):
         # Return the conditional marginalised log-likelihood
         return -0.5*np.sum(self.rGr_D[pp]) - 0.5*self.GNGldet_D[pp] \
                 + 0.5*rGSigmaGr - 0.5*SigmaLD - 0.5*ThetaLD
+
+    def gibbs_psr_DM_logprior(self, parameters, pp, mask, allpars):
+        return 0.0
 
 
     def gibbs_psr_J_loglikelihood(self, parameters, pp, mask, allpars):
@@ -8889,6 +9364,9 @@ class ptaLikelihood(object):
         # Return the conditional marginalised log-likelihood
         return -0.5*np.sum(self.rGr_U[pp]) - 0.5*self.GNGldet_U[pp] \
                 + 0.5*rGSigmaGr - 0.5*SigmaLD - 0.5*JLD
+
+    def gibbs_psr_J_logprior(self, parameters, pp, mask, allpars):
+        return 0.0
 
 
 
@@ -8950,29 +9428,13 @@ class ptaLikelihood(object):
                 # Perform the inversion of Phi per frequency. Is much much faster
                 PhiLD = 0
                 for mode in range(0, self.freqmask.shape[1], 2):
-                    rncov = gibbs_construct_mode_covariance(mode)
-                    try:
-                        cf = sl.cho_factor(rncov)
-                        rncov_inv = sl.cho_solve(cf, np.eye(rncov.shape[0]))
+                    freq = int(mode/2)
 
-                        # Add the determinant twice
-                        PhiLD += 4 * np.sum(np.log(np.diag(cf[0])))
-                    except np.linalg.LinAlgError:
-                        try:
-                            Qs,Rs = sl.qr(rncov)
-                            rncov_inv = sl.solve(Rs, Qs.T)
+                    # We had pre-calculated the Cholesky factor and the inverse
+                    rncov_inv = self.Scor_im_inv[freq]
+                    cf = self.Scor_im_cf[freq]
+                    PhiLD += 4 * np.sum(np.log(np.diag(cf[0])))
 
-                            # Add the determinant twice
-                            PhiLD += 2 * np.sum(np.log(np.diag(Rs)))
-                        except np.linalg.LinAlgError:
-                            U, s, Vh = sl.svd(rncov)
-                            if not np.all(s > 0):
-                                raise ValueError("ERROR: Sigma singular according to SVD")
-                            rncov_inv = np.dot(U * (1.0/s), Vh)
-
-                            # Add the determinant twice
-                            PhiLD += 2 * np.sum(np.log(s))
-                    
                     # Ok, we have the inverse for the individual modes. Now add them
                     # to the full sigma matrix
 
@@ -9005,6 +9467,8 @@ class ptaLikelihood(object):
         return -0.5*np.sum(self.rGr_F[pp]) - 0.5*self.GNGldet_F[pp] \
                 + 0.5*rGSigmaGr - 0.5*SigmaLD - 0.5*PhiLD
 
+    def gibbs_Phi_logprior(self, parameters, mask, allpars):
+        return 0.0
 
 
 
