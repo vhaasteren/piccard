@@ -92,12 +92,12 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
     sampler_J = []
     for ii, psr in enumerate(likob.ptapsrs):
         # Start with the noise search for pulsar ii
-        Nmask = likob.gibbs_get_signal_mask(ii, ['efac', 'equad'])
+        Nmask = likob.gibbs_get_signal_mask(ii, ['efac', 'equad'], ncoeffs)
         psrNpars = apars[Nmask]
         psrNcov = np.diag(awidth[Nmask]**2)
         Ndim = np.sum(Nmask)
         sampler_N.append(ptmcmc.PTSampler(Ndim, \
-            likob.gibbs_psr_noise_loglikelihood, \
+            likob.gibbs_psr_noise_loglikelihood_gen, \
             likob.gibbs_psr_noise_logprior, \
             cov=psrNcov, outDir='./gibbs-chains/', \
             verbose=False, nowrite=True, \
@@ -110,12 +110,12 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
 
         if 'dm' in likob.gibbsmodel:
             # DM variations
-            Dmask = likob.gibbs_get_signal_mask(ii, ['dmpowerlaw', 'dmspectrum'])
+            Dmask = likob.gibbs_get_signal_mask(ii, ['dmpowerlaw', 'dmspectrum'], ncoeffs)
             psrDpars = apars[Dmask]
             psrDcov = np.diag(awidth[Dmask]**2)
             Ddim = np.sum(Dmask)
             sampler_D.append(ptmcmc.PTSampler(Ddim, \
-                likob.gibbs_psr_DM_loglikelihood, \
+                likob.gibbs_psr_DM_loglikelihood_gen, \
                 likob.gibbs_psr_DM_logprior, \
                 cov=psrDcov, outDir='./gibbs-chains/', \
                 verbose=False, nowrite=True, \
@@ -124,7 +124,7 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
 
         if 'jitter' in likob.gibbsmodel:
             # Pulse 'jitter'
-            Jmask = likob.gibbs_get_signal_mask(ii, ['jitter'])
+            Jmask = likob.gibbs_get_signal_mask(ii, ['jitter'], ncoeffs)
             psrJpars = apars[Dmask]
             psrJcov = np.diag(awidth[Jmask]**2)
             Jdim = np.sum(Jmask)
@@ -138,7 +138,7 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
 
     if 'rednoise' in likob.gibbsmodel:
         Fmask = likob.gibbs_get_signal_mask(-2, \
-                ['powerlaw', 'spectralModel', 'spectrum'])
+                ['powerlaw', 'spectralModel', 'spectrum'], ncoeffs)
         Fpars = apars[Fmask]
         Fcov = np.diag(awidth[Fmask]**2)
         Fdim = np.sum(Fmask)
@@ -170,184 +170,100 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
     for ii, psr in enumerate(likob.ptapsrs):
         self.gibbs_update_allsubresiduals(apars, ii, which='all')
 
-
     # 4) Generate _all_ quadratic parameters here (generates sub-residuals?)
     b = []
     for ii, psr in enumerate(likob.ptapsrs):
-        a[ii], bi, xi2 = self.gibbs_sample_quadratics(apars[:ndim], 
-        b.append(bi)
+        a[ii], bi, xi2 = self.gibbs_sample_quadratics(apars[:ndim], a, ii)
+    b.append(bi)
     apars[ndim:] = np.hstack(a)
+    self.gibbs_quadratics_a = a
 
     # 5) Update the residuals again
     for ii, psr in enumerate(likob.ptapsrs):
         self.gibbs_update_allsubresiduals(apars, ii, which='all')
 
+    # Calculate the likelihood:
+    loglik[0] = self.gibbs_full_loglikelihood(\
+            apars, resetCorInv=False, which='all', pp=-1)
+
+    # We know the prior is zero at this point. CHANGE THIS LATER, THIS IS NOT OK. !!!!!!!!!!!!!!!!
+    logpost[0] = loglik[0]
+
     stepind = 0
-    for step in range(steps):
+    for step in range(1, steps):
         # Make sure the sub-residuals are ready. Yep
 
+        # THIS IS IMPORTANT!!!!!!! THE QUADRATIC PARAMETERS NEED TE BE TAKEN FROM self.gibbs_quadratics_a!!!!!
+
         for ii, psr in enumerate(likob.ptapsrs):
-            # Jump in the white noise parameters. No new quadratics required
-            #Nmask = likob.gibbs_get_signal_mask(ii, ['efac', 'equad'])
-            #psrNpars = apars[Nmask]
-            #psrNcov = np.diag(awidth[Nmask]**2)
-            #Ndim = np.sum(Nmask)
-            #sampler_N.append(ptmcmc.PTSampler(Ndim, \
-            #    likob.gibbs_psr_noise_loglikelihood, \
-            #    likob.gibbs_psr_noise_logprior, \
-            #    cov=psrNcov, outDir='./gibbs-chains/', \
-            #    verbose=False, nowrite=True, \
-            #    loglargs=[ii, Nmask, apars], \
-            #    logpargs=[ii, Nmask, apars]))
+            # Jump in the white noise parameters
             sampler = sampler_N[ii]
             Nmask = likob.gibbs_get_signal_mask(ii, ['efac', 'equad'])
             psrNpars = apars[Nmask]
-            # Adjust the likelihoods!
-
-            # Jump in the D-parameter block, if necessary. Include quadratics
-
-            # Jump in the J-parameter block, if necessary. Include quadratics
-
-            pass
-
-        # Jump in the Phi-parameter block for all pulsars. Include quadratics
-
-        pass
-
-        """
-        doneIteration = False
-        iter = 0
-
-        while not doneIteration:
-            try:
-                # Generate new coefficients
-                a, b, xi2 = gibbs_sample_a(likob, a)
-
-                samples[stepind, ndim:] = np.hstack(a)
-                samples2[stepind, :] = np.hstack(b)
-
-                doneIteration = True
-
-            except (np.linalg.LinAlgError, ValueError):
-                # Why does SVD sometimes not converge?
-                # Try different values...
-                iter += 1
-
-                if iter > 100:
-                    print "WARNING: numpy.linalg problems"
-                    raise
-        """
+            sampler._lnprob[step-1] = logpost[stepind-1]
+            sampler._lnlike[step-1] = loglik[stepind-1]
 
 
+            sampler.sample(psrNpars, step+1, covUpdate=500, burn=1, maxIter=2*steps,
+                i0=step-1, thin=1)
+
+            apars[Nmask] = sampler._chain[step,:]
+            logpost[stepind] = sampler._lnprob[step]
+            loglik[stepind] = sampler._lnlike[step]
+
+            # We should not be saving the whole chain here, but that's for later
+            # concern
+
+            # Replace the hyper parameters
+
+            if 'dm' in likob.gibbsmodel:
+                sampler = sampler_D[ii]
+                Dmask = likob.gibbs_get_signal_mask(ii, ['dmpowerlaw', 'dmspectrum'])
+                psrDpars = apars[Dmask]
+                sampler._lnprob[step-1] = logpost[stepind-1]
+                sampler._lnlike[step-1] = loglik[stepind-1]
+
+                sampler.sample(psrDpars, step+1, covUpdate=500, burn=1, maxIter=2*steps,
+                    i0=step-1, thin=1)
+
+                apars[Dmask] = sampler._chain[step,:]
+                logpost[stepind] = sampler._lnprob[step]
+                loglik[stepind] = sampler._lnlike[step]
+
+            if 'jitter' in likob.gibbsmodel:
+                sampler = sampler_J[ii]
+                Jmask = likob.gibbs_get_signal_mask(ii, ['jitter'])
+                psrJpars = apars[Dmask]
+                sampler._lnprob[step-1] = logpost[stepind-1]
+                sampler._lnlike[step-1] = loglik[stepind-1]
+
+                sampler.sample(psrJpars, step+1, covUpdate=500, burn=1, maxIter=2*steps,
+                    i0=step-1, thin=1)
+
+                apars[Jmask] = sampler._chain[step,:]
+                logpost[stepind] = sampler._lnprob[step]
+                loglik[stepind] = sampler._lnlike[step]
+
+        if 'rednoise' in likob.gibbsmodel:
+            sampler = sampler_F
+            Fmask = likob.gibbs_get_signal_mask(-2, \
+                    ['powerlaw', 'spectralModel', 'spectrum'])
+            psrFpars = apars[Fmask]
+            sampler._lnprob[step-1] = logpost[stepind-1]
+            sampler._lnlike[step-1] = loglik[stepind-1]
+
+            sampler.sample(psrFpars, step+1, covUpdate=500, burn=1, maxIter=2*steps,
+                i0=step-1, thin=1)
+
+            apars[Fmask] = sampler._chain[step,:]
+            logpost[stepind] = sampler._lnprob[step]
+            loglik[stepind] = sampler._lnlike[step]
+
+        samples[stepind, :] = apars
 
 
 
-
-
-
-
-
-
-
-
-
-    # Make a list of all the blocked signal samplers (except for the coefficient
-    # samplers)
-    loglik_N = gibbs_prepare_loglik_N(likob, pars)
-    loglik_J = gibbs_prepare_loglik_J(likob, pars)
-    loglik_Det = gibbs_prepare_loglik_Det(likob, pars)
-
-    if not 'corrim' in likob.gibbsmodel:
-        loglik_PSD = gibbs_prepare_loglik_Phi(likob, pars)
-        loglik_corrPSD = gibbs_prepare_loglik_corrPhi(likob, pars)
-        loglik_imPSD = []
-    else:
-        loglik_PSD = []
-        loglik_corrPSD = []
-        loglik_imPSD = gibbs_prepare_loglik_imPhi(likob, pars)
-        likob.Scor_im = []
-        likob.Scor_im_cf = []
-
-
-    # The gibbs coefficients are initially set to 5ns random, each
-    a = []
-    for ii, psr in enumerate(likob.ptapsrs):
-        gibbsQuantities(likob, pars)
-        a.append(np.random.randn(likob.npz[ii])*5.0e-9)
-        psr.gibbsresiduals = psr.detresiduals.copy()
-
-    if 'corrim' in likob.gibbsmodel:
-        # We need to sample the correlated signals once to obtain the matrices
-        # for the sampling of the coefficients
-        temp = gibbs_sample_loglik_imPhi(likob, a, pars, loglik_imPSD,
-                runchain=False)
-
-    samples = np.zeros((min(dumpint, steps), ndim+ncoeffs))
-    samples2 = np.zeros((min(dumpint, steps), ncoeffs))
-
-    loglik = np.zeros(min(dumpint, steps))
-    logpost = np.zeros(min(dumpint, steps))
-
-    stepind = 0
-    for step in range(steps):
-        doneIteration = False
-        iter = 0
-
-        # Start with calculating the required likelihood quantities
-        gibbsQuantities(likob, pars)
-
-        # If necessary, invert the correlation matrix Svec & Scor with Ffreqs_gw
-        # and Fmat_gw
-        if 'correx' in likob.gibbsmodel:
-            gibbs_prepare_correlations(likob)
-
-        while not doneIteration:
-            try:
-                # Generate new coefficients
-                a, b, xi2 = gibbs_sample_a(likob, a)
-
-                samples[stepind, ndim:] = np.hstack(a)
-                samples2[stepind, :] = np.hstack(b)
-
-                doneIteration = True
-
-            except (np.linalg.LinAlgError, ValueError):
-                # Why does SVD sometimes not converge?
-                # Try different values...
-                iter += 1
-
-                if iter > 100:
-                    print "WARNING: numpy.linalg problems"
-                    raise
-
-                # Just try again
-                #raise
-
-            # Generate new white noise parameters
-            pars = gibbs_sample_loglik_N(likob, pars, loglik_N)
-
-            # Generate new red noise parameters
-            pars = gibbs_sample_loglik_Phi(likob, a, pars, loglik_PSD)
-
-            # Generate new correlated equad/jitter parameters
-            pars = gibbs_sample_loglik_J(likob, a, pars, loglik_J)
-
-            # If we have 'm, sample from the deterministic sources
-            pars = gibbs_sample_loglik_Det(likob, pars, loglik_Det)
-
-            if 'correx' in likob.gibbsmodel and likob.have_gibbs_corr:
-                # Generate new GWB parameters
-                pars = gibbs_sample_loglik_corrPhi(likob, a, pars, loglik_corrPSD)
-
-            pars = gibbs_sample_loglik_imPhi(likob, a, pars, loglik_imPSD)
-
-        samples[stepind, :ndim] = pars
-
-        # Calculate the full log-likelihood. Use the Zmat-basis timing model
-        aparameters = samples[stepind, :].copy()
-        aparameters[ndim:] = np.hstack(b)
-        loglik[stepind] = gibbs_loglikelihood(likob, aparameters)
-        logpost[stepind] = loglik[stepind] + gibbs_logprior(likob, aparameters)
+        # All the blocks done for this step. Update the track records
 
         stepind += 1
         # Write to file if necessary

@@ -3136,6 +3136,7 @@ class ptaPulsar(object):
             self.Zmat_F = self.getZmat(gibbsmodel, which='F')
             self.Zmat_D = self.getZmat(gibbsmodel, which='D')
             self.Zmat_U = self.getZmat(gibbsmodel, which='U')
+            self.gibbsresiduals = np.zeros(len(self.toas))
             self.gibbsresiduals_M = np.zeros(len(self.toas))
             self.gibbsresiduals_D = np.zeros(len(self.toas))
             self.gibbsresiduals_F = np.zeros(len(self.toas))
@@ -3657,7 +3658,7 @@ class ptaLikelihood(object):
     NGGF = None         #        mark3, mark?  mark6
 
 
-    # Gibbs auxiliaries
+    # Gibbs auxiliaries for the marginalised conditionals
     GcNiGc_inv = []
     NiGc = []
     GcNiGcF = []
@@ -3676,10 +3677,13 @@ class ptaLikelihood(object):
     UGGNGGU = []
     #FGGNGGF = np.zeros((0, 0))
 
+    # Gibbs auxiliaries for the generative conditionals
     gibbs_ll_N = None
-    gibbs_ll_D = None
+    gibbs_ll_D = None           
     gibbs_ll_U = None
     gibbs_ll_F = None
+
+    gibbs_quadratic_a = []         # List of quadratic parameters
 
     # Whether we have already called the likelihood in one call, so we can skip
     # some things in comploglikelihood
@@ -6337,7 +6341,7 @@ class ptaLikelihood(object):
                     pcdoubled = np.array([sparameters[1], sparameters[1]])
                     self.Thetavec[findex:findex+2] += 10**pcdoubled
 
-    def setPhi(self, parameters, selection=None, gibbs_expansion=False):
+    def setPhi(self, parameters, selection=None, gibbs_expansion=True):
         """
         Same as constructPhiAndTheta, but now only for the red noise/GWB signal
         
@@ -8617,18 +8621,20 @@ class ptaLikelihood(object):
                 print "rncov not positive definite!"
                 raise
 
-    def gibbs_get_signal_mask(self, pp, stypes):
+    def gibbs_get_signal_mask(self, pp, stypes, addFalse=0):
         """
         Given the pulsar number, get the parameter mask for the requested
         parameters
 
-        @param pp:      Pulsar number. -2 means all
-        @param stypes:  Which signals to include (e.g. ['efac', 'equad'])
+        @param pp:          Pulsar number. -2 means all
+        @param stypes:      Which signals to include (e.g. ['efac', 'equad'])
+        @param addFalse:    How many entries of False to add at the end
 
         @return:    Boolean mask that indicates which parameters are selected
         """
         ndims = self.dimensions
         msk = np.zeros(ndims, dtype=np.bool)
+        napp = np.zeros(addFalse, dtype=np.bool)
 
         for ss, m2signal in enumerate(self.ptasignals):
             if (m2signal['pulsarind'] == pp or pp == -2) and \
@@ -8637,7 +8643,7 @@ class ptaLikelihood(object):
                 inde = inds + m2signal['npars']
                 msk[inds:inde] = True
 
-        return msk
+        return np.append(msk, napp)
 
     def gibbs_update_auxiliaries(self):
         """
@@ -8742,7 +8748,6 @@ class ptaLikelihood(object):
             r_U = psr.detresiduals.copy()
 
             if 'design' in self.gibbsmodel:
-                # Eventually, Jitter will not marginalise over anything
                 # r_U -= psr.gibbsresiduals_M
                 pass
 
@@ -8803,8 +8808,8 @@ class ptaLikelihood(object):
         @param nqind_d:     Index in parameter array for DM variations
         @param nqind_u:     Index in parameter array for jitter
 
-        @param which:       Which residuals to update. Options: full, all, tm, red,
-                            dm, jitter
+        @param which:       Which residuals to update. Options: full, all, M, F,
+                            D, U
                             (full = only full model, all means everything)
         """
         psr = self.ptapsrs[pp]
@@ -8819,28 +8824,28 @@ class ptaLikelihood(object):
             psr.gibbscoefficients = aparameters[nqind_m:psr.Zmat.shape[1]]
             psr.gibbsresiduals_sub = np.dot(Zmat, psr.gibbscoefficients)
             psr.gibbsresiduals = psr.detresiduals - psr.gibbsresiduals_sub
-        if (which == 'tm' or which = 'all'):
+        if (which == 'M' or which = 'all'):
             if nqind_m < 0:
                 raise ValueError("No valid index for timing model")
 
             Zmat = psr.Gcmat
             gibbscoefficients = aparameters[nqind_m:psr.Zmat.shape[1]]
             psr.gibbsresiduals_M = np.dot(Zmat, gibbscoefficients)
-        if (which == 'red' or which = 'all') and 'rednoise' in self.gibbsmodel:
+        if (which == 'F' or which = 'all') and 'rednoise' in self.gibbsmodel:
             if nqind_f < 0:
                 raise ValueError("No valid index for red noise")
 
             Zmat = psr.Fmat
             gibbscoefficients = aparameters[nqind_f:psr.Zmat.shape[1]]
             psr.gibbsresiduals_F = np.dot(Zmat, gibbscoefficients)
-        if (which == 'dm' or which = 'all') and 'dm' in self.gibbsmodel:
+        if (which == 'D' or which = 'all') and 'dm' in self.gibbsmodel:
             if nqind_d < 0:
                 raise ValueError("No valid index for DM variations")
 
             Zmat = psr.DF
             gibbscoefficients = aparameters[nqind_d:psr.Zmat.shape[1]]
             psr.gibbsresiduals_D = np.dot(Zmat, gibbscoefficients)
-        if (which == 'jitter' or which = 'all') and 'jitter' in self.gibbsmodel:
+        if (which == 'U' or which = 'all') and 'jitter' in self.gibbsmodel:
             if nqind_u < 0:
                 raise ValueError("No valid index for Jitter")
 
@@ -8947,7 +8952,11 @@ class ptaLikelihood(object):
         @param a:           List of all quadratic parameters
         @param pp:          For which pulsar to generate the quadratics
         @param which:       Which quadratics to generate and which to fix
+                            (all, F, D, U)
         @param ml:          Whether to provide ML estimates, or to sample
+
+        @return:            a, fulladdcoefficients, xi2
+                            (for now, fulladdcoefficients == a[pp])
         """
         npsrs = len(self.ptapsrs)
         xi2 = 0                     # Xi2 for this pulsar
@@ -8994,8 +9003,9 @@ class ptaLikelihood(object):
             zindex += nms
 
         if 'corrim' in self.gibbsmodel and (which == 'F' or which == 'all'):
-            (pSinv_vec, pPvec) = gibbs_psr_corrs_im(self, pp, a) # ADJUST THIS HERE!!!
-
+            (pSinv_vec, pPvec) = gibbs_psr_corrs_im(self, pp, a)                    # ADJUST THIS HERE!!!
+                                                                                    # HAS NOT YET BEEN DONE
+                                                                                   
             ind = range(zindex, zindex + nfs)
             Sigma[ind, ind] += pSinv_vec
             ENx[ind] -= pPvec
@@ -9142,7 +9152,7 @@ class ptaLikelihood(object):
         @param coeffs:      List of all the Gibbs coefficients per pulsar
         @param resetCorInv: Re-evaluate the Scor_im_cf and Scor_im_inv lists
         @param which:       Which components of the likelihood need to be
-                            evaluated (all, F, D, N)
+                            evaluated (all, F, D, N, U)
         @param pp:          If D/N/U, for which pulsar do we evaluate it?
 
         @return:            The log-likelihood
@@ -9240,50 +9250,223 @@ class ptaLikelihood(object):
         ldet = 0
         for ii, psr in enumerate(self.ptapsrs):
             # The quadratic form of the residuals
-            xi2 += np.sum(psr.gibbsresiduals ** 2 / psr.Nvec)
-            ldet += np.sum(np.log(psr.Nvec))
+            nx2 = np.sum(psr.gibbsresiduals ** 2 / psr.Nvec)
+            nld = np.sum(np.log(psr.Nvec))
+            self.gibbs_ll_N[ii] = 0.5*(nx2 + nld)
+            xi2 += nx2
+            ldet += nld
 
             # Jitter is done per pulsar
             if 'jitter' in self.gibbsmodel:
-                xi2 += np.sum(j[ii] ** 2 / psr.Jvec)
-                ldet += np.sum(np.log(psr.Jvec))
+                if which in ['all', 'U']:
+                    jx2 = np.sum(j[ii] ** 2 / psr.Jvec)
+                    jld = np.sum(np.log(psr.Jvec))
+                    self.gibbs_ll_U[ii] = 0.5*(jx2 + jld)
+                    xi2 += jx2
+                    ldet += jld
+                else:
+                    xi2 += 2 * self.gibbs_ll_U[ii]
+
+            # Quadratic form of DM variations, for full array
+            if 'dm' in self.gibbsmodel:
+                if which in ['all', 'D']:
+                    #dx2 = np.sum(np.hstack(d)**2 / self.Thetavec)
+                    #dld = np.sum(np.log(self.Thetavec))
+                    inds = np.sum(self.npfdm[:ii])
+                    inde = inds + self.npfdm[ii]
+                    dx2 = np.sum(d**2 / self.Thetavec[inds:inde])
+                    dld = np.sum(np.log(self.Thetavec[inds:inde]))
+                    xi2 += dx2
+                    ldet += dld
+                    self.gibbs_ll_D[ii] = 0.5*(dx2 + dld)
+                else:
+                    xi2 += 2*self.gibbs_ll_D[ii]
+
 
         # Quadratic form of red noise, done for full array
         if 'rednoise' in self.gibbsmodel:
-            # Do some fancy stuff here per frequency
-            if len(self.ptapsrs) > 1:
-                # Loop over all frequencies
-                for ii in range(0, len(self.Svec), 2):
-                    msk = self.freqmask[:, ii]
+            if which in ['all', 'F']:
+                fx2 = 0
+                fld = 0
 
-                    # The covariance between sin/cos modes is identical
-                    #cov = self.gibbs_construct_mode_covariance(ii)
-                    #cf = sl.cho_factor(cov)
-                    cf = self.Scor_im_cf[int(ii / 2)]
+                # Do some fancy stuff here per frequency
+                if len(self.ptapsrs) > 1:
+                    # Loop over all frequencies
+                    for ii in range(0, len(self.Svec), 2):
+                        msk = self.freqmask[:, ii]
 
-                    # Cosine mode
-                    bc = self.freqb[msk, ii]
-                    Lx = sl.cho_solve(cf, bc)
-                    xi2 += np.sum(Lx**2)
-                    ldet += 2*np.sum(np.log(np.diag(cf[0])))
+                        # The covariance between sin/cos modes is identical
+                        #cov = self.gibbs_construct_mode_covariance(ii)
+                        #cf = sl.cho_factor(cov)
+                        cf = self.Scor_im_cf[int(ii / 2)]
 
-                    # Sine mode
-                    bs = self.freqb[msk, ii+1]
-                    Lx = sl.cho_solve(cf, bs)
-                    xi2 += np.sum(Lx**2)
-                    ldet += 2*np.sum(np.log(np.diag(cf[0])))
+                        # Cosine mode
+                        bc = self.freqb[msk, ii]
+                        Lx = sl.cho_solve(cf, bc)
+                        xi2 += np.sum(Lx**2)
+                        ldet += 2*np.sum(np.log(np.diag(cf[0])))
+
+                        # Sine mode
+                        bs = self.freqb[msk, ii+1]
+                        Lx = sl.cho_solve(cf, bs)
+                        fx2 += np.sum(Lx**2)
+                        fld += 2*np.sum(np.log(np.diag(cf[0])))
+                else:
+                    # Single pulsar. Just combine the correlated and noise frequencies
+                    pcd = self.Phivec + self.Svec
+                    fx2 += np.sum(np.hstack(a)**2 / pcd)
+                    fld += np.sum(np.log(pcd))
+
+                self.gibbs_ll_F = 0.5*(fx2 + fld)
+                xi2 += fx2
+                ldet += fld
             else:
-                # Single pulsar. Just combine the correlated and noise frequencies
-                pcd = self.Phivec + self.Svec
-                xi2 += np.sum(np.hstack(a)**2 / pcd)
-                ldet += np.sum(np.log(pcd))
-
-        # Quadratic form of DM variations, for full array
-        if 'dm' in self.gibbsmodel:
-            xi2 += np.sum(np.hstack(d)**2 / self.Thetavec)
-            ldet += np.sum(np.log(self.Thetavec))
+                xi2 += 2 * self.gibbs_ll_F
 
         return -0.5*np.sum(self.npobs)*np.log(2*np.pi) - 0.5*xi2 - 0.5*ldet
+
+    def gibbs_psr_noise_loglikelihood_gen(self, parameters, pp, mask, allpars):
+        """
+        Given new hyper-parameters for white noise for pulsar pp, this function
+        calculates the full array likelihood. In this case, we do not generate
+        new quadratic parameters
+
+        @param parameters:      The hyper-parameter array for the white noise
+        @param pp:              Index of the pulsar we are treating
+        @param mask:            Boolean mask to use for the full set of pars
+        @param allpars:         Full set of hyper parameters
+
+        @return:                Full array log-likelihood
+
+        """
+        which = 'N'
+
+        psr = self.ptapsrs[pp]
+
+        hpars = allpars.copy()
+        hpars[msk] = parameters
+        apars = np.append(hpars, np.hstack(self.gibbs_quadratic_a))
+
+        self.setSinglePsrNoise(hpars, pp=pp)
+        ll = self.gibbs_full_loglikelihood(apars, resetCorInv=False, \
+                which=which, pp=pp)
+
+        return ll
+
+    def gibbs_psr_DM_loglikelihood_gen(self, parameters, pp, mask, allpars):
+        """
+        Given new hyper-parameters for DM variations for pulsar pp, this
+        function calculates the full array likelihood. In this case, we do
+        generate new timing model parameters, and new DM Fourier coefficients
+
+        @param parameters:      The hyper-parameter array for the white noise
+        @param pp:              Index of the pulsar we are treating
+        @param mask:            Boolean mask to use for the full set of pars
+        @param allpars:         Full set of hyper parameters
+
+        @return:                Full array log-likelihood, new quadratic pars
+
+        """
+        which = 'D'
+
+        psr = self.ptapsrs[pp]
+
+        hpars = allpars.copy()
+        hpars[msk] = parameters
+
+        #self.setSinglePsrNoise(parameters, pp=pp)
+        self.setTheta(hpars, pp=pp)
+
+        a = self.gibbs_quadratic_a
+
+        a, bpp, xi2 = self.gibbs_sample_quadratics(hpars, a, pp, which='D')
+
+        apars = np.append(hpars, np.hstack(a))
+
+        ll = self.gibbs_full_loglikelihood(apars, resetCorInv=False, \
+                which=which, pp=pp)
+
+        self.gibbs_quadratic_a = a
+
+        return ll
+
+
+    def gibbs_Phi_loglikelihood_gen(self, parameters, mask, allpars):
+        """
+        Given new hyper-parameters for Red Noise, this
+        function calculates the full array likelihood. In this case, we do
+        generate new timing model parameters, and new DM Fourier coefficients
+
+        @param parameters:      The hyper-parameter array for the white noise
+        @param mask:            Boolean mask to use for the full set of pars
+        @param allpars:         Full set of hyper parameters
+
+        @return:                Full array log-likelihood, new quadratic pars
+
+        """
+        which = 'F'
+
+        hpars = allpars.copy()
+        hpars[msk] = parameters
+
+        # Set the new Phi matrices
+        self.setPhi(hpars)
+
+        # Set the new correlation inverses, calculated per-frequency
+        self.gibbs_construct_all_freqcov()
+
+        a = self.gibbs_quadratic_a
+        
+        # Generate new quadratic parameters. What is more time-efficient?
+        # Per-pulsar, or for the full array?
+        for pp, psr in enumerate(self.ptapsrs):
+            a, bpp, xi2 = self.gibbs_sample_quadratics(hpars, a, pp, which='F')
+
+        apars = np.append(hpars, np.hstack(a))
+
+        ll = self.gibbs_full_loglikelihood(apars, resetCorInv=False, \
+                which=which, pp=pp)
+
+        self.gibbs_quadratic_a = a
+
+        return ll
+
+
+    def gibbs_psr_U_loglikelihood_gen(self, parameters, pp, mask, allpars):
+        """
+        Given new hyper-parameters for pulsar Jitter for pulsar pp, this
+        function calculates the full array likelihood. In this case, we do
+        generate new timing model parameters, and new Jitter quadratics
+
+        @param parameters:      The hyper-parameter array for the white noise
+        @param pp:              Index of the pulsar we are treating
+        @param mask:            Boolean mask to use for the full set of pars
+        @param allpars:         Full set of hyper parameters
+
+        @return:                Full array log-likelihood, new quadratic pars
+
+        """
+        which = 'U'
+
+        hpars = allpars.copy()
+        hpars[msk] = parameters
+
+        self.setSinglePsrNoise(parameters, pp=pp)
+
+        a = self.gibbs_quadratic_a
+
+        a, bpp, xi2 = self.gibbs_sample_quadratics(hpars, a, pp, which='U')
+
+        apars = np.append(hpars, np.hstack(a))
+
+        ll = self.gibbs_full_loglikelihood(apars, resetCorInv=False, \
+                which=which, pp=pp)
+
+        self.gibbs_quadratic_a = a
+
+        return ll
+
+
 
 
     def gibbs_psr_noise_loglikelihood_mar(self, parameters, pp, mask, allpars):
@@ -9307,7 +9490,7 @@ class ptaLikelihood(object):
         return -0.5 * np.sum(psr.gibbs_residuals_N**2 / psr.Nvec) -\
                 0.5 * np.sum(np.log(psr.Nvec))
 
-    def gibbs_psr_noise_logprior_mar(self, parameters, pp, mask, allpars):
+    def gibbs_psr_noise_logprior(self, parameters, pp, mask, allpars):
         return 0.0
 
     def gibbs_psr_DM_loglikelihood_mar(self, parameters, pp, mask, allpars):
@@ -9361,7 +9544,7 @@ class ptaLikelihood(object):
         return -0.5*np.sum(self.rGr_D[pp]) - 0.5*self.GNGldet_D[pp] \
                 + 0.5*rGSigmaGr - 0.5*SigmaLD - 0.5*ThetaLD
 
-    def gibbs_psr_DM_logprior_mar(self, parameters, pp, mask, allpars):
+    def gibbs_psr_DM_logprior(self, parameters, pp, mask, allpars):
         return 0.0
 
 
@@ -9421,7 +9604,7 @@ class ptaLikelihood(object):
         return -0.5*np.sum(self.rGr_U[pp]) - 0.5*self.GNGldet_U[pp] \
                 + 0.5*rGSigmaGr - 0.5*SigmaLD - 0.5*JLD
 
-    def gibbs_psr_J_logprior_mar(self, parameters, pp, mask, allpars):
+    def gibbs_psr_J_logprior(self, parameters, pp, mask, allpars):
         return 0.0
 
 
@@ -9523,11 +9706,8 @@ class ptaLikelihood(object):
         return -0.5*np.sum(self.rGr_F[pp]) - 0.5*self.GNGldet_F[pp] \
                 + 0.5*rGSigmaGr - 0.5*SigmaLD - 0.5*PhiLD
 
-    def gibbs_Phi_logprior_mar(self, parameters, mask, allpars):
+    def gibbs_Phi_logprior(self, parameters, mask, allpars):
         return 0.0
-
-
-
 
 
     def loglikelihood(self, parameters):
