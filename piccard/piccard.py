@@ -2364,7 +2364,7 @@ class ptaPulsar(object):
         else:
             Ft_2 = Ft_1
 
-        if ndmf > 0 and 'dm' in gibbsmodel and \:
+        if ndmf > 0 and 'dm' in gibbsmodel and \
             (which == 'all' or which == 'D'):
             Ft_3 = np.append(Ft_2, self.DF, axis=1)
         else:
@@ -3143,7 +3143,7 @@ class ptaPulsar(object):
             self.gibbsresiduals_U = np.zeros(len(self.toas))
 
 
-            psr.gibbscoefficients = np.zeros(self.Zmat.shape[1])
+            self.gibbscoefficients = np.zeros(self.Zmat.shape[1])
 
             self.Wvec = np.zeros(self.Mmat.shape[0]-self.Mmat.shape[1])
             self.Wovec = np.zeros(0)
@@ -4372,8 +4372,8 @@ class ptaLikelihood(object):
             self.gibbs_ll_F = 0.0
 
             for ii, psr in enumerate(self.ptapsrs):
-                self.GcNiGc_inv.append(np.zeros(\
-                        psr.Gcmat.shape[1], psr.Gcmat.shape[1]))
+                self.GcNiGc_inv.append(np.zeros((\
+                        psr.Gcmat.shape[1], psr.Gcmat.shape[1])))
                 self.NiGc.append(np.zeros(psr.Gcmat.shape))
 
                 if 'rednoise' in self.gibbsmodel:
@@ -8594,9 +8594,9 @@ class ptaLikelihood(object):
         msk = self.freqmask[:, mode]
 
         cov = self.Scor[msk,:][:,msk] * gw_pcdoubled[mode]
-        for ii, psr in self.ptapsrs:
+        for ii, psr in enumerate(self.ptapsrs):
             ind = np.sum(msk[:ii])
-            cov[ind, ind] += self.Phivec[self.nfs[ii]+mode]
+            cov[ind, ind] += self.Phivec[np.sum(self.npf[:ii])+mode]
 
         return cov
 
@@ -8611,7 +8611,7 @@ class ptaLikelihood(object):
         self.Scor_im_inv = []
 
         for mode in range(0, self.freqmask.shape[1], 2):
-            rncov = gibbs_construct_mode_covariance(mode)
+            rncov = self.gibbs_construct_mode_covariance(mode)
 
             try:
                 self.Scor_im_cf.append(sl.cho_factor(rncov))
@@ -8819,33 +8819,33 @@ class ptaLikelihood(object):
             raise ValueError("No valid indices provided")
         inds = indarr[indarr > -1][0]
 
-        if (which == 'full' or which = 'all') and 'design' in self.gibbsmodel:
+        if (which == 'full' or which == 'all') and 'design' in self.gibbsmodel:
             Zmat = psr.Zmat
             psr.gibbscoefficients = aparameters[nqind_m:psr.Zmat.shape[1]]
             psr.gibbsresiduals_sub = np.dot(Zmat, psr.gibbscoefficients)
             psr.gibbsresiduals = psr.detresiduals - psr.gibbsresiduals_sub
-        if (which == 'M' or which = 'all'):
+        if (which == 'M' or which == 'all'):
             if nqind_m < 0:
                 raise ValueError("No valid index for timing model")
 
             Zmat = psr.Gcmat
             gibbscoefficients = aparameters[nqind_m:psr.Zmat.shape[1]]
             psr.gibbsresiduals_M = np.dot(Zmat, gibbscoefficients)
-        if (which == 'F' or which = 'all') and 'rednoise' in self.gibbsmodel:
+        if (which == 'F' or which == 'all') and 'rednoise' in self.gibbsmodel:
             if nqind_f < 0:
                 raise ValueError("No valid index for red noise")
 
             Zmat = psr.Fmat
             gibbscoefficients = aparameters[nqind_f:psr.Zmat.shape[1]]
             psr.gibbsresiduals_F = np.dot(Zmat, gibbscoefficients)
-        if (which == 'D' or which = 'all') and 'dm' in self.gibbsmodel:
+        if (which == 'D' or which == 'all') and 'dm' in self.gibbsmodel:
             if nqind_d < 0:
                 raise ValueError("No valid index for DM variations")
 
             Zmat = psr.DF
             gibbscoefficients = aparameters[nqind_d:psr.Zmat.shape[1]]
             psr.gibbsresiduals_D = np.dot(Zmat, gibbscoefficients)
-        if (which == 'U' or which = 'all') and 'jitter' in self.gibbsmodel:
+        if (which == 'U' or which == 'all') and 'jitter' in self.gibbsmodel:
             if nqind_u < 0:
                 raise ValueError("No valid index for Jitter")
 
@@ -8853,11 +8853,11 @@ class ptaLikelihood(object):
             gibbscoefficients = aparameters[nqind_u:psr.Zmat.shape[1]]
             psr.gibbsresiduals_U = np.dot(Zmat, gibbscoefficients)
 
-    def gibbs_update_allsubresiduals(self, aparameters, pp, which='all'):
+    def gibbs_update_allsubresiduals(self, allparameters, pp, which='all'):
         """
         For pulsar pp, create all the subtracted residual vectors.
 
-        @param aparameters: All the model parameters, including the quadratic
+        @param allparameters: All the model parameters, including the quadratic
                             pars
         @param pp:          Index of the pulsar
         @param which:       Which residuals to update. Default = all of 'm
@@ -9129,7 +9129,7 @@ class ptaLikelihood(object):
 
         xi2 = np.sum(psr.gibbsresiduals**2 / psr.Nvec)
 
-    return a, fulladdcoefficients, xi2
+        return a, fulladdcoefficients, xi2
 
 
 

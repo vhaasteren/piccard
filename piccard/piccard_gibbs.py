@@ -129,7 +129,7 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
             psrJcov = np.diag(awidth[Jmask]**2)
             Jdim = np.sum(Jmask)
             sampler_J.append(ptmcmc.PTSampler(Jdim, \
-                likob.gibbs_psr_J_loglikelihood, \
+                likob.gibbs_psr_J_loglikelihood_mar, \
                 likob.gibbs_psr_J_logprior, \
                 cov=psrJcov, outDir='./gibbs-chains/', \
                 verbose=False, nowrite=True, \
@@ -143,19 +143,19 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
         Fcov = np.diag(awidth[Fmask]**2)
         Fdim = np.sum(Fmask)
         sampler_F = ptmcmc.PTSampler(Fdim, \
-                likob.gibbs_Phi_loglikelihood, \
+                likob.gibbs_Phi_loglikelihood_gen, \
                 likob.gibbs_Phi_logprior, \
                 cov=Fcov, outDir='./gibbs-chains/', \
                 verbose=False, nowrite=True, \
                 loglargs=[Fmask, apars], \
-                logpargs=[Fmask, apars]))
+                logpargs=[Fmask, apars])
 
     # The gibbs coefficients are initially set to 2ns random each for numerical
     # stability
     a = []
     for ii, psr in enumerate(likob.ptapsrs):
         # gibbsQuantities(likob, hpars)
-        a.append(self.gibbs_get_initial_quadratics(ii))
+        a.append(likob.gibbs_get_initial_quadratics(ii))
         # psr.gibbsresiduals = psr.detresiduals.copy()
 
     # 1) Set the hyper-parameter structures for all pulsars
@@ -168,22 +168,22 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
     # 3) Set the subtracted residuals, based on the quadratic parameters
     apars[ndim:] = np.hstack(a)
     for ii, psr in enumerate(likob.ptapsrs):
-        self.gibbs_update_allsubresiduals(apars, ii, which='all')
+        likob.gibbs_update_allsubresiduals(apars, ii, which='all')
 
     # 4) Generate _all_ quadratic parameters here (generates sub-residuals?)
     b = []
     for ii, psr in enumerate(likob.ptapsrs):
-        a[ii], bi, xi2 = self.gibbs_sample_quadratics(apars[:ndim], a, ii)
+        a[ii], bi, xi2 = likob.gibbs_sample_quadratics(apars[:ndim], a, ii)
     b.append(bi)
     apars[ndim:] = np.hstack(a)
-    self.gibbs_quadratics_a = a
+    likob.gibbs_quadratics_a = a
 
     # 5) Update the residuals again
     for ii, psr in enumerate(likob.ptapsrs):
-        self.gibbs_update_allsubresiduals(apars, ii, which='all')
+        likob.gibbs_update_allsubresiduals(apars, ii, which='all')
 
     # Calculate the likelihood:
-    loglik[0] = self.gibbs_full_loglikelihood(\
+    loglik[0] = likob.gibbs_full_loglikelihood(\
             apars, resetCorInv=False, which='all', pp=-1)
 
     # We know the prior is zero at this point. CHANGE THIS LATER, THIS IS NOT OK. !!!!!!!!!!!!!!!!
@@ -191,10 +191,6 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
 
     stepind = 0
     for step in range(1, steps):
-        # Make sure the sub-residuals are ready. Yep
-
-        # THIS IS IMPORTANT!!!!!!! THE QUADRATIC PARAMETERS NEED TE BE TAKEN FROM self.gibbs_quadratics_a!!!!!
-
         for ii, psr in enumerate(likob.ptapsrs):
             # Jump in the white noise parameters
             sampler = sampler_N[ii]
@@ -202,7 +198,8 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
             psrNpars = apars[Nmask]
             sampler._lnprob[step-1] = logpost[stepind-1]
             sampler._lnlike[step-1] = loglik[stepind-1]
-
+            sampler.logl.args = [ii, Nmask, apars]
+            sampler.logp.args = [ii, Nmask, apars]
 
             sampler.sample(psrNpars, step+1, covUpdate=500, burn=1, maxIter=2*steps,
                 i0=step-1, thin=1)
@@ -211,7 +208,7 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
             logpost[stepind] = sampler._lnprob[step]
             loglik[stepind] = sampler._lnlike[step]
 
-            # We should not be saving the whole chain here, but that's for later
+            # We should not be saving the whole chain here, but that's for later !!!!!!!!!!!!!!!!!!!
             # concern
 
             # Replace the hyper parameters
@@ -222,6 +219,8 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
                 psrDpars = apars[Dmask]
                 sampler._lnprob[step-1] = logpost[stepind-1]
                 sampler._lnlike[step-1] = loglik[stepind-1]
+                sampler.logl.args = [ii, Dmask, apars]
+                sampler.logp.args = [ii, Dmask, apars]
 
                 sampler.sample(psrDpars, step+1, covUpdate=500, burn=1, maxIter=2*steps,
                     i0=step-1, thin=1)
@@ -236,6 +235,8 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
                 psrJpars = apars[Dmask]
                 sampler._lnprob[step-1] = logpost[stepind-1]
                 sampler._lnlike[step-1] = loglik[stepind-1]
+                sampler.logl.args = [ii, Jmask, apars]
+                sampler.logp.args = [ii, Jmask, apars]
 
                 sampler.sample(psrJpars, step+1, covUpdate=500, burn=1, maxIter=2*steps,
                     i0=step-1, thin=1)
@@ -251,6 +252,8 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
             psrFpars = apars[Fmask]
             sampler._lnprob[step-1] = logpost[stepind-1]
             sampler._lnlike[step-1] = loglik[stepind-1]
+            sampler.logl.args = [Fmask, apars]
+            sampler.logp.args = [Fmask, apars]
 
             sampler.sample(psrFpars, step+1, covUpdate=500, burn=1, maxIter=2*steps,
                 i0=step-1, thin=1)
