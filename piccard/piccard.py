@@ -4238,6 +4238,9 @@ class ptaLikelihood(object):
         self.npz_d = np.zeros(npsrs, dtype=np.int)
         self.npz_u = np.zeros(npsrs, dtype=np.int)
         for ii, psr in enumerate(self.ptapsrs):
+            psr.Nvec = np.zeros(len(psr.toas))
+            psr.Jvec = np.zeros(len(psr.avetoas))
+
             if not self.likfunc in ['mark2']:
                 self.npf[ii] = len(psr.Ffreqs)
                 self.npff[ii] = self.npf[ii]
@@ -4245,16 +4248,14 @@ class ptaLikelihood(object):
             if self.likfunc in ['mark4ln', 'mark9', 'mark10']:
                 self.npff[ii] += len(psr.SFfreqs)
 
-            # These quantities are mostly used in Gibbs sampling, for when we
-            # are numerically dealing with the quadratic coefficients.
-            maxfreqs = np.max(self.npf)
-            self.freqmask = np.zeros((npsrs, maxfreqs), dtype=np.bool)
-            self.freqb = np.zeros((npsrs, maxfreqs))
-            for jj, psr in enumerate(self.ptapsrs):
-                self.freqmask[jj, :self.npf[jj]] = True  # No npff here?
+            self.npobs[ii] = len(psr.toas)
+
 
             #if self.likfunc in ['mark1', 'mark3', 'mark4', 'mark4ln', 'mark11']:
             self.npu[ii] = len(psr.avetoas)
+
+            # Not working here:w
+
 
             if self.likfunc in ['mark1', 'mark4', 'mark4ln', 'mark6', \
                     'mark6fa', 'mark8', 'mark10', 'gibbs']:
@@ -4264,14 +4265,8 @@ class ptaLikelihood(object):
             if self.likfunc in ['mark10']:
                 self.npffdm[ii] += len(psr.SFdmfreqs)
 
-            self.npobs[ii] = len(psr.toas)
 
-            psr.Nvec = np.zeros(len(psr.toas))
-            psr.Jvec = np.zeros(len(psr.avetoas))
-
-            print "Hier  :", ii, psr.Nvec
-            print "Hier 2:", ii, self.ptapsrs[ii].Nvec
-            print "Hier  :", ii, psr.Nvec
+            # This is where they were originally
 
             if self.likfunc in ['mark1', 'mark2', 'mark3', 'mark3fa', 'mark4', \
                     'mark4ln', 'mark6', 'mark6fa', 'mark7', 'mark8', 'mark9', \
@@ -4288,14 +4283,22 @@ class ptaLikelihood(object):
                 self.npz_d[ii] = psr.Zmat_D.shape[1]
                 self.npz_u[ii] = psr.Zmat_U.shape[1]
 
+        # These quantities are mostly used in Gibbs sampling, for when we
+        # are numerically dealing with the quadratic coefficients.
+        maxfreqs = np.max(self.npf)
+        self.freqmask = np.zeros((npsrs, maxfreqs), dtype=np.bool)
+        self.freqb = np.zeros((npsrs, maxfreqs))
+
+        for jj, psr in enumerate(self.ptapsrs):
+            self.freqmask[jj, :self.npf[jj]] = True  # No npff here?
+
+        # Prepare the hyper-parameter covariance quantities
         self.Phi = np.zeros((np.sum(self.npf), np.sum(self.npf)))
         self.Phivec = np.zeros(np.sum(self.npf))
         self.Thetavec = np.zeros(np.sum(self.npfdm))
         self.Muvec = np.zeros(np.sum(self.npu))
         self.Svec = np.zeros(np.max(self.npf))
         self.Scor = np.zeros((len(self.ptapsrs), len(self.ptapsrs)))
-
-        print "Hierzo: 0, ", self.ptapsrs[0].Nvec
 
         if self.likfunc == 'mark1':
             self.GNGldet = np.zeros(npsrs)
@@ -4464,7 +4467,7 @@ class ptaLikelihood(object):
             orderFrequencyLines=False, \
             compression = 'None', \
             evalCompressionComplement = False, \
-            explicitGWBcomponents = True, \
+            explicitGWBcomponents = False, \
             likfunc='mark2'):
         # We have to determine the number of frequencies we'll need
         numNoiseFreqs = np.zeros(len(self.ptapsrs), dtype=np.int)
@@ -5845,11 +5848,7 @@ class ptaLikelihood(object):
                 psr.Nwvec[:] = 0
                 psr.Nwovec[:] = 0
             #else:
-            try:
-                psr.Nvec[:] = 0
-            except TypeError:
-                print "Error: ", ii
-                raise
+            psr.Nvec[:] = 0
             psr.Jvec[:] = 0
 
         if selection is None:
@@ -9690,7 +9689,7 @@ class ptaLikelihood(object):
             # We need to do some index magic in this section with masks and such
             # These are just the indices of the frequency matrix
             msk_ind = np.zeros(self.freqmask.shape, dtype=np.int)
-            msk_ind[self.freqmask] = np.arange(np.sum(freqmask))
+            msk_ind[self.freqmask] = np.arange(np.sum(self.freqmask))
 
             # Transform these indices to the full Z-matrix (no npff here?)
             # This includes the design matrix
@@ -9757,7 +9756,7 @@ class ptaLikelihood(object):
             SigmaLD = np.sum(np.log(s))
             rGSigmaGr = np.dot(self.rGZ_F, np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, self.rGZ_F))))
         except ValueError:
-            print Sigma, Phiinv, self.Phivec, parameters
+            print Sigma, self.Phivec, self.Svec, parameters
             print "prior:", self.gibbs_Phi_logprior(parameters, mask, allpars),\
                     "for: ", apars
 
