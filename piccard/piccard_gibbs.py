@@ -100,7 +100,7 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
             psrNcov = np.diag(awidth[Nmask]**2)
             Ndim = np.sum(Nmask)
             sampler_N.append(ptmcmc.PTSampler(Ndim, \
-                likob.gibbs_psr_noise_loglikelihood_gen, \
+                likob.gibbs_psr_noise_loglikelihood_mar, \
                 likob.gibbs_psr_noise_logprior, \
                 cov=psrNcov, outDir='./gibbs-chains/', \
                 verbose=False, nowrite=True, \
@@ -121,7 +121,7 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
                 psrDcov = np.diag(awidth[Dmask]**2)
                 Ddim = np.sum(Dmask)
                 sampler_D.append(ptmcmc.PTSampler(Ddim, \
-                    likob.gibbs_psr_DM_loglikelihood_gen, \
+                    likob.gibbs_psr_DM_loglikelihood_mar, \
                     likob.gibbs_psr_DM_logprior, \
                     cov=psrDcov, outDir='./gibbs-chains/', \
                     verbose=False, nowrite=True, \
@@ -162,7 +162,7 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
             #        loglargs=[Fmask, apars], \
             #        logpargs=[Fmask, apars])
             sampler_F = ptmcmc.PTSampler(Fdim, \
-                    likob.gibbs_Phi_loglikelihood_mar2, \
+                    likob.gibbs_Phi_loglikelihood_mar, \
                     likob.gibbs_Phi_logprior, \
                     cov=Fcov, outDir='./gibbs-chains/', \
                     verbose=False, nowrite=True, \
@@ -226,14 +226,21 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
             if sampler is not None:
                 Nmask = likob.gibbs_get_signal_mask(ii, ['efac', 'equad'])
                 psrNpars = apars[Nmask]
-                if step != 1:
-                    sampler._lnprob[step-1] = lp_cur
-                    sampler._lnlike[step-1] = ll_cur
-                sampler.logl.args = [ii, Nmask, apars]
-                sampler.logp.args = [ii, Nmask, apars]
 
                 likob.gibbs_update_allsubresiduals(apars, pp=ii)
 
+                sampler.logl.args = [ii, Nmask, apars]
+                sampler.logp.args = [ii, Nmask, apars]
+
+                if step != 1:
+                    sampler._lnlike[step-1] = \
+                            likob.gibbs_psr_noise_loglikelihood_mar(psrNpars, ii, Nmask, apars[:ndim])
+                    sampler._lnprob[step-1] = sampler._lnlike[step-1] + \
+                            likob.gibbs_psr_noise_logprior(psrNpars, ii, Nmask, apars[:ndim])
+                else:
+                    sampler.sample(psrNpars, step, covUpdate=500, burn=2, maxIter=2*steps,
+                        i0=0, thin=1)
+                
                 sampler.sample(psrNpars, step+1, covUpdate=500, burn=2, maxIter=2*steps,
                     i0=step-1, thin=1)
 
@@ -254,21 +261,31 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
                 sampler = sampler_D[ii]
                 Dmask = likob.gibbs_get_signal_mask(ii, ['dmpowerlaw', 'dmspectrum'])
                 psrDpars = apars[Dmask]
-                if step != 1:
-                    sampler._lnprob[step-1] = lp_cur
-                    sampler._lnlike[step-1] = ll_cur
+
+                likob.gibbs_update_allsubresiduals(apars, pp=ii)
+
                 sampler.logl.args = [ii, Dmask, apars]
                 sampler.logp.args = [ii, Dmask, apars]
 
-                likob.gibbs_update_allsubresiduals(apars, pp=ii)
+                if step != 1:
+                    sampler._lnlike[step-1] = \
+                            likob.gibbs_psr_DM_loglikelihood_mar(psrDpars, ii, Dmask, apars[:ndim])
+                    sampler._lnprob[step-1] = sampler._lnlike[step-1] + \
+                            likob.gibbs_psr_DM_loglikelihood_mar(psrDpars, ii, Dmask, apars[:ndim])
+                else:
+                    sampler.sample(psrDpars, step, covUpdate=500, burn=2, maxIter=2*steps,
+                        i0=0, thin=1)
+
                 sampler.sample(psrDpars, step+1, covUpdate=500, burn=2, maxIter=2*steps,
                     i0=step-1, thin=1)
 
-                if np.all(apars[Dmask] != sampler._chain[step,:]):
+                # What to do here?
+                if not np.all(apars[Dmask] == sampler._chain[step,:]):
                     # Step accepted
                     likob.gibbs_current_a = likob.gibbs_proposed_a
                     apars[ndim:] = np.hstack(likob.gibbs_current_a)
-                    apars[Dmask] = sampler._chain[step,:]
+
+                apars[Dmask] = sampler._chain[step,:]
 
                 #logpost[stepind] = sampler._lnprob[step]
                 #loglik[stepind] = sampler._lnlike[step]
@@ -276,6 +293,7 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
                 lp_prev = lp_cur
                 ll_cur = sampler._lnlike[step]
                 lp_cur = sampler._lnprob[step]
+            """
 
             if 'jitter' in likob.gibbsmodel and sampler_J[ii] is not None:
                 sampler = sampler_J[ii]
@@ -305,6 +323,7 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
                 lp_prev = lp_cur
                 ll_cur = sampler._lnlike[step]
                 lp_cur = sampler._lnprob[step]
+            """
 
 
         if 'rednoise' in likob.gibbsmodel and sampler_F is not None:
@@ -312,22 +331,27 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
             Fmask = likob.gibbs_get_signal_mask(-2, \
                     ['powerlaw', 'spectralModel', 'spectrum'])
             psrFpars = apars[Fmask]
-            #if step != 1:
-            #    sampler._lnprob[step-1] = logpost[stepind-1]
-            #    sampler._lnlike[step-1] = loglik[stepind-1]
-            if step != 1:
-                sampler._lnprob[step-1] = lp_cur
-                sampler._lnlike[step-1] = ll_cur
-            sampler.logl.args = [Fmask, apars]
-            sampler.logp.args = [Fmask, apars]
 
             for ii in range(len(likob.ptapsrs)):
                 likob.gibbs_update_allsubresiduals(apars, pp=ii)
 
+            sampler.logl.args = [Fmask, apars]
+            sampler.logp.args = [Fmask, apars]
+
+            if step != 1:
+                sampler._lnlike[step-1] = \
+                        likob.gibbs_Phi_loglikelihood_mar(psrFpars, Fmask, apars[:ndim])
+                sampler._lnprob[step-1] = sampler._lnlike[step-1] + \
+                        likob.gibbs_Phi_logprior(psrFpars, Fmask, apars[:ndim])
+            else:
+                sampler.sample(psrFpars, step, covUpdate=500, burn=2, maxIter=2*steps,
+                    i0=0, thin=1)
+
             sampler.sample(psrFpars, step+1, covUpdate=500, burn=2, maxIter=2*steps,
                 i0=step-1, thin=1)
 
-            if np.all(apars[Fmask] != sampler._chain[step,:]):
+
+            if not np.all(apars[Fmask] == sampler._chain[step,:]):
                 # Step accepted
                 for pp, psr in enumerate(likob.ptapsrs):
                     likob.gibbs_current_a, bpp, xi2 = \
@@ -336,15 +360,13 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
 
                 #likob.gibbs_current_a = likob.gibbs_proposed_a
                 apars[ndim:] = np.hstack(likob.gibbs_current_a)
-                apars[Fmask] = sampler._chain[step,:]
-            #logpost[stepind] = sampler._lnprob[step]
-            #loglik[stepind] = sampler._lnlike[step]
+
+            apars[Fmask] = sampler._chain[step,:]
+
             ll_prev = ll_cur
             lp_prev = lp_cur
             ll_cur = likob.gibbs_full_loglikelihood(apars)
             lp_cur = ll_cur + likob.mark4logprior(apars[:ndim])
-            #ll_cur = sampler._lnlike[step]
-            #lp_cur = sampler._lnprob[step]
 
         samples[stepind, :] = apars
         logpost[stepind] = lp_cur

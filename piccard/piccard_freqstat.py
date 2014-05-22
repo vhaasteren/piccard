@@ -148,6 +148,8 @@ def fitCrossPower(hdcoeff, crosspower, crosspowererr):
     @param hdcoeff:         Array of H&D coefficients for all the pulsar pairs
     @param crosspower:      Array of cross-power measured for all the pulsars
     @param crosspowererr:   Array of the error of the cross-power measurements
+
+    @return:        Value of h^2 and the uncertainty in it.
     """
     hc_sqr = np.sum(crosspower*hdcoeff / (crosspowererr*crosspowererr)) / np.sum(hdcoeff*hdcoeff / (crosspowererr*crosspowererr))
     hc_sqrerr = 1.0 / np.sqrt(np.sum(hdcoeff * hdcoeff / (crosspowererr * crosspowererr)))
