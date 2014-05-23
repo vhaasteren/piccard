@@ -189,6 +189,8 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
     if 'rednoise' in likob.gibbsmodel:
         likob.gibbs_construct_all_freqcov()
 
+    likob.gibbs_construct_all_freqcov()     # Correlated signal (corrim) update
+
     # 3) Set the subtracted residuals, based on the quadratic parameters
     apars[ndim:] = np.hstack(a)
     for ii, psr in enumerate(likob.ptapsrs):
@@ -197,7 +199,7 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
     # 4) Generate _all_ quadratic parameters here (generates sub-residuals?)
     b = []
     for ii, psr in enumerate(likob.ptapsrs):
-        a, bi, xi2 = likob.gibbs_sample_quadratics(apars[:ndim], a, ii)
+        a, bi, xi2 = likob.gibbs_sample_psr_quadratics(apars[:ndim], a, ii)
     b.append(bi)
     apars[ndim:] = np.hstack(a)
     likob.gibbs_current_a = a
@@ -211,7 +213,6 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
     loglik[0] = likob.gibbs_full_loglikelihood(\
             apars, resetCorInv=False, which='all', pp=-1)
 
-    # We know the prior is zero at this point. CHANGE THIS LATER, THIS IS NOT OK. !!!!!!!!!!!!!!!!
     stepind = 0
     logpost[0] = loglik[0] + likob.mark4logprior(apars[:ndim])
     lp_prev = logpost[0]
@@ -353,13 +354,20 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
 
             if not np.all(apars[Fmask] == sampler._chain[step,:]):
                 # Step accepted
-                for pp, psr in enumerate(likob.ptapsrs):
-                    likob.gibbs_current_a, bpp, xi2 = \
-                            likob.gibbs_sample_quadratics(apars[:ndim], \
-                            likob.gibbs_current_a, pp, which='F')
+                #for pp, psr in enumerate(likob.ptapsrs):
+                #    likob.gibbs_current_a, bpp, xi2 = \
+                #            likob.gibbs_sample_psr_quadratics(apars[:ndim], \
+                #            likob.gibbs_current_a, pp, which='F')
+
+                likob.gibbs_current_a = \
+                        likob.gibbs_sample_Phi_quadratics(apars[:ndim], \
+                        likob.gibbs_current_a)
 
                 #likob.gibbs_current_a = likob.gibbs_proposed_a
                 apars[ndim:] = np.hstack(likob.gibbs_current_a)
+            else:
+                likob.setPhi(apars[:ndim])
+                likob.gibbs_construct_all_freqcov()
 
             apars[Fmask] = sampler._chain[step,:]
 

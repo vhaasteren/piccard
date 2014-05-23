@@ -3627,6 +3627,9 @@ class ptaLikelihood(object):
     npu = None      # Number of avetoas per pulsar
     npm = None      # Number of columns of design matrix (full design matrix)
     npz = None      # Number of columns of Zmat
+    npz_f = None      # Number of columns of Zmat
+    npz_d = None      # Number of columns of Zmat
+    npz_U = None      # Number of columns of Zmat
     Tmax = None     # One Tmax to rule them all...
 
     # Which pulsars have which red noise frequencies...
@@ -3642,6 +3645,7 @@ class ptaLikelihood(object):
     Scor = None         #                                     gibbs (GWB corr)
     Scor_im = None      #                                     gibbs (GWB impl)
     Scor_im_cf = None   #                                     gibbs (GWB impl)
+    Scor_im_inv = None  #                                     gibbs (GWB impl)
     Sigma = None        #        mark3, mark?, mark6                (everything)
     GNGldet = None      # mark1, mark3, mark?, mark6                (log-det)
 
@@ -4889,6 +4893,8 @@ class ptaLikelihood(object):
                     del Umat
 
         if incGWB:
+            if not 'rednoise' in gibbsmodel:
+                gibbsmodel.append('rednoise')
             if not 'correx' in gibbsmodel and explicitGWBcomponents:
                 gibbsmodel.append('correx')
             elif not 'corrim' in gibbsmodel and not explicitGWBcomponents:
@@ -4924,6 +4930,8 @@ class ptaLikelihood(object):
             signals.append(newsignal)
 
         if incClock:
+            if not 'rednoise' in gibbsmodel:
+                gibbsmodel.append('rednoise')
             if not 'correx' in gibbsmodel and explicitGWBcomponents:
                 gibbsmodel.append('correx')
             elif not 'corrim' in gibbsmodel and not explicitGWBcomponents:
@@ -4959,6 +4967,8 @@ class ptaLikelihood(object):
             signals.append(newsignal)
 
         if incDipole:
+            if not 'rednoise' in gibbsmodel:
+                gibbsmodel.append('rednoise')
             if not 'correx' in gibbsmodel and explicitGWBcomponents:
                 gibbsmodel.append('correx')
             elif not 'corrim' in gibbsmodel and not explicitGWBcomponents:
@@ -4994,6 +5004,8 @@ class ptaLikelihood(object):
             signals.append(newsignal)
 
         if incAniGWB:
+            if not 'rednoise' in gibbsmodel:
+                gibbsmodel.append('rednoise')
             if not 'correx' in gibbsmodel and explicitGWBcomponents:
                 gibbsmodel.append('correx')
             elif not 'corrim' in gibbsmodel and not explicitGWBcomponents:
@@ -5036,6 +5048,8 @@ class ptaLikelihood(object):
             signals.append(newsignal)
 
         if incPixelGWB:
+            if not 'rednoise' in gibbsmodel:
+                gibbsmodel.append('rednoise')
             if not 'correx' in gibbsmodel and explicitGWBcomponents:
                 gibbsmodel.append('correx')
             elif not 'corrim' in gibbsmodel and not explicitGWBcomponents:
@@ -8662,6 +8676,75 @@ class ptaLikelihood(object):
                 self.Scor_im_cf.append((np.diag(np.sqrt(np.diag(rncov))), False))
                 self.Scor_im_inv.append(np.diag(1.0 / np.diag(rncov)))
 
+
+    def gibbs_psr_corrs_im(self, psrindex, a):
+        """
+        Get the Gibbs coefficient quadratic offsets for the correlated signals, for
+        a specific pulsar, when the correlated signal is not modelled explicitly
+        with it's own Fourier coefficients
+
+        @param psrindex:    Index of the pulsar
+        @param a:           List of Gibbs coefficient of all pulsar (of previous step)
+
+        @return:    (pSinv_vec, pPvec), the quadratic offsets
+        """
+        psr = self.ptapsrs[psrindex]
+
+        #Sinv = []
+        pSinv_vec = np.zeros(self.npf[psrindex])
+        for ii in range(self.npf[psrindex]):
+            mode_ind = int(ii * 0.5)
+            pSinv_vec[ii] = self.Scor_im_inv[mode_ind][psrindex, psrindex]
+
+        # The inverse of the GWB correlations are easy
+        #pSinv_vec = (1.0 / self.Svec[:self.npf[psrindex]]) * \
+        #        self.Scor_inv[psrindex,psrindex]
+
+        # For the quadratic offsets, we'll need to do some splice magic
+        # First select the slice we'll need from the correlation matrix
+        temp = np.arange(len(self.ptapsrs))
+        psrslice = np.delete(temp, psrindex)
+
+        # The quadratic offset we'll return
+        pPvec = np.zeros(psr.Fmat.shape[1])
+
+        # Pre-compute the GWB-index offsets of all the pulsars
+        corrmode_offset = []
+        for ii in range(len(self.ptapsrs)):
+            nms = self.npm[ii]
+            nfs = self.npf[ii]
+
+            ntot = 0
+            if 'design' in self.gibbsmodel:
+                ntot += nms
+
+            corrmode_offset.append(ntot)
+
+
+        for jj in psrslice:
+            psrj = self.ptapsrs[jj]
+            minfreqs = min(len(psrj.Ffreqs), len(psr.Ffreqs))
+            inda = corrmode_offset[jj]
+            indb = corrmode_offset[jj] + minfreqs
+            #pPvec[:minfreqs] += a[jj][inda:indb] * \
+            #        self.Scor_inv[psrindex,jj] / self.Svec[:minfreqs]
+            for ii in range(minfreqs):
+                mode_ind = int(ii * 0.5)
+
+                #print pPvec[ii]
+                #print self.Scor_im_inv[mode_ind]
+                #print self.Scor_im_inv[mode_ind][psrindex, jj]
+                #print a[jj][inda+ii]
+
+                pPvec[ii] += self.Scor_im_inv[mode_ind][psrindex, jj] * a[jj][inda+ii]
+                #print "ii/jj = ", ii, jj
+
+        return (pSinv_vec, pPvec)
+
+
+
+
+
     def gibbs_get_signal_mask(self, pp, stypes, addFalse=0):
         """
         Given the pulsar number, get the parameter mask for the requested
@@ -8964,7 +9047,7 @@ class ptaLikelihood(object):
         return qarr
 
 
-    def gibbs_sample_quadratics(self, parameters, a, pp, which='all', ml=False):
+    def gibbs_sample_psr_quadratics(self, parameters, a, pp, which='all', ml=False):
         """
         Given the values of the hyper parameters, generate new quadratic
         parameters for pulsar pp.
@@ -9023,11 +9106,17 @@ class ptaLikelihood(object):
             amask[zindex:zindex+nms] = True
             zindex += nms
 
+        # WAIT!!! What happens to the mask, if 'which' is not set to all???????????????????????????????
         if 'corrim' in self.gibbsmodel and (which == 'F' or which == 'all'):
-            (pSinv_vec, pPvec) = gibbs_psr_corrs_im(self, pp, a)                    # ADJUST THIS HERE!!!
-                                                                                    # HAS NOT YET BEEN DONE
+            (pSinv_vec, pPvec) = self.gibbs_psr_corrs_im(pp, a)
                                                                                    
             ind = range(zindex, zindex + nfs)
+
+            print "Sigma:", Sigma[ind, ind]
+            print "pSinv:", pSinv_vec
+            print "ENx:  ", ENx[ind]
+            print "pPvec:", pPvec
+
             Sigma[ind, ind] += pSinv_vec
             ENx[ind] -= pPvec
             amask[zindex:zindex+nfs] = True
@@ -9072,7 +9161,17 @@ class ptaLikelihood(object):
             U, s, Vt = sl.svd(Sigi)
             Li = U * np.sqrt(s)
 
+            if not np.all(s > 0):
+                raise ValueError("ERROR: Sigma singular according to SVD")
+
             ahat = np.dot(Sigi, ENx)
+
+            # Test the coefficients for nans and infs
+            nonan = np.all(np.logical_not(np.isnan(ahat)))
+            noinf = np.all(np.logical_not(np.isinf(ahat)))
+            if not (nonan and noinf):
+                np.savetxt('ahat.txt', ahat)
+                raise ValueError("Have inf or nan in solution (QR)")
         except (np.linalg.LinAlgError, ValueError):
             try:
                 print "ERROR in QR. Doing SVD"
@@ -9151,6 +9250,240 @@ class ptaLikelihood(object):
         xi2 = np.sum(psr.gibbsresiduals**2 / psr.Nvec)
 
         return a, fulladdcoefficients, xi2
+
+
+
+
+    def gibbs_sample_Phi_quadratics(self, parameters, a, ml=False):
+        """
+        Given the values of the hyper parameters, generate new quadratic
+        parameters for the full array. This function will keep the quadratic
+        parameters for the Jitter and DM variation fixed
+
+        @param parameters:  The hyper-parameters of the likelihood
+        @param a:           List of all quadratic parameters (overwritten)
+        @param ml:          Whether to provide ML estimates, or to sample
+
+        @return:            a, fulladdcoefficients, xi2
+                            (for now, fulladdcoefficients == a[pp])
+        """
+        npsrs = len(self.ptapsrs)
+        xi2 = 0                     # Xi2 for this pulsar
+        beSlow = True       # Do not use frequency optimisation (yet)
+
+        # Create the quadratic mask list (which quadratics of which pulsar are
+        # included
+        l_amask = []
+
+        # Set the FNF matrix
+        for ii, psr in enumerate(self.ptapsrs):
+            nzs = self.npz[ii]
+            nms = self.npm[ii]
+            nfs = self.npf[ii]
+            l_amask.append(np.zeros(nzs, dtype=np.bool))
+            zindex = 0
+            if 'design' in self.gibbsmodel:
+                l_amask[ii][zindex:zindex+nms] = True
+                zindex += nms
+            if 'rednoise' in self.gibbsmodel:
+                l_amask[ii][zindex:zindex+nfs] = True
+                zindex += nfs
+
+
+            residuals = psr.gibbsresiduals_F
+
+            zindex = np.sum(self.npz_f[:ii])
+            npz = int(self.npz_f[ii])
+            self.FNF[zindex:zindex+npz, zindex:zindex+npz] = \
+                    np.dot(psr.Zmat_F.T, ((1.0/psr.Nvec) * psr.Zmat_F.T).T)
+
+            self.rGZ_F[zindex:zindex+npz] = np.dot(residuals / psr.Nvec, psr.Zmat_F)
+            self.GNGldet[ii] = np.sum(np.log(psr.Nvec))
+            self.rGr[ii] = np.sum(residuals ** 2 / psr.Nvec)
+
+        # Using that, build Sigma
+        if len(self.ptapsrs) == 1:
+            psr = self.ptapsrs[0]
+
+            # No fancy tricks required
+            Phiinv = 1.0 / (self.Phivec + self.Svec)
+
+            Zmat = psr.Zmat_F
+
+            PhiLD = np.sum(np.log(self.Phivec + self.Svec))
+
+            Sigma = np.dot(Zmat.T * (1.0 / psr.Nvec), Zmat)
+            inds = range(Zmat.shape[1] - psr.Fmat.shape[1], \
+                    Zmat.shape[1])
+            Sigma[inds, inds] += Phiinv
+        else:
+            # We need to do some index magic in this section with masks and such
+            # These are just the indices of the frequency matrix
+            msk_ind = np.zeros(self.freqmask.shape, dtype=np.int)
+            msk_ind[self.freqmask] = np.arange(np.sum(self.freqmask))
+
+            # Transform these indices to the full Z-matrix (no npff here?)
+            # This includes the design matrix
+            # 
+            # Z = (M1  F1   0   0 ... 0   0  )
+            #     ( 0   0  M2  F2 ... 0   0  )
+            #     ( .   .   .   . ... .   .  )
+            #     ( 0   0   0   0 ... Mn  Fn )
+            moffset = np.repeat(np.cumsum(self.npm), self.npf, axis=0)
+            msk_zind = np.arange(np.sum(self.npf)) + moffset
+
+            Sigma = self.FNF.copy()
+
+            if beSlow:
+                try:
+                    cf = sl.cho_factor(self.Phi)
+                    Phiinv = sl.cho_solve(cf, np.eye(self.Phi.shape[0]))
+                    PhiLD = 2*np.sum(np.log(np.diag(cf[0])))
+
+                    Sigma[np.array([msk_zind]).T, msk_zind] += Phiinv
+                except np.linalg.LinAlgError:
+                    raise
+            else:
+                # Sigma = np.dot(Zmat.T * (1.0 / psr.Nvec), Zmat)
+
+
+                # Perform the inversion of Phi per frequency. Is much much faster
+                PhiLD = 0
+                for mode in range(0, self.freqmask.shape[1], 2):
+                    freq = int(mode/2)
+
+                    # We had pre-calculated the Cholesky factor and the inverse
+                    rncov_inv = self.Scor_im_inv[freq]
+                    cf = self.Scor_im_cf[freq]
+                    PhiLD += 4 * np.sum(np.log(np.diag(cf[0])))
+
+                    # Ok, we have the inverse for the individual modes. Now add them
+                    # to the full sigma matrix
+
+                    # Firstly the Cosine mode
+                    newmsk = np.zeros(self.freqmask.shape, dtype=np.bool)
+                    newmsk[:, mode] = self.freqmask[:, mode]
+                    mode_ind = msk_ind[newmsk]
+                    z_ind = msk_zind[mode_ind]
+                    Sigma[np.array([z_ind]).T, z_ind] += rncov_inv
+
+                    # Secondly the Sine mode
+                    newmsk[:] = False
+                    newmsk[:, mode+1] = self.freqmask[:, mode+1]
+                    mode_ind = msk_ind[newmsk]
+                    z_ind = msk_zind[mode_ind]
+                    Sigma[np.array([z_ind]).T, z_ind] += rncov_inv
+
+        # Aight, we have Sigma now. Do the decomposition
+        try:
+            # Use a QR decomposition for the inversions
+            Qs,Rs = sl.qr(Sigma) 
+
+            #Qsb = np.dot(Qs.T, np.eye(Sigma.shape[0])) # computing Q^T*b (project b onto the range of A)
+            #Sigi = sl.solve(Rs,Qsb) # solving R*x = Q^T*b
+            Sigi = sl.solve(Rs,Qs.T) # solving R*x = Q^T*b
+            
+            # Ok, we've got the inverse... now what? Do SVD?
+            U, s, Vt = sl.svd(Sigi)
+            Li = U * np.sqrt(s)
+
+            if not np.all(s > 0):
+                raise ValueError("ERROR: Sigma singular according to SVD")
+
+            ahat = np.dot(Sigi, self.rGZ_F)
+
+            # Test the coefficients for nans and infs
+            nonan = np.all(np.logical_not(np.isnan(ahat)))
+            noinf = np.all(np.logical_not(np.isinf(ahat)))
+            if not (nonan and noinf):
+                np.savetxt('ahat.txt', ahat)
+                raise ValueError("Have inf or nan in solution (QR)")
+        except (np.linalg.LinAlgError, ValueError):
+            try:
+                print "ERROR in QR. Doing SVD"
+
+                U, s, Vt = sl.svd(Sigma)
+                if not np.all(s > 0):
+                    raise np.linalg.LinAlgError
+                    #raise ValueError("ERROR: Sigma singular according to SVD")
+                Sigi = np.dot(U * (1.0/s), Vt)
+                Li = U * (1.0 / np.sqrt(s))
+
+                ahat = np.dot(Sigi, self.rGZ_F)
+            except np.linalg.LinAlgError:
+                try:
+                    print "ERROR in SVD. Doing Cholesky"
+
+                    cfL = sl.cholesky(Sigma, lower=True)
+                    cf = (cfL, True)
+
+                    # Calculate the inverse Cholesky factor (can we do this faster?)
+                    cfLi = sl.cho_factor(cfL, lower=True)
+                    Li = sl.cho_solve(cfLi, np.eye(Sigma.shape[0]))
+
+                    ahat = sl.cho_solve(cf, self.rGZ_F)
+                except np.linalg.LinAlgError:
+                    # Come up with some better exception handling
+                    print "ERROR in Cholesky. Help!"
+                    raise
+        except ValueError:
+            print "WTF?"
+            print "Look in sigma.txt for the Sigma matrix"
+            np.savetxt("sigma.txt", Sigma)
+
+            raise
+
+        # Get a sample from the coefficient distribution
+        aadd = np.dot(Li, np.random.randn(Li.shape[0]))
+        # See what happens if we use numpy
+        # aadd = np.random.multivariate_normal(np.zeros(Sigi.shape[0]), \
+        #        Sigi)
+        #numpy.random.multivariate_normal(mean, cov[, size])
+
+        if ml:
+            addcoefficients = ahat
+        else:
+            addcoefficients = ahat + aadd
+
+        # Test the coefficients for nans and infs
+        nonan = np.all(np.logical_not(np.isnan(addcoefficients)))
+        noinf = np.all(np.logical_not(np.isinf(addcoefficients)))
+        if not (nonan and noinf):
+            np.savetxt('ahat.txt', ahat)
+            np.savetxt('aadd.txt', aadd)
+            raise ValueError("Have inf or nan in solution")
+
+
+        # Place back the quadratic parameters
+        #l_amask.append(np.zeros(nzs, dtype=np.bool))
+        pindex = 0
+        for pp, psr in enumerate(self.ptapsrs):
+            npz = self.npz[pp]
+            a[pp][l_amask[pp]] = addcoefficients[pindex:pindex+self.npz_f[pp]]
+
+            pindex += self.npz_f[pp]
+
+        """
+        fulladdcoefficients = psr.gibbscoefficients.copy()
+        fulladdcoefficients[amask] = addcoefficients
+
+        psr.gibbscoefficients[amask] = addcoefficients.copy()
+        #psr.gibbscoefficients[:psr.Mmat.shape[1]] = np.dot(psr.tmpConv, \
+        #        addcoefficients[:psr.Mmat.shape[1]])
+        # That's right. We do _not_ adjust the Gibbs parameters anymore :)
+
+        # We save the quadratic parameters separately
+        a[pp] = psr.gibbscoefficients
+
+        # Update the residuals? No. Do that elsewhere!
+        # psr.gibbssubresiduals = np.dot(psr.Zmat, addcoefficients)
+        # psr.gibbsresiduals = psr.detresiduals - psr.gibbssubresiduals
+
+        xi2 = np.sum(psr.gibbsresiduals**2 / psr.Nvec)
+        """
+
+        return a
+
 
 
 
@@ -9403,7 +9736,7 @@ class ptaLikelihood(object):
 
         a = list(self.gibbs_current_a)
 
-        a, bpp, xi2 = self.gibbs_sample_quadratics(hpars, a, pp, which='D')
+        a, bpp, xi2 = self.gibbs_sample_psr_quadratics(hpars, a, pp, which='D')
 
         apars = np.append(hpars, np.hstack(a))
 
@@ -9444,7 +9777,7 @@ class ptaLikelihood(object):
         # Generate new quadratic parameters. What is more time-efficient?
         # Per-pulsar, or for the full array?
         for pp, psr in enumerate(self.ptapsrs):
-            a, bpp, xi2 = self.gibbs_sample_quadratics(hpars, a, pp, which='F')
+            a, bpp, xi2 = self.gibbs_sample_psr_quadratics(hpars, a, pp, which='F')
 
         apars = np.append(hpars, np.hstack(a))
 
@@ -9479,7 +9812,7 @@ class ptaLikelihood(object):
 
         a = list(self.gibbs_current_a)
 
-        a, bpp, xi2 = self.gibbs_sample_quadratics(hpars, a, pp, which='U')
+        a, bpp, xi2 = self.gibbs_sample_psr_quadratics(hpars, a, pp, which='U')
 
         apars = np.append(hpars, np.hstack(a))
 
@@ -9645,7 +9978,7 @@ class ptaLikelihood(object):
         @param mask:            The mask to use for the full set of parameters
         @param allpars:         The vector of all hyper parameters parmaeters
         """
-        beSlow = False       # Do not use frequency optimisation (yet)
+        beSlow = True       # Do not use frequency optimisation (yet)
 
         # Set the parameters
         apars = allpars.copy()[:self.dimensions]
@@ -9679,7 +10012,7 @@ class ptaLikelihood(object):
 
             Zmat = psr.Zmat_F
 
-            PhiLD = np.sum(np.log(self.Phivec))
+            PhiLD = np.sum(np.log(self.Phivec + self.Svec))
 
             Sigma = np.dot(Zmat.T * (1.0 / psr.Nvec), Zmat)
             inds = range(Zmat.shape[1] - psr.Fmat.shape[1], \
@@ -9759,6 +10092,14 @@ class ptaLikelihood(object):
             print Sigma, self.Phivec, self.Svec, parameters
             print "prior:", self.gibbs_Phi_logprior(parameters, mask, allpars),\
                     "for: ", apars
+
+        #print "rGr = ", np.sum(self.rGr)
+        #print "GNGldet = ", np.sum(self.GNGldet)
+        #print "rGSigmaGr = ", rGSigmaGr
+        #print "SigmaLD = ", SigmaLD
+        #print "PhiLD = ", PhiLD
+
+        #print "ll = ", ll
 
         # Return the conditional marginalised log-likelihood
         return -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) \
