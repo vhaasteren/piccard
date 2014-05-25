@@ -61,9 +61,6 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
         chainfile_b = open(chainfilename_b, 'w')
         chainfile_b.close()
 
-        #xi2filename = chainsdir + '/xi2.txt'
-        #xi2file = open(xi2filename, 'w')
-        #xi2file.close()
 
         # Also save the residuals for all pulsars
         likob.saveResiduals(chainsdir)
@@ -154,13 +151,6 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
             Fpars = apars[Fmask]
             Fcov = np.diag(awidth[Fmask]**2)
             Fdim = np.sum(Fmask)
-            #sampler_F = ptmcmc.PTSampler(Fdim, \
-            #        likob.gibbs_Phi_loglikelihood_gen, \
-            #        likob.gibbs_Phi_logprior, \
-            #        cov=Fcov, outDir='./gibbs-chains/', \
-            #        verbose=False, nowrite=True, \
-            #        loglargs=[Fmask, apars], \
-            #        logpargs=[Fmask, apars])
             sampler_F = ptmcmc.PTSampler(Fdim, \
                     likob.gibbs_Phi_loglikelihood_mar, \
                     likob.gibbs_Phi_logprior, \
@@ -175,9 +165,7 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
     # stability
     a = []
     for ii, psr in enumerate(likob.ptapsrs):
-        # gibbsQuantities(likob, hpars)
         a.append(likob.gibbs_get_initial_quadratics(ii))
-        # psr.gibbsresiduals = psr.detresiduals.copy()
 
     likob.gibbs_current_a = a
 
@@ -189,7 +177,7 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
     if 'rednoise' in likob.gibbsmodel:
         likob.gibbs_construct_all_freqcov()
 
-    likob.gibbs_construct_all_freqcov()     # Correlated signal (corrim) update
+    #likob.gibbs_construct_all_freqcov()     # Correlated signal (corrim) update
 
     # 3) Set the subtracted residuals, based on the quadratic parameters
     apars[ndim:] = np.hstack(a)
@@ -246,6 +234,9 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
                     i0=step-1, thin=1)
 
                 apars[Nmask] = sampler._chain[step,:]
+
+                likob.setSinglePsrNoise(apars[:ndim], pp=ii)
+                #likob.apars = apars.copy()
                 #logpost[stepind] = sampler._lnprob[step]
                 #loglik[stepind] = sampler._lnlike[step]
                 ll_prev = ll_cur
@@ -351,6 +342,7 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
             sampler.sample(psrFpars, step+1, covUpdate=500, burn=2, maxIter=2*steps,
                 i0=step-1, thin=1)
 
+            apars[Fmask] = sampler._chain[step,:]
 
             if not np.all(apars[Fmask] == sampler._chain[step,:]):
                 # Step accepted
@@ -368,8 +360,6 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
             else:
                 likob.setPhi(apars[:ndim])
                 likob.gibbs_construct_all_freqcov()
-
-            apars[Fmask] = sampler._chain[step,:]
 
             ll_prev = ll_cur
             lp_prev = lp_cur
