@@ -2404,6 +2404,11 @@ class ptaPulsar(object):
             U, s, Vt = sl.svd(self.Mmat[:,Mask_left], full_matrices=False)
             self.Mmat_g[:, Mask_left] = U
 
+        U, s, Vh = sl.svd(self.Mmat)
+        self.Gmat = U[:, self.Mmat.shape[1]:]
+        self.Gcmat = U[:, :self.Mmat.shape[1]]
+        self.Mmat_g = self.Gcmat.copy()
+
 
     def getZmat(self, gibbsmodel, which='all'):
         """
@@ -8920,7 +8925,7 @@ class ptaLikelihood(object):
             psr.gibbscoefficients = aparameters[nqind_m:nqind_m+Zmat.shape[1]]
             psr.gibbsresiduals_sub = np.dot(Zmat, psr.gibbscoefficients)
             psr.gibbsresiduals = psr.detresiduals - psr.gibbsresiduals_sub
-            psr.gibbsresiduals_N = psr.gibbsresiduals
+            psr.gibbsresiduals_N = psr.gibbsresiduals.copy()
         if (which == 'M' or which == 'all'):
             if nqind_m < 0:
                 raise ValueError("No valid index for timing model")
