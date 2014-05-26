@@ -1582,6 +1582,9 @@ class ptaPulsar(object):
     Zmat_F = None       # For the Gibbs sampling, this is the Fmat/Emat
     Zmat_D = None
     Zmat_U = None
+    Zmask_F = None      # Which columns of the full Zmat are in Zmat_F
+    Zmask_D = None
+    Zmask_U = None
     Gr = None
     GGr = None
     GtF = None
@@ -2404,10 +2407,30 @@ class ptaPulsar(object):
             U, s, Vt = sl.svd(self.Mmat[:,Mask_left], full_matrices=False)
             self.Mmat_g[:, Mask_left] = U
 
-        U, s, Vh = sl.svd(self.Mmat)
-        self.Gmat = U[:, self.Mmat.shape[1]:]
-        self.Gcmat = U[:, :self.Mmat.shape[1]]
-        self.Mmat_g = self.Gcmat.copy()
+        #U, s, Vh = sl.svd(self.Mmat)
+        #self.Gmat = U[:, self.Mmat.shape[1]:]
+        #self.Gcmat = U[:, :self.Mmat.shape[1]]
+        #self.Mmat_g = self.Gcmat.copy()
+
+    def getMmask(self, which='all'):
+        """
+        Given a 'which', return the right design matrix mask
+
+        @param which:   Can be all, F, D, U
+
+        @return:    Which columns of the design matrix are included in the
+                    conditional that marginalises over the partial design matrix
+        """
+        if which == 'F':
+            mask = self.Mmask_F
+        elif which == 'D':
+            mask = self.Mmask_D
+        elif which == 'U':
+            mask = self.Mmask_U
+        else:
+            mask = np.array([1]*self.Mmat_g.shape[1], dtype=np.bool)
+        
+        return mask
 
 
     def getZmat(self, gibbsmodel, which='all'):
@@ -2417,40 +2440,83 @@ class ptaPulsar(object):
         @param gibbsmodel:  List of which quadratics are available
         @param which:       Which quadratics to vary (not fixed)
                             Options: all, F, D, U
+
+        @return:    The partial Z-matrix, and it's mask compared to the full
+                    Z-matrix
         """
         nf = self.Fmat.shape[1]
         ndmf = self.Fdmmat.shape[1]
+        zmask = np.zeros(0, dtype=np.bool)
+
+        if which == 'F':
+            dmask = self.Mmask_F
+        elif which == 'D':
+            dmask = self.Mmask_D
+        elif which == 'U':
+            dmask = self.Mmask_U
+        else:
+            dmask = np.array([1]*self.Mmat_g.shape[1], dtype=np.bool)
 
         if 'design' in gibbsmodel:
-            Ft_1 = self.Mmat_g.copy()
+            Ft_1 = self.Mmat_g[:, dmask]
         else:
             Ft_1 = np.zeros((self.Mmat_g.shape[0], 0))
+
+        zmask = np.append(zmask, dmask)
 
         if nf > 0 and 'rednoise' in gibbsmodel and \
                 (which == 'all' or which == 'F'):
             Ft_2 = np.append(Ft_1, self.Fmat, axis=1)
+
+            zmask = np.append(zmask, \
+                    np.array([1]*self.Fmat.shape[1], dtype=np.bool))
         else:
             Ft_2 = Ft_1
+
+            if nf > 0 and 'rednoise' in gibbsmodel:
+                zmask = np.append(zmask, \
+                        np.array([0]*self.Fmat.shape[1], dtype=np.bool))
 
         if ndmf > 0 and 'dm' in gibbsmodel and \
             (which == 'all' or which == 'D'):
             Ft_3 = np.append(Ft_2, self.DF, axis=1)
+
+            zmask = np.append(zmask, \
+                    np.array([1]*self.DF.shape[1], dtype=np.bool))
         else:
             Ft_3 = Ft_2
+
+            if ndmf > 0 and 'dm' in gibbsmodel:
+                zmask = np.append(zmask, \
+                        np.array([0]*self.DF.shape[1], dtype=np.bool))
 
         if 'jitter' in gibbsmodel and \
             (which == 'all' or which == 'U'):
             Ft_4 = np.append(Ft_3, self.Umat, axis=1)
+
+            zmask = np.append(zmask, \
+                    np.array([1]*self.Umat.shape[1], dtype=np.bool))
         else:
             Ft_4 = Ft_3
+
+            if 'jitter' in gibbsmodel:
+                zmask = np.append(zmask, \
+                        np.array([0]*self.Umat.shape[1], dtype=np.bool))
 
         if 'correx' in gibbsmodel and \
             (which == 'all' or which == 'F'):
             Zmat = np.append(Ft_4, self.Fmat, axis=1)
+
+            zmask = np.append(zmask, \
+                    np.array([1]*self.Fmat.shape[1], dtype=np.bool))
         else:
             Zmat = Ft_4
 
-        return Zmat
+            if 'correx' in gibbsmodel:
+                zmask = np.append(zmask, \
+                        np.array([0]*self.Fmat.shape[1], dtype=np.bool))
+
+        return Zmat, zmask
 
     """
     For every pulsar, quite a few Auxiliary quantities (like GtF etc.) are
@@ -3203,10 +3269,10 @@ class ptaPulsar(object):
             # Prepare the new design matrix bases
             self.gibbs_set_design()
 
-            self.Zmat = self.getZmat(gibbsmodel, which='all')
-            self.Zmat_F = self.getZmat(gibbsmodel, which='F')
-            self.Zmat_D = self.getZmat(gibbsmodel, which='D')
-            self.Zmat_U = self.getZmat(gibbsmodel, which='U')
+            self.Zmat, temp = self.getZmat(gibbsmodel, which='all')
+            self.Zmat_F, self.Zmask_F = self.getZmat(gibbsmodel, which='F')
+            self.Zmat_D, self.Zmask_D = self.getZmat(gibbsmodel, which='D')
+            self.Zmat_U, self.Zmask_U = self.getZmat(gibbsmodel, which='U')
             self.gibbsresiduals = np.zeros(len(self.toas))
             self.gibbssubresiduals_M = np.zeros(len(self.toas))
             self.gibbssubresiduals_D = np.zeros(len(self.toas))
@@ -9066,45 +9132,50 @@ class ptaLikelihood(object):
         npsrs = len(self.ptapsrs)
         xi2 = 0                     # Xi2 for this pulsar
 
-        nzs = self.npz[pp]
-        nms = self.npm[pp]
+        psr = self.ptapsrs[pp]
+        
+        # The mask, selecting the quadratic residuals for this pulsar
+        dmask = psr.getMmask(which)
+
+        # Indices to keep track of the parameters
+        #nms = self.npm[pp]
+        nms = np.sum(dmask)
         findex = np.sum(self.npf[:pp])
         nfs = self.npf[pp]
         fdmindex = np.sum(self.npfdm[:pp])
         nfdms = self.npfdm[pp]
         npus = self.npu[pp]
-        
-        # The mask, selecting the quadratic residuals for this pulsar
-        amask = np.zeros(nzs, dtype=np.bool)
 
-        psr = self.ptapsrs[pp]
         residuals = psr.detresiduals.copy()
         if which == 'all':
             Zmat = psr.Zmat
+            zmask = np.array([1]*Zmat.shape[1], dtype=np.bool)
             residuals -= psr.gibbsresiduals_sub
         elif which == 'F':
             Zmat = psr.Zmat_F
+            zmask = psr.Zmask_F
             residuals -= psr.gibbssubresiduals_D + psr.gibbssubresiduals_U
         elif which == 'D':
             Zmat = psr.Zmat_D
+            zmask = psr.Zmask_D
             residuals -= psr.gibbssubresiduals_F + psr.gibbssubresiduals_U
         elif which == 'U':
             Zmat = psr.Zmat_U
+            zmask = psr.Zmask_U
             residuals -= psr.gibbssubresiduals_F + psr.gibbssubresiduals_D
 
         # Make ZNZ and Sigma
-        ZNZ = np.dot(psr.Zmat.T, ((1.0/psr.Nvec) * psr.Zmat.T).T)
+        ZNZ = np.dot(Zmat.T, ((1.0/psr.Nvec) * Zmat.T).T)
         Sigma = ZNZ.copy()
 
         # ahat is the slice ML value for the coefficients. Need ENx
-        ENx = np.dot(psr.Zmat.T, residuals / psr.Nvec)
+        ENx = np.dot(Zmat.T, residuals / psr.Nvec)
 
         # Depending on what signals are in the Gibbs model, we'll have to add
         # prior-covariances to ZNZ
         zindex = 0
         if 'design' in self.gibbsmodel:
             # Do nothing, she'll be 'right
-            amask[zindex:zindex+nms] = True
             zindex += nms
 
         if 'corrim' in self.gibbsmodel:
@@ -9114,32 +9185,28 @@ class ptaLikelihood(object):
                 Sigma[ind, ind] += pSinv_vec
                 ENx[ind] -= pPvec
 
-            amask[zindex:zindex+nfs] = True
-            zindex += nfs
+                zindex += nfs
         elif 'rednoise' in self.gibbsmodel:
             if (which == 'F' or which == 'all'):
                 # Don't do this if it is included in corrim
                 ind = range(zindex, zindex+nfs)
                 Sigma[ind, ind] += 1.0 / self.Phivec[findex:findex+nfs]
 
-            amask[zindex:zindex+nfs] = True
-            zindex += nfs
+                zindex += nfs
 
         if 'dm' in self.gibbsmodel:
             if (which == 'D' or which == 'all'):
                 ind = range(zindex, zindex+nfdms)
                 Sigma[ind, ind] += 1.0 / self.Thetavec[fdmindex:fdmindex+nfdms]
 
-            amask[zindex:zindex+nfdms] = True
-            zindex += nfdms
+                zindex += nfdms
 
         if 'jitter' in self.gibbsmodel:
             if (which == 'U' or which == 'all'):
                 ind = range(zindex, zindex+npus)
                 Sigma[ind, ind] += 1.0 / psr.Jvec
 
-            amask[zindex:zindex+npus] = True
-            zindex += npus
+                zindex += npus
 
         if 'correx' in self.gibbsmodel:
             if self.have_gibbs_corr and (which == 'F' or which == 'all'):
@@ -9149,8 +9216,7 @@ class ptaLikelihood(object):
                 Sigma[ind, ind] += pSinv_vec
                 ENx[ind] -= pPvec
 
-            amask[zindex:zindex+nfs] = True
-            zindex += nfs
+                zindex += nfs
 
         try:
             # Use a QR decomposition for the inversions
@@ -9236,9 +9302,9 @@ class ptaLikelihood(object):
             raise ValueError("Have inf or nan in solution")
 
         fulladdcoefficients = psr.gibbscoefficients.copy()
-        fulladdcoefficients[amask] = addcoefficients
+        fulladdcoefficients[zmask] = addcoefficients
 
-        psr.gibbscoefficients[amask] = addcoefficients.copy()
+        psr.gibbscoefficients[zmask] = addcoefficients.copy()
         #psr.gibbscoefficients[:psr.Mmat.shape[1]] = np.dot(psr.tmpConv, \
         #        addcoefficients[:psr.Mmat.shape[1]])
         # That's right. We do _not_ adjust the Gibbs parameters anymore :)
@@ -9253,7 +9319,6 @@ class ptaLikelihood(object):
         xi2 = np.sum(psr.gibbsresiduals**2 / psr.Nvec)
 
         return a, fulladdcoefficients, xi2
-
 
 
 
@@ -9283,15 +9348,15 @@ class ptaLikelihood(object):
             nzs = self.npz[ii]
             nms = self.npm[ii]
             nfs = self.npf[ii]
-            l_amask.append(np.zeros(nzs, dtype=np.bool))
-            zindex = 0
-            if 'design' in self.gibbsmodel:
-                l_amask[ii][zindex:zindex+nms] = True
-                zindex += nms
-            if 'rednoise' in self.gibbsmodel:
-                l_amask[ii][zindex:zindex+nfs] = True
-                zindex += nfs
-
+            #l_amask.append(np.zeros(nzs, dtype=np.bool))
+            l_amask.append(psr.Zmask_F)
+            #zindex = 0
+            #if 'design' in self.gibbsmodel:
+            #    l_amask[ii][zindex:zindex+nms] = True
+            #    zindex += nms
+            #if 'rednoise' in self.gibbsmodel:
+            #    l_amask[ii][zindex:zindex+nfs] = True
+            #    zindex += nfs
 
             residuals = psr.gibbsresiduals_F
 
@@ -9828,7 +9893,6 @@ class ptaLikelihood(object):
                 + 0.5*rGSigmaGr - 0.5*SigmaLD - 0.5*JLD
 
 
-
     def gibbs_Phi_loglikelihood_mar(self, parameters, mask, allpars):
         """
         The conditional loglikelihood for the subset of red-noise/GWB
@@ -9995,119 +10059,6 @@ class ptaLikelihood(object):
         apars = allpars.copy()
         apars[mask] = parameters
         return self.logprior(apars[:self.dimensions])
-
-
-
-
-
-
-
-
-
-
-    def gibbs_psr_DM_loglikelihood_mar_old(self, parameters, pp, mask, allpars):
-        """
-        The conditional loglikelihood for the subset of DM hyper-parameters. It
-        assumes the red noise and quadratic parameters are kept fixed. The DM
-        coefficients and the timing model parameters are analytically
-        marginalised over. The rest of the coefficients are subtracted from the
-        residuals already.
-
-        @param parameters:      The hyper-parameter array
-        @param pp:              Index of the pulsar we are treating
-        @param mask:            The mask to use for the full set of parameters
-        @param allpars:         The vector of all hyper parameters parmaeters
-        """
-        psr = self.ptapsrs[pp]
-
-        # Obtain the Thetavec indices we need
-        inds = np.sum(self.npfdm[:pp])
-        inde = inds + self.npfdm[pp]
-
-        # Set the parameters
-        apars = allpars.copy()
-        apars[mask] = parameters
-        self.setTheta(apars, pp=pp)
-
-        # Required auxiliaries from the noise-construction:
-        # DGGNGGD   (per-pulsar, G adjusted for DMVs)
-        # rGD       (per-pulsar, G adjusted for DMVs)
-        #    --- perhaps we need to save NiD, in order to allow r to vary
-        # rGr_D     (per-pulsar, G adjusted for DMVs)
-        #    --- don't know how to do that one...
-        # GNGldet_D   (per-pulsar, G adjusted for DMVs)
-
-        ThetaLD = np.sum(np.log(self.Thetavec[inds:inde]))
-
-        Sigma = self.DGGNGGD[pp] + np.diag(1.0 / self.Thetavec[inds:inde])
-
-        try:
-            cf = sl.cho_factor(Sigma)
-            SigmaLD = 2*np.sum(np.log(np.diag(cf[0])))
-            rGSigmaGr = np.dot(self.rGD[pp], sl.cho_solve(cf, self.rGD[pp]))
-        except np.linalg.LinAlgError:
-            U, s, Vh = sl.svd(Sigma)
-            if not np.all(s > 0):
-                raise ValueError("ERROR: Sigma singular according to SVD")
-            SigmaLD = np.sum(np.log(s))
-            rGSigmaGr = np.dot(self.rGD[pp], np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, self.rGD[pp]))))
-
-        # Return the conditional marginalised log-likelihood
-        return -0.5*np.sum(self.rGr_D[pp]) - 0.5*self.GNGldet[pp] \
-                + 0.5*rGSigmaGr - 0.5*SigmaLD - 0.5*ThetaLD
-
-
-    def gibbs_psr_J_loglikelihood_mar_old(self, parameters, pp, mask, allpars):
-        """
-        The conditional loglikelihood for the subset of jitter hyper-parameters. It
-        assumes the red noise/DM and quadratic parameters are kept fixed. The
-        jitter/correlated-equad coefficients and the timing model parameters are
-        analytically marginalised over. The rest of the coefficients are
-        subtracted from the residuals already.
-
-        @param parameters:      The hyper-parameter array
-        @param pp:              Index of the pulsar we are treating
-        @param mask:            The mask to use for the full set of parameters
-        @param allpars:         The vector of all hyper parameters parmaeters
-
-        Note: right now this marginalises over some timing model. This seems
-              unnecessary. Jitter should not be correlated at all with the timing
-              model. Just use fully subtracted residuals, and no auxiliaries
-              will be necessary
-        """
-        psr = self.ptapsrs[pp]
-
-        # Set the parameters
-        apars = allpars.copy()
-        apars[mask] = parameters
-        self.setSinglePsrNoise(apars, pp=pp)
-
-        # Required auxiliaries from the noise-construction:
-        # UGGNGGU   (per-pulsar, G adjusted for Jitter)
-        # rGU       (per-pulsar, G adjusted for Jitter)
-        #    --- perhaps we need to save NiU, in order to allow r to vary
-        # rGr_U     (per-pulsar, G adjusted for Jitter)
-        #    --- don't know how to do that one...
-        # GNGldet_U   (per-pulsar, G adjusted for Jitter)
-
-        JLD = np.sum(np.log(psr.Jvec))
-
-        Sigma = self.UGGNGGU[pp] + np.diag(1.0 / psr.Jvec)
-
-        try:
-            cf = sl.cho_factor(Sigma)
-            SigmaLD = 2*np.sum(np.log(np.diag(cf[0])))
-            rGSigmaGr = np.dot(self.rGU[pp], sl.cho_solve(cf, self.rGU[pp]))
-        except np.linalg.LinAlgError:
-            U, s, Vh = sl.svd(Sigma)
-            if not np.all(s > 0):
-                raise ValueError("ERROR: Sigma singular according to SVD")
-            SigmaLD = np.sum(np.log(s))
-            rGSigmaGr = np.dot(self.rGU[pp], np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, self.rGU[pp]))))
-
-        # Return the conditional marginalised log-likelihood
-        return -0.5*np.sum(self.rGr_U[pp]) - 0.5*self.GNGldet[pp] \
-                + 0.5*rGSigmaGr - 0.5*SigmaLD - 0.5*JLD
 
 
 
