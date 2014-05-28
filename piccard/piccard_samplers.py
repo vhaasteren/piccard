@@ -833,7 +833,7 @@ def makeResidualsPlot(ax, toas, residuals, toaerrs, flags, \
 
 def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
         parametersfile=None, sampler='auto', make1dplots=True, \
-        maxpages=-1, skipTMP=False):
+        maxpages=-1, skipTMP=False, triplot_hm=False):
     """
     Given an MCMC chain file, and an output directory, make all the results
     plots
@@ -1179,7 +1179,11 @@ def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
                     samples = chain[:,ind][:,:ncurpars]
                     plabels = np.array(labels)[ind][:ncurpars]
 
-                    triplot(samples, plabels)
+                    if triplot_hm:
+                        triplot_homemade(samples, plabels)
+                    else:
+                        triplot(samples, plabels)
+
                     plt.savefig(fileout+'.png')
                     plt.savefig(fileout+'.eps')
                     plt.close(fig)
@@ -1248,7 +1252,10 @@ def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
             samples = chain[:,dopar][:,:ncurpars]
             plabels = np.array(labels)[dopar][:ncurpars]
 
-            triplot(samples, plabels)
+            if triplot_hm:
+                triplot_homemade(samples, plabels)
+            else:
+                triplot(samples, plabels)
             plt.savefig(fileout+'.png')
             plt.savefig(fileout+'.eps')
             plt.close(fig)

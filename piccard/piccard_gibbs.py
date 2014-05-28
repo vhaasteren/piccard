@@ -177,27 +177,19 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
     if 'rednoise' in likob.gibbsmodel:
         likob.gibbs_construct_all_freqcov()
 
-    #likob.gibbs_construct_all_freqcov()     # Correlated signal (corrim) update
-
-    # 3) Set the subtracted residuals, based on the quadratic parameters
+    # 3) Set the quadratic parameters in the full parameter array
     apars[ndim:] = np.hstack(a)
-    for ii, psr in enumerate(likob.ptapsrs):
-        likob.gibbs_update_allsubresiduals(apars, ii, which='all')
 
     # 4) Generate _all_ quadratic parameters here (generates sub-residuals?)
-    b = []
+    #b = []
     for ii, psr in enumerate(likob.ptapsrs):
-        a, bi, xi2 = likob.gibbs_sample_psr_quadratics(apars[:ndim], a, ii)
-    b.append(bi)
+        #a, bi, xi2 = likob.gibbs_sample_psr_quadratics(apars[:ndim], a, ii)
+        a = likob.gibbs_sample_psr_quadratics(apars[:ndim], a, ii)
+    #b.append(bi)
     apars[ndim:] = np.hstack(a)
     likob.gibbs_current_a = a
 
-
-    # 5) Update the residuals again
-    for ii, psr in enumerate(likob.ptapsrs):
-        likob.gibbs_update_allsubresiduals(apars, ii, which='all')
-
-    # Calculate the likelihood:
+    # 5) Calculate the likelihood:
     loglik[0] = likob.gibbs_full_loglikelihood(\
             apars, resetCorInv=False, which='all', pp=-1)
 
@@ -216,45 +208,25 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
                 Nmask = likob.gibbs_get_signal_mask(ii, ['efac', 'equad'])
                 psrNpars = apars[Nmask]
 
-                likob.gibbs_update_allsubresiduals(apars, pp=ii)
-
                 sampler.logl.args = [ii, Nmask, apars]
                 sampler.logp.args = [ii, Nmask, apars]
-
-                if step != 1:
-                    sampler._lnlike[step-1] = \
-                            likob.gibbs_psr_noise_loglikelihood_mar(psrNpars, ii, Nmask, apars[:ndim])
-                    sampler._lnprob[step-1] = sampler._lnlike[step-1] + \
-                            likob.gibbs_psr_noise_logprior(psrNpars, ii, Nmask, apars[:ndim])
-                else:
-                    sampler.sample(psrNpars, step, covUpdate=500, burn=2, maxIter=2*steps,
-                        i0=0, thin=1)
                 
+                # The sampler always calculates the previous step as well, as it
+                # should here
                 sampler.sample(psrNpars, step+1, covUpdate=500, burn=2, maxIter=2*steps,
                     i0=step-1, thin=1)
 
                 apars[Nmask] = sampler._chain[step,:]
 
                 likob.setSinglePsrNoise(apars[:ndim], pp=ii)
-                #likob.apars = apars.copy()
-                #logpost[stepind] = sampler._lnprob[step]
-                #loglik[stepind] = sampler._lnlike[step]
-                ll_prev = ll_cur
-                lp_prev = lp_cur
-                ll_cur = sampler._lnlike[step]
-                lp_cur = sampler._lnprob[step]
 
             # We should not be saving the whole chain here, but that's for later !!!!!!!!!!!!!!!!!!!
             # concern
-
-            # Replace the hyper parameters
 
             if 'dm' in likob.gibbsmodel and sampler_D[ii] is not None:
                 sampler = sampler_D[ii]
                 Dmask = likob.gibbs_get_signal_mask(ii, ['dmpowerlaw', 'dmspectrum'])
                 psrDpars = apars[Dmask]
-
-                likob.gibbs_update_allsubresiduals(apars, pp=ii)
 
                 sampler.logl.args = [ii, Dmask, apars]
                 sampler.logp.args = [ii, Dmask, apars]
@@ -263,51 +235,44 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
                     i0=step-1, thin=1)
 
                 if not np.all(apars[Dmask] == sampler._chain[step,:]):
-                    # Step accepted. Update the quadratics (NOT DONE YET!!!)
-                    likob.gibbs_current_a = likob.gibbs_proposed_a
+                    # Step accepted
+                    #likob.gibbs_current_a, bi, xi2 = \
+                    #        likob.gibbs_sample_psr_quadratics(apars[:ndim], \
+                    #        likob.gibbs_current_a, ii, which='D')
+                    likob.gibbs_current_a = likob.gibbs_sample_Theta_quadratics(\
+                            likob.gibbs_current_a, ii)
+
+
                     apars[ndim:] = np.hstack(likob.gibbs_current_a)
                 else:
                     # Not accepted. Put covariance back in place
-                    self.setTheta(apars[:ndim], pp=ii)
+                    likob.setTheta(apars[:ndim], pp=ii)
 
                 apars[Dmask] = sampler._chain[step,:]
 
-                # I think I can delete this stuff
-                ll_prev = ll_cur
-                lp_prev = lp_cur
-                ll_cur = sampler._lnlike[step]
-                lp_cur = sampler._lnprob[step]
-            """
 
             if 'jitter' in likob.gibbsmodel and sampler_J[ii] is not None:
                 sampler = sampler_J[ii]
                 Jmask = likob.gibbs_get_signal_mask(ii, ['jitter'])
                 psrJpars = apars[Dmask]
-                #if step != 1:
-                #    sampler._lnprob[step-1] = logpost[stepind-1]
-                #    sampler._lnlike[step-1] = loglik[stepind-1]
-                if step != 1:
-                    sampler._lnprob[step-1] = lp_cur
-                    sampler._lnlike[step-1] = ll_cur
+
                 sampler.logl.args = [ii, Jmask, apars]
                 sampler.logp.args = [ii, Jmask, apars]
 
-                likob.gibbs_update_allsubresiduals(apars, pp=ii)
                 sampler.sample(psrJpars, step+1, covUpdate=500, burn=2, maxIter=2*steps,
                     i0=step-1, thin=1)
 
                 if np.all(apars[Jmask] != sampler._chain[step,:]):
                     # Step accepted
-                    likob.gibbs_current_a = likob.gibbs_proposed_a
+                    likob.gibbs_current_a = \
+                            likob.gibbs_sample_psr_quadratics(apars[:ndim], \
+                            likob.gibbs_current_a, ii, which='U')
+
                     apars[ndim:] = np.hstack(likob.gibbs_current_a)
-                    apars[Jmask] = sampler._chain[step,:]
-                #logpost[stepind] = sampler._lnprob[step]
-                #loglik[stepind] = sampler._lnlike[step]
-                ll_prev = ll_cur
-                lp_prev = lp_cur
-                ll_cur = sampler._lnlike[step]
-                lp_cur = sampler._lnprob[step]
-            """
+                else:
+                    likob.setPsrNoise(apars[:ndim])
+
+                apars[Jmask] = sampler._chain[step,:]
 
 
         if 'rednoise' in likob.gibbsmodel and sampler_F is not None:
@@ -316,25 +281,8 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
                     ['powerlaw', 'spectralModel', 'spectrum'])
             psrFpars = apars[Fmask]
 
-            for ii in range(len(likob.ptapsrs)):
-                likob.gibbs_update_allsubresiduals(apars, pp=ii)
-
             sampler.logl.args = [Fmask, apars]
             sampler.logp.args = [Fmask, apars]
-
-            # I don't think this if clause is necessary. i0=step-1, so it is 0
-            # for the first time anyway. Also, the previous point in the chain
-            # is _always_ evaluated. So we do not have to do it explicitly here.
-            """
-            if step != 1:
-                sampler._lnlike[step-1] = \
-                        likob.gibbs_Phi_loglikelihood_mar(psrFpars, Fmask, apars[:ndim])
-                sampler._lnprob[step-1] = sampler._lnlike[step-1] + \
-                        likob.gibbs_Phi_logprior(psrFpars, Fmask, apars[:ndim])
-            else:
-                sampler.sample(psrFpars, step, covUpdate=500, burn=2, maxIter=2*steps,
-                    i0=0, thin=1)
-            """
 
             sampler.sample(psrFpars, step+1, covUpdate=500, burn=2, maxIter=2*steps,
                 i0=step-1, thin=1)
@@ -342,10 +290,9 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
             if not np.all(apars[Fmask] == sampler._chain[step,:]):
                 # Step accepted
                 likob.gibbs_current_a = \
-                        likob.gibbs_sample_Phi_quadratics(apars[:ndim], \
-                        likob.gibbs_current_a)
+                        likob.gibbs_sample_Phi_quadratics(\
+                        likob.gibbs_current_a, sigma_precalc=True)
 
-                #likob.gibbs_current_a = likob.gibbs_proposed_a
                 apars[ndim:] = np.hstack(likob.gibbs_current_a)
             else:
                 # Step not accepted. Put the covariances back to where they were
@@ -355,12 +302,24 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
 
             apars[Fmask] = sampler._chain[step,:]
 
-            # Finally update the actual log-likelihood/posterior for the full
-            # model
-            ll_prev = ll_cur
-            lp_prev = lp_cur
-            ll_cur = likob.gibbs_full_loglikelihood(apars)
-            lp_cur = ll_cur + likob.mark4logprior(apars[:ndim])
+        # Also do a timing-model re-sample, so we also get the
+        # parameters we had not had before...
+        # DO WE DO THE FULL MODEL, OR JUST THE COMPLEMENTARY MODEL???????????????????????????????????????
+        for ii, psr in enumerate(likob.ptapsrs):
+            #likob.gibbs_current_a = \
+            #        likob.gibbs_sample_psr_quadratics(apars[:ndim], \
+            #        likob.gibbs_current_a, ii, which='all')
+            likob.gibbs_current_a = likob.gibbs_sample_M_quadratics( \
+                    likob.gibbs_current_a, ii)
+
+        # Finally update the actual log-likelihood/posterior for the full
+        # model
+        ll_prev = ll_cur
+        lp_prev = lp_cur
+        ll_cur = likob.gibbs_full_loglikelihood(apars)
+        lp_cur = ll_cur + likob.mark4logprior(apars[:ndim])
+
+
 
         samples[stepind, :] = apars
         logpost[stepind] = lp_cur
