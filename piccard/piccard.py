@@ -4632,8 +4632,8 @@ class ptaLikelihood(object):
                     pwidth = [0.3, 0.3, 5.0e-11]
                 elif noiseModel=='spectralModel':
                     bvary = [True, True, True]
-                    pmin = [-28.0, 0.0, -4.0]
-                    pmax = [-14.0, 12.0, 2.0]
+                    pmin = [-28.0, 0.0, -8.0]
+                    pmax = [15.0, 12.0, 2.0]
                     pstart = [-22.0, 2.0, -1.0]
                     pwidth = [-0.2, 0.1, 0.1]
                 else:
@@ -5457,6 +5457,16 @@ class ptaLikelihood(object):
 
         self.allocateLikAuxiliaries()
 
+        self.registerModel()
+        self.pardes = self.getModelParameterList()
+        self.pardesgibbs = self.getGibbsModelParameterList()
+
+    def registerModel(self):
+        """
+        After changing the model, we re-set the number of dimensions, the prior,
+        and all the model dictionaries.
+        """
+        self.setDimensions()
         self.initPrior()
         self.pardes = self.getModelParameterList()
         self.pardesgibbs = self.getGibbsModelParameterList()
@@ -5762,8 +5772,6 @@ class ptaLikelihood(object):
 
     """
     def initPrior(self):
-        self.setDimensions()
-
         self.pmin = np.zeros(self.dimensions)
         self.pmax = np.zeros(self.dimensions)
         self.pstart = np.zeros(self.dimensions)

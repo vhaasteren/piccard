@@ -1332,7 +1332,7 @@ def correctResiduals(likob, chainfile, outputdir, burnin=0, thin=1, \
         lo_psrind = lo_psrnames.index(psr)
         lo_psr = likob.ptapsrs[lo_psrind]
 
-        fileout = outputdir+'/'+lo_psr.name+'-dmcorrections'
+        fileout = outputdir+'/'+lo_psr.name+'-corrected-residuals'
         title = 'Corrected residuals for {0}'.format(lo_psr.name)
         xlabel = 'MJD'
         ylabel = r"Timing Residual $\mu$s"
@@ -1347,83 +1347,49 @@ def correctResiduals(likob, chainfile, outputdir, burnin=0, thin=1, \
         Jsigind = (np.array(stype) == 'Umat')
         Jind = np.logical_and(Jsigind, psrind)      # Mask of full mcmc
 
-        if np.sum(Mind) != lo_psr.Mmat.shape[1] or \
-                np.sum(Frnind) != lo_psr.Fmat.shape[1] or \
-                np.sum(Fdmind) != lo_psr.Fdmmat.shape[1] or \
-                np.sum(Jind) != lo_psr.Umat.shape[1]:
-            raise ValueError("ptparameters.txt not compatible with likob")
-        
+        ntotind = np.array([0]*len(stype), dtype=np.bool)
+        fullZmat = np.zeros((len(lo_psr.toas), 0))
 
+        # First subtract the timing model
+        if np.sum(Mind) > 0:
+            if np.sum(Mind) != lo_psr.Mmat.shape[1]:
+                raise ValueError("ptparameters.txt not compatible with likob")
+            fullZmat = np.append(fullZmat, lo_psr.Mmat_g, axis=1)
+            ntotind = np.logical_or(ntotind, Msigind)
 
-        # CONTINUE HERE WITH THIS STUFF!!
-
-
+        if np.sum(Frnind) > 0:
+            if np.sum(Frnind) != lo_psr.Fmat.shape[1]:
+                raise ValueError("ptparameters.txt not compatible with likob")
+            fullZmat = np.append(fullZmat, lo_psr.Fmat, axis=1)
+            ntotind = np.logical_or(ntotind, Frnind)
 
         if np.sum(Fdmind) > 0:
-            # Check that the number of frequencies match
-            if lo_psr.Fdmmat.shape[1] != np.sum(Fdmind):
-                raise ValueError("DM frequencies different for chain/likob: {0}".\
-                            format(lo_psr.name))
+            if np.sum(Fdmind) != lo_psr.Fdmmat.shape[1]:
+                raise ValueError("ptparameters.txt not compatible with likob")
+            fullZmat = np.append(fullZmat, lo_psr.DF, axis=1)
+            ntotind = np.logical_or(ntotind, Fdmind)
 
-            # We can reconstruct the DM from the Fourier components. If a DM
-            # quadratic was subtracted, we need those parametes, too
-            MDMind = []         # Index of DM design matrix
-            MDMlabel = []       # Label that belongs to that parameter
-            Mlabels = list(np.array(labels)[Mind])
-            for Mpar in dmparlist:
-                if Mpar in Mlabels:
-                    # We have it. Do some index magic, and add it to
-                    # MDMind and MDMlabel
-                    Mpar_ind_full = (np.array(labels) == Mpar)
-                    fullinds = np.logical_and(Mpar_ind_full, Mind)
-                    intind = np.where(fullinds)[0]      # Mask to indices
-                    if len(intind) != 1:
-                        raise ValueError("{0} seems to not be mentioned once for {1}".\
-                                format(Mpar, lo_psr.name))
-                    MDMind.append(intind[0])
-                    MDMlabel.append(Mpar)
-            MDMind = np.array(MDMind)           # Integer indices of full mcmc
-            MDMlabel = np.array(MDMlabel)     # List of labels
+        if np.sum(Jind) > 0:
+            if np.sum(Jind) != lo_psr.Umat.shape[1]:
+                raise ValueError("ptparameters.txt not compatible with likob")
+            fullZmat = np.append(fullZmat, lo_psr.Umat, axis=1)
+            ntotind = np.logical_or(ntotind, Jind)
 
-            # Now make sure we have the same indices in our lo_psr, and save the
-            # design matrix elements
-            MDMmat = np.zeros((len(lo_psr.toas), 0))
-            for lbl in MDMlabel:
-                # Check we have this parameter in our lo_likob design matrix
-                if not lbl in lo_psr.ptmdescription:
-                    raise ValueError("{0} does not appear in likob for {1}".\
-                            format(lbl, lo_psr.name))
+        # Subtract the maximum likelihood value. Maximum of the chain is not
+        # good enough, especially in a whole array, but it is as good as we have
+        # right now....
+        newresiduals = lo_psr.residuals - np.dot(fullZmat, chain[mlind, ntotind])
 
-                # Add the column of the design matrix
-                lo_colind = lo_psr.ptmdescription.index(lbl)
-                MDMmat = np.append(MDMmat, np.vstack(lo_psr.Mmat[:, lo_colind]), axis=1)
+        fig = plt.figure()
+        ax = fig.add_subplot(111)
+        makeResidualsPlot(ax, lo_psr.toas, newresiduals, lo_psr.toaerrs, \
+                lo_psr.flags, title=title)
 
-            # Re-scale the MDMmat to reconstruct DM, not residuals
-            DDMmat = ((1.0 / lo_psr.Dvec) * MDMmat.T).T
-            
-            Mtot = np.append(DDMmat, lo_psr.Fdmmat, axis=1)
-            totind = np.append(MDMind, np.where(Fdmind)[0])
+        plt.savefig(fileout+'.png')
+        plt.savefig(fileout+'.eps')
+        plt.close(fig)
 
-            # Better have a pretty thin chain, 'cause this will take a lot of
-            # memory! :)
-            dmchain = np.dot(Mtot, chain[:, totind].T).T
 
-            mlchain = np.zeros(dmchain.shape[1])
-            mlpso = np.zeros(dmchain.shape[1])
-
-            # dmchain is now a single huge chain, with its each column a new
-            # mcmc sample, and each column is a dm value for that epoch
-            fig = plt.figure()
-            ax = fig.add_subplot(111)
-
-            makeSpectrumPage(ax, dmchain, pic_T0 + lo_psr.toas/pic_spd, \
-                    mlchain, mlpso, fileout+'.txt', title=title, \
-                    xlabel=xlabel, ylabel=ylabel, xpad=4.0, ypad=0.0005, \
-                    banderror=True)
-
-            plt.savefig(fileout+'.png')
-            plt.savefig(fileout+'.eps')
-            plt.close(fig)
 
 
 def reconstructDM(likob, chainfile, outputdir, burnin=0, thin=1, \
