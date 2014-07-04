@@ -306,11 +306,11 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
         # parameters we had not had before...
         # DO WE DO THE FULL MODEL, OR JUST THE COMPLEMENTARY MODEL???????????????????????????????????????
         for ii, psr in enumerate(likob.ptapsrs):
-            #likob.gibbs_current_a = \
-            #        likob.gibbs_sample_psr_quadratics(apars[:ndim], \
-            #        likob.gibbs_current_a, ii, which='all')
-            likob.gibbs_current_a = likob.gibbs_sample_M_quadratics( \
-                    likob.gibbs_current_a, ii)
+            likob.gibbs_current_a = \
+                    likob.gibbs_sample_psr_quadratics(apars[:ndim], \
+                    likob.gibbs_current_a, ii, which='all')
+            #likob.gibbs_current_a = likob.gibbs_sample_M_quadratics( \
+            #        likob.gibbs_current_a, ii)
 
         # Finally update the actual log-likelihood/posterior for the full
         # model
