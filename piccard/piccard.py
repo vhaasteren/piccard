@@ -44,7 +44,7 @@ import sys
 import json
 import tempfile
 
-from .constant import *
+from .constants import *
 from .datafile import *
 from . import anisotropygammas as ang  # Internal module
 from .triplot import *
