@@ -330,47 +330,22 @@ def bwmsignal(parameters, raj, decj, t):
     returns the waveform as induced timing residuals (seconds)
 
     """
-    # The rotation matrices
-    rot1 = np.eye(3)
-    rot2 = np.eye(3)
-    rot3 = np.eye(3)
+    gwphi = np.array([raj])
+    gwtheta = np.array([0.5*np.pi-decj])
+    psrpos_phi = np.array([parameters[2]])
+    psrpos_theta = np.array([parameters[3]])
 
-    # Rotation along the azimuthal angle (raj source)
-    rot1[0,0] = np.cos(parameters[2])   ; rot1[0,1] = np.sin(parameters[2])
-    rot1[1,0] = -np.sin(parameters[2])  ; rot1[1,1] = np.cos(parameters[2])
+    # Get the signal response matrix, which contains the Fplus and Fcross
+    Fr = signalResponse_fast(psrpos_theta, psrpos_phi, gwphi, gwtheta)
+    Fp = Fr[0, 0]
+    Fc = Fr[0, 1]
 
-    # Rotation along the polar angle (decj source)
-    rot2[0,0] = np.sin(parameters[3])   ; rot2[0,2] = -np.cos(parameters[3])
-    rot2[2,0] = np.cos(parameters[3])   ; rot2[2,2] = np.sin(parameters[3])
-
-    # Rotate the bwm polarisation to match the x-direction
-    rot3[0,0] = np.cos(parameters[4])   ; rot3[0,1] = np.sin(parameters[4])
-    rot3[1,0] = -np.sin(parameters[4])  ; rot3[1,1] = np.cos(parameters[4])
-
-    # The total rotation matrix
-    rot = np.dot(rot1, np.dot(rot2, rot3))
-
-    # The pulsar position in Euclidian coordinates
-    ppos = np.zeros(3)
-    ppos[0] = np.cos(raj) * np.cos(decj)
-    ppos[1] = np.sin(raj) * np.cos(decj)
-    ppos[2] = np.sin(decj)
-
-    # Rotate the position of the pulsar
-    ppr = np.dot(rot, ppos)
-
-    # Antenna pattern
-    ap = 0.0
-    if np.abs(ppr[2]) < 1:
-        # Depending on definition of source position, it could be (1 - ppr[2])
-        ap = 0.5 * (1 + ppr[2]) * (2 * ppr[0] * ppr[0] / (1 - ppr[2]*ppr[2]) - 1)
-        
-        2 * ppr[0] * ppr[0] 
+    pol = np.cos(parameters[4]) * Fp + np.sin(parameters[4]) * Fc
 
     # Define the heaviside function
     heaviside = lambda x: 0.5 * (np.sign(x) + 1)
 
-    # Return the time series
-    return ap * (10**parameters[1]) * heaviside(t - parameters[0]) * (t - parameters[0])
+    # Return the time-series for teh pulsar
+    return pol * (10**parameters[1]) * heaviside(t - parameters[0]) * (t - parameters[0])
 
 

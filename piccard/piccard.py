@@ -44,6 +44,8 @@ import sys
 import json
 import tempfile
 
+from .constant import *
+from .datafile import *
 from . import anisotropygammas as ang  # Internal module
 from .triplot import *
 
@@ -63,496 +65,7 @@ except ImportError:
     OrderedDict = dict
 
 
-# Some constants used in Piccard
-# For DM calculations, use this constant
-# See You et al. (2007) - http://arxiv.org/abs/astro-ph/0702366
-# Lee et al. (in prep.) - ...
-# Units here are such that delay = DMk * DM * freq^-2 with freq in MHz
-pic_DMk = 4.15e3        # Units MHz^2 cm^3 pc sec
 
-pic_spd = 86400.0       # Seconds per day
-#pic_spy = 31556926.0   # Wrong definition of YEAR!!!
-pic_spy =  31557600.0   # Seconds per year (yr = 365.25 days, so Julian years)
-pic_T0 = 53000.0        # MJD to which all HDF5 toas are referenced
-
-
-
-"""
-The DataFile class is the class that supports the HDF5 file format. All HDF5
-file interactions happen in this class.
-"""
-class DataFile(object):
-    filename = None
-    h5file = None
-
-    """
-    Initialise the structure.
-
-    @param filename:    name of the HDF5 file
-    """
-    def __init__(self, filename=None):
-        # Open the hdf5 file?
-        self.filename = filename
-
-    def __del__(self):
-        # Delete the instance, and close the hdf5 file?
-        pass
-
-    """
-    Return a list of pulsars present in the HDF5 file
-    """
-    def getPulsarList(self):
-        # 'r' means: read file, must exist
-        self.h5file = h5.File(self.filename, 'r')
-        psrlist = list(self.h5file)
-        self.h5file.close()
-
-        return psrlist
-
-    """
-    Obtain the hdf5 group of pulsar psrname, create it if it does not exist. If
-    delete is toggled, delete the content first. This function assumes the hdf5
-    file is opened (not checked)
-
-    @param psrname: The name of the pulsar
-    @param delete:  If True, the pulsar group will be emptied before use
-    """
-    def getPulsarGroup(self, psrname, delete=False):
-        # datagroup = h5file.require_group('Data')
-
-        if psrname in self.h5file and delete:
-            del self.h5file[psrname]
-
-        pulsarGroup = self.h5file.require_group(psrname)
-
-        return pulsarGroup
-
-    """
-    Add data to a specific pulsar. Here the hdf5 file is opened, and the right
-    group is selected
-
-    @param psrname:     The name of the pulsar
-    @param field:       The name of the field we will be writing to
-    @param data:        The data we are writing to the field
-    @param overwrite:   Whether the data should be overwritten if it exists
-    """
-    def addData(self, psrname, field, data, overwrite=True):
-        if self.filename is None:
-            raise RuntimeError, "HDF5 filename not provided"
-
-        # 'a' means: read/write if exists, create otherwise
-        self.h5file = h5.File(self.filename, 'a')
-
-        psrGroup = self.getPulsarGroup(psrname, delete=False)
-        self.writeData(psrGroup, field, data, overwrite=overwrite)
-
-        self.h5file.close()
-        self.h5file = None
-
-        
-
-    """
-    Read data from a specific pulsar. If the data is not available, the hdf5
-    file is properly closed, and an exception is thrown
-
-    @param psrname:     Name of the pulsar we are reading data from
-    @param field:       Field name of the data we are requestion
-    @param subgroup:    If the data is in a subgroup, get it from there
-    @param dontread:    If set to true, do not actually read anything
-    @param required:    If not required, do not throw an exception, but return
-                        'None'
-    """
-    def getData(self, psrname, field, subgroup=None, \
-            dontread=False, required=True):
-        # Dontread is useful for readability in the 'readPulsarAuxiliaries
-        if dontread:
-            return None
-
-        if self.filename is None:
-            raise RuntimeError, "HDF5 filename not provided"
-
-        # 'r' means: read file, must exist
-        self.h5file = h5.File(self.filename, 'r')
-        psrGroup = self.getPulsarGroup(psrname, delete=False)
-
-        datGroup = psrGroup
-        if subgroup is not None:
-            if subgroup in psrGroup:
-                datGroup = psrGroup[subgroup]
-            else:
-                self.h5file.close()
-                if required:
-                    raise IOError, "Field {0} not present for pulsar {1}/{2}".format(field, psrname, subgroup)
-
-        if field in datGroup:
-            data = np.array(datGroup[field])
-            self.h5file.close()
-        else:
-            self.h5file.close()
-            if required:
-                raise IOError, "Field {0} not present for pulsar {1}".format(field, psrname)
-            else:
-                data = None
-
-        return data
-
-    """
-    Retrieve the shape of a specific dataset
-
-    @param psrname:     Name of the pulsar we are reading data from
-    @param field:       Field name of the data we are requestion
-    @param subgroup:    If the data is in a subgroup, get it from there
-    """
-    def getShape(self, psrname, field, subgroup=None):
-        if self.filename is None:
-            raise RuntimeError, "HDF5 filename not provided"
-
-        # 'r' means: read file, must exist
-        self.h5file = h5.File(self.filename, 'r')
-        psrGroup = self.getPulsarGroup(psrname, delete=False)
-
-        datGroup = psrGroup
-        if subgroup is not None:
-            if subgroup in psrGroup:
-                datGroup = psrGroup[subgroup]
-            else:
-                self.h5file.close()
-                raise IOError, "Field {0} not present for pulsar {1}/{2}".format(field, psrname, subgroup)
-
-        if field in datGroup:
-            shape = datGroup[field].shape
-            self.h5file.close()
-        else:
-            self.h5file.close()
-            raise IOError, "Field {0} not present for pulsar {1}".format(field, psrname)
-
-        return shape
-
-
-    """
-    (Over)write a field of data for a specific pulsar/group. Data group is
-    required, instead of a name.
-
-    @param dataGroup:   Group object
-    @param field:       Name of field that we are writing to
-    @param data:        The data that needs to be written
-    @param overwrite:   If True, data will be overwritten (default True)
-    """
-    def writeData(self, dataGroup, field, data, overwrite=True):
-        if field in dataGroup and overwrite:
-            del dataGroup[field]
-
-        if not field in dataGroup:
-            try:
-                dataGroup.create_dataset(field, data=data)
-            except ValueError:
-                print("WARNING: h5py too old to support empty arrays: {0}".
-                        format(field))
-
-    """
-    Add a pulsar to the HDF5 file, given a tempo2 par and tim file. No extra
-    model matrices and auxiliary variables are added to the HDF5 file. This
-    function interacts with the libstempo Python interface to Tempo2
-
-    @param parfile:     Name of tempo2 parfile
-    @param timfile:     Name of tempo2 timfile
-    @param iterations:  Number of fitting iterations to do before writing
-    @param mode:        Can be replace/overwrite/new. Replace first deletes the
-                        entire pulsar group. Overwrite overwrites all data, but
-                        does not delete the auxiliary fields. New requires the
-                        pulsar not to exist, and throws an exception otherwise.
-    """
-    def addTempoPulsar(self, parfile, timfile, iterations=1, mode='replace'):
-        # Check whether the two files exist
-        if not os.path.isfile(parfile) or not os.path.isfile(timfile):
-            raise IOError, "Cannot find parfile (%s) or timfile (%s)!" % (parfile, timfile)
-
-        if self.filename is None:
-            raise RuntimeError, "HDF5 filename not provided"
-
-        # Parse the default write behaviour
-        deletepsr = False
-        if mode == 'replace':
-            deletepsr = True
-        overwrite = False
-        if mode == 'overwrite':
-            overwrite = True
-
-        # 'a' means: read/write if exists, create otherwise
-        self.h5file = h5.File(self.filename, 'a')
-        
-        # Obtain the directory name of the timfile, and change to it
-        timfiletup = os.path.split(timfile)
-        dirname = timfiletup[0]
-        reltimfile = timfiletup[-1]
-        relparfile = os.path.relpath(parfile, dirname)
-        savedir = os.getcwd()
-
-        # Change directory to the base directory of the tim-file to deal with
-        # INCLUDE statements in the tim-file
-        os.chdir(dirname)
-
-        # Load pulsar data from the libstempo library
-        t2pulsar = t2.tempopulsar('./'+relparfile, './'+reltimfile)
-
-        # Load the entire par-file into memory, so that we can save it in the
-        # HDF5 file
-        with open(relparfile, 'r') as content_file:
-            parfile_content = content_file.read()
-
-        # Save the tim-file to a temporary file (so that we don't have to deal
-        # with 'include' statements in the tim-file), and load that tim-file in
-        # memory for HDF5 storage
-        tempfilename = tempfile.mktemp()
-        t2pulsar.savetim(tempfilename)
-        with open(tempfilename, 'r') as content_file:
-            timfile_content = content_file.read()
-        os.remove(tempfilename)
-
-        # Change directory back to where we were
-        os.chdir(savedir)
-
-        # Get the pulsar group
-        psrGroup = self.getPulsarGroup(t2pulsar.name, delete=deletepsr)
-
-        # Save the par-file and the tim-file to the HDF5 file
-        self.writeData(psrGroup, 'parfile', parfile_content, overwrite=overwrite)
-        self.writeData(psrGroup, 'timfile', timfile_content, overwrite=overwrite)
-
-        # Iterate the fitting a few times if necessary
-        if iterations > 1:
-            t2pulsar.fit(iters=iterations)
-
-        self.writeData(psrGroup, 'TOAs', np.double(np.array(t2pulsar.toas())-pic_T0)*pic_spd, overwrite=overwrite)    # Seconds
-        self.writeData(psrGroup, 'prefitRes', np.double(t2pulsar.prefit.residuals), overwrite=overwrite)  # Seconds
-        self.writeData(psrGroup, 'postfitRes', np.double(t2pulsar.residuals()), overwrite=overwrite)  # Seconds
-        self.writeData(psrGroup, 'toaErr', np.double(1e-6*t2pulsar.toaerrs), overwrite=overwrite)    # Seconds
-        self.writeData(psrGroup, 'freq', np.double(t2pulsar.freqs), overwrite=overwrite)    # MHz
-
-        # TODO: writing the design matrix should be done irrespective of the fitting flag
-        desmat = t2pulsar.designmatrix(fixunits=True)
-        self.writeData(psrGroup, 'designmatrix', desmat, overwrite=overwrite)
-
-        # Write the unit conversions for the design matrix (to timing model
-        # parameters
-        #unitConversion = t2pulsar.getUnitConversion()
-        #self.writeData(psrGroup, 'unitConversion', unitConversion, overwrite=overwrite)
-
-        # Do not write the (co)G-matrix anymore
-        # U, s, Vh = sl.svd(desmat)
-        # self.writeData(psrGroup, 'Gmatrix', U[:, desmat.shape[1]:], overwrite=overwrite)
-        # self.writeData(psrGroup, 'coGmatrix', U[:, :desmat.shape[1]], overwrite=overwrite)
-
-        # Now obtain and write the timing model parameters
-        tmpname = ['Offset'] + list(t2pulsar.pars)
-        tmpvalpre = np.zeros(len(tmpname))
-        tmpvalpost = np.zeros(len(tmpname))
-        tmperrpre = np.zeros(len(tmpname))
-        tmperrpost = np.zeros(len(tmpname))
-        for i in range(len(t2pulsar.pars)):
-            tmpvalpre[i+1] = t2pulsar.prefit[tmpname[i+1]].val
-            tmpvalpost[i+1] = t2pulsar.prefit[tmpname[i+1]].val
-            tmperrpre[i+1] = t2pulsar.prefit[tmpname[i+1]].err
-            tmperrpost[i+1] = t2pulsar.prefit[tmpname[i+1]].err
-
-        self.writeData(psrGroup, 'tmp_name', tmpname, overwrite=overwrite)          # TMP name
-        self.writeData(psrGroup, 'tmp_valpre', tmpvalpre, overwrite=overwrite)      # TMP pre-fit value
-        self.writeData(psrGroup, 'tmp_valpost', tmpvalpost, overwrite=overwrite)    # TMP post-fit value
-        self.writeData(psrGroup, 'tmp_errpre', tmperrpre, overwrite=overwrite)      # TMP pre-fit error
-        self.writeData(psrGroup, 'tmp_errpost', tmperrpost, overwrite=overwrite)    # TMP post-fit error
-
-        # Get the flag group for this pulsar. Create if not there
-        flagGroup = psrGroup.require_group('Flags')
-
-        # Obtain the unique flags in this dataset, and write to file
-        uflags = list(set(t2pulsar.flags))
-        for flagid in uflags:
-            self.writeData(flagGroup, flagid, t2pulsar.flags[flagid], overwrite=overwrite)
-
-        if not "efacequad" in flagGroup:
-            # Check if the sys-flag is present in this set. If it is, add an
-            # efacequad flag with pulsarname+content of the sys-flag. If it
-            # isn't, check for a be-flag and try the same. Otherwise, add an
-            # efacequad flag with the pulsar name as it's elements.
-            efacequad = []
-            nobs = len(t2pulsar.toas())
-            pulsarname = map(str, [t2pulsar.name] * nobs)
-
-            if "group" in flagGroup:
-                efacequad = map('-'.join, zip(pulsarname, flagGroup['group']))
-            elif "f" in flagGroup:
-                efacequad = map('-'.join, zip(pulsarname, flagGroup['f']))
-            elif "sys" in flagGroup:
-                efacequad = map('-'.join, zip(pulsarname, flagGroup['sys']))
-            else:
-                efacequad = pulsarname
-
-            self.writeData(flagGroup, "efacequad", efacequad, overwrite=overwrite)
-
-        if not "pulsarname" in flagGroup:
-            nobs = len(t2pulsar.toas())
-            pulsarname = map(str, [t2pulsar.name] * nobs)
-            self.writeData(flagGroup, "pulsarname", pulsarname, overwrite=overwrite)
-
-        # Close the HDF5 file
-        self.h5file.close()
-        self.h5file = None
-
-    """
-    Add pulsars to the HDF5 file, given the name of another hdf5 file and a list
-    of pulsars. The data structures will be directly copied from the source file
-    to this one.
-
-    @param h5file:  The name of the other HDF5 file from which we will be adding
-    @param pulsars: Which pulsars to read ('all' = all, otherwise provide a
-                    list: ['J0030+0451', 'J0437-4715', ...])
-                    WARNING: duplicates are _not_ checked for.
-    @param mode:    Whether to just add, or overwrite (add/replace)
-    """
-    def addH5Pulsar(self, h5file, pulsars='all', mode='add'):
-        # 'a' means: read/write if exists, create otherwise, 'r' means read
-        sourceh5 = h5.File(h5file, 'r')
-        self.h5file = h5.File(self.filename, 'a')
-
-        # The pulsar names in the HDF5 files
-        sourcepsrnames = list(sourceh5)
-        destpsrnames = list(self.h5file)
-
-        # Determine which pulsars we are reading in
-        readpsrs = []
-        if pulsars=='all':
-            readpsrs = sourcepsrnames
-        else:
-            # Check if all provided pulsars are indeed in the HDF5 file
-            if np.all(np.array([pulsars[ii] in destpsrnames for ii in range(len(pulsars))]) == True):
-                readpsrs = pulsars
-            elif pulsars in destpsrnames:
-                pulsars = [pulsars]
-                readpsrs = pulsars
-            else:
-                self.h5file.close()
-                sourceh5.close()
-                raise ValueError("ERROR: Not all provided pulsars in HDF5 file")
-
-        # Check that these pulsars are not already in the current HDF5 file
-        if not np.all(np.array([readpsrs[ii] not in destpsrnames for ii in range(len(readpsrs))]) == True) and \
-                mode != 'replace':
-            self.h5file.close()
-            sourceh5.close()
-            raise ValueError("ERROR: Refusing to overwrite pulsars in {0}".format(self.filename))
-
-        # Ok, now we are good. Let's copy the pulsars
-        for pulsar in readpsrs:
-            if pulsar in self.h5file:
-                # Delete the pulsar if it exists
-                del self.h5file[pulsar]
-
-            # Copy a pulsar
-            self.h5file.copy(sourceh5[pulsar], pulsar)
-
-        # Close both files
-        self.h5file.close()
-        sourceh5.close()
-
-    """
-    Read the basic quantities of a pulsar from an HDF5 file into a ptaPulsar
-    object. No extra model matrices and auxiliary variables are added to the
-    HDF5 file. If any field is not present in the HDF5 file, an IOError
-    exception is raised
-
-    @param psr:     The ptaPulsar object we need to fill with data
-    @param psrname: The name of the pulsar to be read from the HDF5 file
-
-    TODO: The HDF5 file is opened and closed every call of 'getData'. That seems
-          kind of inefficient
-    """
-    def readPulsar(self, psr, psrname):
-        psr.name = psrname
-
-        # Read the content of the par/tim files in a string
-        psr.parfile_content = str(self.getData(psrname, 'parfile', required=False))
-        psr.timfile_content = str(self.getData(psrname, 'timfile', required=False))
-
-        # Read the timing model parameter descriptions
-        psr.ptmdescription = map(str, self.getData(psrname, 'tmp_name'))
-        psr.ptmpars = np.array(self.getData(psrname, 'tmp_valpre'))
-        psr.ptmparerrs = np.array(self.getData(psrname, 'tmp_errpre'))
-        psr.flags = map(str, self.getData(psrname, 'efacequad', 'Flags'))
-
-        # Read the position of the pulsar
-        rajind = np.flatnonzero(np.array(psr.ptmdescription) == 'RAJ')
-        decjind = np.flatnonzero(np.array(psr.ptmdescription) == 'DECJ')
-        psr.raj = np.array(self.getData(psrname, 'tmp_valpre'))[rajind]
-        psr.decj = np.array(self.getData(psrname, 'tmp_valpre'))[decjind]
-
-        # Obtain residuals, TOAs, etc.
-        psr.toas = np.array(self.getData(psrname, 'TOAs'))
-        psr.toaerrs = np.array(self.getData(psrname, 'toaErr'))
-        psr.prefitresiduals = np.array(self.getData(psrname, 'prefitRes'))
-        psr.residuals = np.array(self.getData(psrname, 'postfitRes'))
-        psr.detresiduals = np.array(self.getData(psrname, 'prefitRes'))
-        psr.freqs = np.array(self.getData(psrname, 'freq'))
-        psr.Mmat = np.array(self.getData(psrname, 'designmatrix'))
-
-        # We do not read the (co)G-matrix anymore here. Happens when
-        # initialising the model
-
-
-# Block-wise multiplication as in G^{T}CG
-def blockmul(A, B, psrobs, psrg):
-    """Computes B.T . A . B, where B is a block-diagonal design matrix
-        with block heights m = len(A) / len(meta) and block widths m - meta[i]['pars'].
-
-        >>> a = N.random.randn(8,8)
-        >>> a = a + a.T
-        >>> b = N.zeros((8,5),'d')
-        >>> b[0:4,0:2] = N.random.randn(4,2)
-        >>> b[4:8,2:5] = N.random.randn(4,3)
-        >>> psrobs = [4, 4]
-        >>> psrg = [2, 3]
-        >>> c = blockmul(a,b,psrobs, psrg) - N.dot(b.T,N.dot(a,b))
-        >>> N.max(N.abs(c))
-        0.0
-    """
-
-    n, p = A.shape[0], B.shape[1]    # A is n x n, B is n x p
-
-    if (A.shape[0] != A.shape[1]) or (A.shape[1] != B.shape[0]):
-        raise ValueError('incompatible matrix sizes')
-    
-    if (len(psrobs) != len(psrg)):
-        raise ValueError('incompatible matrix description')
-
-    res1 = np.zeros((n,p), 'd')
-    res2 = np.zeros((p,p), 'd')
-
-    npulsars = len(psrobs)
-    #m = n/npulsars          # times (assumed the same for every pulsar)
-
-    psum, isum = 0, 0
-    for i in range(npulsars):
-        # each A matrix is n x m, with starting column index = i * m
-        # each B matrix is m x (m - p_i), with starting row = i * m, starting column s = sum_{k=0}^{i-1} (m - p_i)
-        # so the logical C dimension is n x (m - p_i), and it goes to res1[:,s:(s + m - p_i)]
-        res1[:,psum:psum+psrg[i]] = np.dot(A[:,isum:isum+psrobs[i]],B[isum:isum+psrobs[i], psum:psum+psrg[i]])
-            
-        psum += psrg[i]
-        isum += psrobs[i]
-
-    psum, isum = 0, 0
-    for i in range(npulsars):
-        res2[psum:psum+psrg[i],:] = np.dot(B.T[psum:psum+psrg[i], isum:isum+psrobs[i]], res1[isum:isum+psrobs[i],:])
-                    
-        psum += psrg[i]
-        isum += psrobs[i]
-
-    return res2
-
-"""
-Scipy 0.7.x does not yet have block_diag, and somehow I have some troubles
-upgrading it on the ATLAS cluster. So for now, include the source here in
-piccard as well. -- Rutger van Haasteren (December 2013)
-"""
 def block_diag(*arrs):
     """Create a block diagonal matrix from the provided arrays.
 
@@ -1129,6 +642,8 @@ def AntennaPatternPC(rajp, decjp, raj, decj):
     @param decj:    Declination pulsar
     @param raj:     Right ascension source
     @param dec:     Declination source
+
+    NOTE: This function is INCORRECT. Use the definitions from signals.py now
     """
     Omega = np.array([-np.cos(decj)*np.cos(raj), \
                       -np.cos(decj)*np.sin(raj), \
@@ -1213,7 +728,6 @@ class pixelCorrelations(object):
 
 
 
-
 """
 Function that calculates the earth-term gravitational-wave burst-with-memory
 signal, as described in:
@@ -1232,7 +746,7 @@ t = timestamps where the waveform should be returned
 returns the waveform as induced timing residuals (seconds)
 
 """
-def bwmsignal(parameters, raj, decj, t):
+def bwmsignal_old(parameters, raj, decj, t):
     # The rotation matrices
     rot1 = np.eye(3)
     rot2 = np.eye(3)
@@ -1629,108 +1143,108 @@ class ptaPulsar(object):
             addparvals = []
             addunitvals = []
 
-            Dmatdiag = pic_DMk / (self.freqs**2)
-            for ii, par in enumerate(addpars[indok]):
-                addparvals.append(0.0)
-                addunitvals.append(1.0)
-                if par == 'DM':
-                    addM[:, ii] = Dmatdiag.copy()
-                elif par[:2] == 'DM':
-                    power = int(par[2:])
-                    addM[:, ii] = Dmatdiag * (self.toas ** power)
-                elif par == 'Offset':
-                    addM[:, ii] = 1.0
-                elif par[0] == 'F':
-                    try:
-                        power = int(par[1:])
-                        addM[:, ii] = (self.toas ** power)
-                    except ValueError:
-                        raise ValueError("ERROR: parameter {0} not implemented in 'addToDesignMatrix'".format(par))
-                else:
-                    raise ValueError("ERROR: parameter {0} not implemented in 'addToDesignMatrix'".format(par))
+                self.cmat[ii, jj] = 0.0
+                for pp in range(self.npixels):
+                    if ii == jj:
+                        self.cmat[ii, jj] += 0.5*self.Fp[ii, pp]**2 + \
+                                            0.5*self.Fc[ii, pp]**2
+                    else:
+                        self.cmat[ii, jj] += 0.5*self.Fp[ii, pp]*self.Fp[jj, pp] + \
+                                            0.5*self.Fc[ii, pp]*self.Fc[jj, pp]
+                        self.cmat[jj, ii] = self.cmat[ii, jj]
 
-            newM = np.append(oldMmat, addM, axis=1)
-            newptmdescription = np.append(oldptmdescription, adddes)
-            newptmpars = np.append(oldptmpars, addparvals)
-            #newunitconversion = np.append(oldunitconversion, addunitvals)
-
-            # Construct the G-matrices
-            U, s, Vh = sl.svd(newM)
-            newG = U[:, (newM.shape[1]):].copy()
-            newGc = U[:, :(newM.shape[1])].copy()
-        else:
-            newM = oldMmat.copy()
-            newptmdescription = np.array(oldptmdescription)
-            #newunitconversion = np.array(oldunitconversion)
-            newptmpars = oldptmpars.copy()
-
-            if oldGmat is not None:
-                newG = oldGmat.copy()
-                newGc = oldGcmat.copy()
-            else:
-                U, s, Vh = sl.svd(newM)
-                newG = U[:, (newM.shape[1]):].copy()
-                newGc = U[:, :(newM.shape[1])].copy()
+        return self.cmat / self.npixels
 
 
-        return newM, newG, newGc, newptmpars, map(str, newptmdescription)
 
-    """
-    Consgtructs a new modified design matrix by deleting some columns from it.
-    Returns a list of new objects that represent the new timing model
 
-    @param delpars:     Names of the parameters/columns that need to be deleted.
-    
-    @return (list):     Return the elements: (newM, newG, newGc,
-                        newptmpars, newptmdescription)
-                        in order: the new design matrix, the new G-matrix, the
-                        new co-Gmatrix (orthogonal complement), the new values
-                        of the timing model parameters, the new descriptions of
-                        the timing model parameters. Note that the timing model
-                        parameters are not really 'new', just re-selected
-    """
-    def delFromDesignMatrix(self, delpars, \
-            oldMmat=None, oldGmat=None, oldGcmat=None, \
-            oldptmpars=None, oldptmdescription=None):
-        if oldMmat is None:
-            oldMmat = self.Mmat
-        if oldptmdescription is None:
-            oldptmdescription = self.ptmdescription
-        if oldptmpars is None:
-            oldptmpars = self.ptmpars
-        if oldGmat is None:
-            oldGmat = self.Gmat
-        if oldGcmat is None:
-            oldGcmat = self.Gcmat
 
-        # First make sure that the parameters we are deleting are actually in
-        # the design matrix
-        inddel = np.array([1]*len(delpars), dtype=np.bool)
-        indkeep = np.array([1]*oldMmat.shape[1], dtype=np.bool)
-        delpars = np.array(delpars)
-        #for ii, parlabel in enumerate(oldptmdescription):
-        for ii, parlabel in enumerate(delpars):
-            if not parlabel in oldptmdescription:
-                inddel[ii] = False
-                print "WARNING: {0} not in design matrix. Not deleting".format(parlabel)
-            else:
-                index = np.flatnonzero(np.array(oldptmdescription) == parlabel)
-                indkeep[index] = False
+"""
+Function that calculates the earth-term gravitational-wave burst-with-memory
+signal, as described in:
+Seto et al, van haasteren and Levin, phsirkov et al, Cordes and Jenet.
 
-        if np.sum(indkeep) != len(indkeep):
-            # We have actually deleted some parameters
-            newM = oldMmat[:, indkeep]
-            newptmdescription = np.array(oldptmdescription)[indkeep]
-            #newunitconversion = np.array(oldunitconversion)[indkeep]
-            newptmpars = oldptmpars[indkeep]
+parameter[0] = TOA time (sec) the burst hits the earth
+parameter[1] = amplitude of the burst (strain h)
+parameter[2] = azimuthal angle (rad)
+parameter[3] = polar angle (rad)
+parameter[4] = polarisation angle (rad)
 
-            # Construct the G-matrices
-            U, s, Vh = sl.svd(newM)
-            newG = U[:, (newM.shape[1]):].copy()
-            newGc = U[:, :(newM.shape[1])].copy()
-        else:
-            newM = oldMmat.copy()
-            newptmdescription = np.array(oldptmdescription)
+raj = Right Ascension of the pulsar (rad)
+decj = Declination of the pulsar (rad)
+t = timestamps where the waveform should be returned
+
+returns the waveform as induced timing residuals (seconds)
+
+"""
+def bwmsignal_old(parameters, raj, decj, t):
+    # The rotation matrices
+    rot1 = np.eye(3)
+    rot2 = np.eye(3)
+    rot3 = np.eye(3)
+
+    # Rotation along the azimuthal angle (raj source)
+    rot1[0,0] = np.cos(parameters[2])   ; rot1[0,1] = np.sin(parameters[2])
+    rot1[1,0] = -np.sin(parameters[2])  ; rot1[1,1] = np.cos(parameters[2])
+
+    # Rotation along the polar angle (decj source)
+    rot2[0,0] = np.sin(parameters[3])   ; rot2[0,2] = -np.cos(parameters[3])
+    rot2[2,0] = np.cos(parameters[3])   ; rot2[2,2] = np.sin(parameters[3])
+
+    # Rotate the bwm polarisation to match the x-direction
+    rot3[0,0] = np.cos(parameters[4])   ; rot3[0,1] = np.sin(parameters[4])
+    rot3[1,0] = -np.sin(parameters[4])  ; rot3[1,1] = np.cos(parameters[4])
+
+    # The total rotation matrix
+    rot = np.dot(rot1, np.dot(rot2, rot3))
+
+    # The pulsar position in Euclidian coordinates
+    ppos = np.zeros(3)
+    ppos[0] = np.cos(raj) * np.cos(decj)
+    ppos[1] = np.sin(raj) * np.cos(decj)
+    ppos[2] = np.sin(decj)
+
+    # Rotate the position of the pulsar
+    ppr = np.dot(rot, ppos)
+
+    # Antenna pattern
+    ap = 0.0
+    if np.abs(ppr[2]) < 1:
+        # Depending on definition of source position, it could be (1 - ppr[2])
+        ap = 0.5 * (1 + ppr[2]) * (2 * ppr[0] * ppr[0] / (1 - ppr[2]*ppr[2]) - 1)
+        
+        2 * ppr[0] * ppr[0] 
+
+    # Define the heaviside function
+    heaviside = lambda x: 0.5 * (np.sign(x) + 1)
+
+    # Return the time series
+    return ap * (10**parameters[1]) * heaviside(t - parameters[0]) * (t - parameters[0])
+
+
+
+"""
+A general signal element of the pta model/likelihood.
+
+For now, the Fmat fourier design matrices are assumed to be for identical
+frequencies for all pulsars.
+
+Note: deprecated
+"""
+class ptasignalOld(object):
+    pulsarind = None        # pulsar nr. for EFAC/EQUAD
+    stype = "none"          # EFAC, EQUAD, spectrum, powerlaw,
+                            # dmspectrum, dmpowerlaw, fouriercoeff...
+    corr = "single"         # single, gr, uniform, dipole, anisotropicgwb...
+                            # Here dipole is not the dipole in anisotropies, but
+                            # in 'ephemeris' etc.
+
+    flagname = 'efacequad'  # Name of flag this applies to
+    flagvalue = 'noname'    # Flag value this applies to
+
+    npars = 0               # Number of parameters
+    ntotpars = 0            # Total number of parameters (also non-varying)
+    parindex = 0            # Index in parameters array
             #newunitconversion = oldunitconversion.copy()
             newptmpars = oldptmpars.copy()
             newG = oldGmat.copy()
@@ -11173,6 +10687,437 @@ def simulateFullSet(parlist, timlist, simlist, parameters, h5file, **kwargs):
         h5df.addTempoPulsar(parlist[ii], timlist[ii])
 
     # Apply the model, and generate a realisation of data
+    likob = ptaLikelihood(h5file)
+    modeldict = likob.makeModelDict(**kwargs)
+    likob.initModel(modeldict)
+    likob.gensig(parameters=parameters, filename=h5file)
+
+    # Write the sim-files to disk
+    for ii in range(len(parlist)):
+        psr = t2.tempopulsar(parlist[ii], timlist[ii])
+        psr.stoas[:] -= psr.residuals() / pic_spd
+
+        psr.stoas[:] += likob.ptapsrs[ii].residuals / pic_spd
+        psr.savetim(simlist[ii])
+
+        print "Writing mock TOAs of ", parlist[ii], "/", likob.ptapsrs[ii].name, \
+                " to ", simlist[ii]
+#!/usr/bin/env python
+# encoding: utf-8
+# vim: tabstop=4:softtabstop=4:shiftwidth=4:expandtab
+
+"""
+piccard.py
+
+Requirements:
+- numpy:        pip install numpy
+- h5py:         macports, apt-get, http://h5py.googlecode.com/
+- matplotlib:   macports, apt-get
+- emcee:        pip install emcee (fallback option included)
+- libstempo:    pip install libstempo (optional, required for creating HDF5
+                files, and for non-linear timing model analysis
+- pyMultiNest:  (optional)
+- pytwalk:      (included)
+- pydnest:      (included)
+
+Created by vhaasteren on 2013-08-06.
+Copyright (c) 2013 Rutger van Haasteren
+
+Work that uses this code should reference van Haasteren et al. (in prep). (I'll
+add the reference later).
+
+Contributed code for anisotropic gravitrational-wave background by Chiara
+Mingarelli. Work that uses the anisotropic background functionality should
+reference Mingarelli and Vecchio 2013,  arXiv:1306.5394
+
+Contributed work on anisotropic gravitational-wave background by Steve Taylor.
+Work that uses the anisotropic background functionality should reference Taylor
+and Gair 2013, arXiv:1306:5395
+
+"""
+
+from __future__ import division
+
+import numpy as np
+import math
+import scipy.linalg as sl, scipy.special as ss
+import h5py as h5
+import matplotlib.pyplot as plt
+import os as os
+import sys
+import json
+import tempfile
+
+from .constants import *
+from .signals import *
+from .datafile import *
+from . import anisotropygammas as ang  # Internal module
+from .triplot import *
+
+try:    # If without libstempo, can still read hdf5 files
+    import libstempo
+    t2 = libstempo
+except ImportError:
+    t2 = None
+
+# In order to keep the dictionary in order
+try:
+    try:
+        from collections import OrderedDict
+    except ImportError:
+        from ordereddict import OrderedDict
+except ImportError:
+    OrderedDict = dict
+
+
+# Block-wise multiplication as in G^{T}CG
+def blockmul(A, B, psrobs, psrg):
+    """Computes B.T . A . B, where B is a block-diagonal design matrix
+        with block heights m = len(A) / len(meta) and block widths m - meta[i]['pars'].
+
+        >>> a = N.random.randn(8,8)
+        >>> a = a + a.T
+        >>> b = N.zeros((8,5),'d')
+        >>> b[0:4,0:2] = N.random.randn(4,2)
+        >>> b[4:8,2:5] = N.random.randn(4,3)
+        >>> psrobs = [4, 4]
+        >>> psrg = [2, 3]
+        >>> c = blockmul(a,b,psrobs, psrg) - N.dot(b.T,N.dot(a,b))
+        >>> N.max(N.abs(c))
+        0.0
+    """
+
+    n, p = A.shape[0], B.shape[1]    # A is n x n, B is n x p
+
+    if (A.shape[0] != A.shape[1]) or (A.shape[1] != B.shape[0]):
+        raise ValueError('incompatible matrix sizes')
+    
+    if (len(psrobs) != len(psrg)):
+        raise ValueError('incompatible matrix description')
+
+    res1 = np.zeros((n,p), 'd')
+    res2 = np.zeros((p,p), 'd')
+
+    npulsars = len(psrobs)
+    #m = n/npulsars          # times (assumed the same for every pulsar)
+
+    psum, isum = 0, 0
+    for i in range(npulsars):
+        # each A matrix is n x m, with starting column index = i * m
+        # each B matrix is m x (m - p_i), with starting row = i * m, starting column s = sum_{k=0}^{i-1} (m - p_i)
+        # so the logical C dimension is n x (m - p_i), and it goes to res1[:,s:(s + m - p_i)]
+        res1[:,psum:psum+psrg[i]] = np.dot(A[:,isum:isum+psrobs[i]],B[isum:isum+psrobs[i], psum:psum+psrg[i]])
+            
+        psum += psrg[i]
+        isum += psrobs[i]
+
+    psum, isum = 0, 0
+    for i in range(npulsars):
+        res2[psum:psum+psrg[i],:] = np.dot(B.T[psum:psum+psrg[i], isum:isum+psrobs[i]], res1[isum:isum+psrobs[i],:])
+                    
+        psum += psrg[i]
+        isum += psrobs[i]
+
+    return res2
+
+"""
+Scipy 0.7.x does not yet have block_diag, and somehow I have some troubles
+upgrading it on the ATLAS cluster. So for now, include the source here in
+piccard as well. -- Rutger van Haasteren (December 2013)
+"""
+def block_diag(*arrs):
+    """Create a block diagonal matrix from the provided arrays.
+
+    Given the inputs `A`, `B` and `C`, the output will have these
+    arrays arranged on the diagonal::
+
+        [[A, 0, 0],
+         [0, B, 0],
+         [0, 0, C]]
+
+    If all the input arrays are square, the output is known as a
+    block diagonal matrix.
+
+    Parameters
+    ----------
+    A, B, C, ... : array-like, up to 2D
+        Input arrays.  A 1D array or array-like sequence with length n is
+        treated as a 2D array with shape (1,n).
+
+    Returns
+    -------
+    D : ndarray
+        Array with `A`, `B`, `C`, ... on the diagonal.  `D` has the
+        same dtype as `A`.
+
+    References
+    ----------
+    .. [1] Wikipedia, "Block matrix",
+           http://en.wikipedia.org/wiki/Block_diagonal_matrix
+
+    Examples
+    --------
+    >>> A = [[1, 0],
+    ...      [0, 1]]
+    >>> B = [[3, 4, 5],
+    ...      [6, 7, 8]]
+    >>> C = [[7]]
+    >>> print(block_diag(A, B, C))
+    [[1 0 0 0 0 0]
+     [0 1 0 0 0 0]
+     [0 0 3 4 5 0]
+     [0 0 6 7 8 0]
+     [0 0 0 0 0 7]]
+    >>> block_diag(1.0, [2, 3], [[4, 5], [6, 7]])
+    array([[ 1.,  0.,  0.,  0.,  0.],
+           [ 0.,  2.,  3.,  0.,  0.],
+           [ 0.,  0.,  0.,  4.,  5.],
+           [ 0.,  0.,  0.,  6.,  7.]])
+
+    """
+    if arrs == ():
+        arrs = ([],)
+    arrs = [np.atleast_2d(a) for a in arrs]
+
+    bad_args = [k for k in range(len(arrs)) if arrs[k].ndim > 2]
+    if bad_args:
+        raise ValueError("arguments in the following positions have dimension "
+                            "greater than 2: %s" % bad_args) 
+
+    shapes = np.array([a.shape for a in arrs])
+    out = np.zeros(np.sum(shapes, axis=0), dtype=arrs[0].dtype)
+
+    r, c = 0, 0
+    for i, (rr, cc) in enumerate(shapes):
+        out[r:r + rr, c:c + cc] = arrs[i]
+        r += rr
+        c += cc
+    return out
+
+
+
+
+"""
+Calculate the daily-averaging exploder matrix, and the daily averaged site
+arrival times. In the modelling, the residuals will not be changed. It is only
+for calculating correlations
+
+@param toas:        vector of site arrival times. (Seconds)
+@param calcInverse: Boolean that indicates whether the pseudo-inverse of Umat needs
+                    to be calculated
+
+@return:            Either (avetoas, Umat), with avetoas the everage toas, and Umat
+                    the exploder matrix. Or (avetoas, Umat, Ui), with Ui the
+                    pseudo-inverse of Umat
+
+Input is a vector of site arrival times. Returns the reduced-size average toas,
+and the exploder matrix  Cfull = Umat Cred Umat^{T}
+Of the output, a property of the matrices Umat and Ui is that:
+np.dot(Ui, Umat) = np.eye(len(avetoas))
+
+TODO: Make more 'Pythonic'
+"""
+def dailyaveragequantities(toas, calcInverse=False):
+    timespan = 10       # Same observation if within 10 seconds
+
+    processed = np.array([0]*len(toas), dtype=np.bool)  # No toas processed yet
+    Umat = np.zeros((len(toas), 0))
+    avetoas = np.empty(0)
+
+    while not np.all(processed):
+        npindex = np.where(processed == False)[0]
+        ind = npindex[0]
+        satmin = toas[ind] - timespan
+        satmax = toas[ind] + timespan
+
+        dailyind = np.where(np.logical_and(toas > satmin, toas < satmax))[0]
+
+        newcol = np.zeros((len(toas)))
+        newcol[dailyind] = 1.0
+
+        Umat = np.append(Umat, np.array([newcol]).T, axis=1)
+        avetoas = np.append(avetoas, np.mean(toas[dailyind]))
+        processed[dailyind] = True
+
+    returnvalues = (avetoas, Umat)
+
+    # Calculate the pseudo-inverse if necessary
+    if calcInverse:
+        Ui = ((1.0/np.sum(Umat, axis=0)) * Umat).T
+        returnvalues = (avetoas, Umat, Ui)
+
+    return returnvalues
+
+
+def selection_to_dselection(Nvec, U):
+    """
+    Given a selection vector Nvec and a quantization matrix U, both with
+    elements in [0, 1.0], this function returns the selection vector in the
+    basis of epoch average residuals. This assumes that all observations in a
+    single observation epoch are flagged identically (same backend).
+
+    @param Nvec:    vector with elements in [0.0, 1.0] that indicates which
+                    observations are selected
+    @param U:       quantization matrix
+    
+    @returns:   Selection matrix as Nvec, but in the epoch-averaged basis
+    """
+    return np.array(np.sum(Nvec * U.T, axis=1) > 0.0, dtype=np.double)
+
+
+"""
+Calculate the two Fourier modes A, given a set of timestamps and a frequency
+
+These are sine/cosine modes
+"""
+def singleFreqFourierModes(t, freqs):
+    N = t.size
+    M = len(freqs)
+    A = np.zeros([N, 2*M])
+
+    for ii in range(len(freqs)):
+        A[:,2*ii] = np.cos(2.0 * np.pi * freqs[ii] * t)
+        A[:,2*ii+1] = np.sin(2.0 * np.pi * freqs[ii] * t)
+
+    return A
+
+
+"""
+Calculate the matrix of Fourier modes A, given a set of timestamps
+
+These are sine/cosine basis vectors at evenly separated frequency bins
+
+Mode 0: sin(f_0)
+Mode 1: cos(f_0)
+Mode 2: sin(f_1)
+... etc
+
+@param nmodes:  The number of modes that will be included (= 2*nfreq)
+@param Ttot:    Total duration experiment (in case not given by t)
+"""
+def fourierdesignmatrix(t, nmodes, Ttot=None):
+  N = t.size
+  A = np.zeros([N, nmodes])
+  freqs = np.zeros(nmodes)
+  T = t.max() - t.min()
+
+  if(nmodes % 2 != 0):
+    print "WARNING: Number of modes should be even!"
+
+  # The frequency steps
+  #deltaf = (N-1.0) / (N*T)    # This would be orthogonal for regular sampling
+  if Ttot is None:
+      deltaf = 1.0 / T
+  else:
+      deltaf = 1.0 / Ttot
+
+  # The zeroth mode (constant, cos(0))
+  # Skip this one now!
+  # A[:,0] = 0.5 * np.sqrt(2)
+  # freqs[0] = 0.0
+
+  # The cosine modes
+  for i in range(0, nmodes, 2):
+    # Mode number
+    k = 1 + int(i / 2)
+    # frequency
+    omega = 2.0 * np.pi * k * deltaf
+    A[:,i] = np.cos(omega * t)
+    freqs[i] = k * deltaf
+
+  # The sine modes
+  for i in range(1, nmodes, 2):
+    # Mode number
+    k = int((i + 1) / 2)
+    # frequency
+    omega = 2.0 * np.pi * k * deltaf
+    A[:,i] = np.sin(omega * t)
+    freqs[i] = k * deltaf
+
+  # This normalisation would make F unitary in the case of regular sampling
+  # A = A * np.sqrt(2.0/N)
+
+  return (A, freqs)
+
+
+"""
+Calculate the design matrix for quadratic spindown
+"""
+def designqsd(t, f=None):
+  if not f==None:
+    cols = 4
+  else:
+    cols = 3
+  M = np.ones([len(t), cols])
+  
+  M[:,1] = t
+  M[:,2] = t ** 2
+    
+  if not f==None:
+    M[:,3] = 1.0 / (f**2)
+    
+  return M.copy()
+
+
+
+
+"""
+with n the number of pulsars, return an nxn matrix representing the H&D
+correlation matrix
+"""
+def hdcorrmat(ptapsrs):
+    """ Constructs a correlation matrix consisting of the Hellings & Downs
+        correlation coefficients. See Eq. (A30) of Lee, Jenet, and
+        Price ApJ 684:1304 (2008) for details.
+
+        @param: list of ptaPulsar (or any other markXPulsar) objects
+        
+    """
+    npsrs = len(ptapsrs)
+    
+    raj = [ptapsrs[i].raj[0] for i in range(npsrs)]
+    decj = [ptapsrs[i].decj[0] for i in range(npsrs)]
+    pp = np.array([np.cos(decj)*np.cos(raj), np.cos(decj)*np.sin(raj), np.sin(decj)]).T
+    cosp = np.array([[np.dot(pp[i], pp[j]) for i in range(npsrs)] for j in range(npsrs)])
+    cosp[cosp > 1.0] = 1.0
+    xp = 0.5 * (1 - cosp)
+
+    old_settings = np.seterr(all='ignore')
+    logxp = 1.5 * xp * np.log(xp)
+    np.fill_diagonal(logxp, 0)
+    np.seterr(**old_settings)
+    hdmat = logxp - 0.25 * xp + 0.5 + 0.5 * np.diag(np.ones(npsrs))
+
+    return hdmat
+
+
+"""
+with n the number of pulsars, return an nxn matrix representing the dipole
+(ephemeris) correlation matrix
+"""
+def dipolecorrmat(ptapsrs):
+    """ Constructs a correlation matrix consisting of simple dipole correlations
+    """
+    npsrs = len(ptapsrs)
+    
+    raj = [ptapsrs[i].raj[0] for i in range(npsrs)]
+    decj = [ptapsrs[i].decj[0] for i in range(npsrs)]
+    pp = np.array([np.cos(decj)*np.cos(raj), np.cos(decj)*np.sin(raj), np.sin(decj)]).T
+    cosp = np.array([[np.dot(pp[i], pp[j]) for i in range(npsrs)] for j in range(npsrs)])
+
+    cosp[cosp > 1.0] = 1.0
+
+    return cosp
+
+
+# Calculate the covariance matrix for a red signal
+# (for a GWB with unitless amplitude h_c(1yr^{-1}) = 1)
+def Cred_sec(toas, alpha=-2.0/3.0, fL=1.0/20, approx_ksum=False):
+    day    = 86400.0
+    year   = 3.15581498e7
+    EulerGamma = 0.5772156649015329
+
+    psrobs = [len(toas)]
     likob = ptaLikelihood(h5file)
     modeldict = likob.makeModelDict(**kwargs)
     likob.initModel(modeldict)

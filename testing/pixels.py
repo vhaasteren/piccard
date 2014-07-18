@@ -49,7 +49,7 @@ pic_spd = 86400.0       # Seconds per day
 pic_spy =  31557600.0   # Seconds per year (yr = 365.25 days, so Julian years)
 pic_T0 = 53000.0        # MJD to which all HDF5 toas are referenced
 pic_pc = 3.08567758e16  # Parsec in meters
-pic_c = 299792458     # Speed of light in m/s
+pic_c = 299792458       # Speed of light in m/s
 
 
 
