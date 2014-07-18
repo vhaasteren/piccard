@@ -21,6 +21,8 @@ It contains functions for the 'optimal correlation statistic' (Demorest et
 al. 2013, arXiv:1201.664, 2013ApJ...762...94D ; Chamberlain et al. in prep)
 It also contains continuous wave code written by Justin Ellis, arXiv:1305:0835
 
+NOTE: most of this is currently implemented in Piccard.
+
 """
 
 from __future__ import division
