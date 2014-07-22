@@ -47,6 +47,12 @@ try:    # If without libstempo, can still read hdf5 files
 except ImportError:
     t2 = None
 
+# To do coordinate transformations, we need pyephem
+try:
+    import ephem
+except ImportError:
+    ephem = None
+
 
 """
 The DataFile class is the class that supports the HDF5 file format. All HDF5
@@ -166,6 +172,23 @@ class DataFile(object):
                 data = None
 
         return data
+
+
+    def hasField(self, psrname, field):
+        """
+        Return whether or not this pulsar has a specific field present
+
+        @param psrname:     Name of the pulsar we are reading data from
+        @param field:       Field name of the data we are requestion
+        """
+        self.h5file = h5.File(self.filename, 'r')
+        psrGroup = self.getPulsarGroup(psrname, delete=False)
+
+        hasfield = (field in psrGroup)
+
+        self.h5file.close()
+
+        return hasfield
 
     """
     Retrieve the shape of a specific dataset
@@ -303,6 +326,23 @@ class DataFile(object):
         # TODO: writing the design matrix should be done irrespective of the fitting flag
         desmat = t2pulsar.designmatrix(fixunits=True)
         self.writeData(psrGroup, 'designmatrix', desmat, overwrite=overwrite)
+
+        # Write the position of the pulsar, even if it is in ecliptic
+        # coordinates
+        if 'RAJ' in t2pulsar and 'DECJ' in t2pulsar:
+            raj = t2pulsar.prefit['RAJ'].val
+            decj = t2pulsar.prefit['DECJ'].val
+        elif 'ELONG' in t2pulsar and 'ELAT' in t2pulsar:
+            if ephem is None:
+                raise ImportError("pyephem not installed")
+            ec = ephem.Ecliptic(t2pulsar.prefit['ELONG'].val, t2pulsar.prefit['ELAT'].val)
+            eq = ephem.Equatorial(ec)
+            raj = np.float(eq.ra)
+            decj = np.float(eq.dec)
+        else:
+            raise ValueError("Pulsar position not properly available")
+        self.writeData(psrGroup, 'raj', np.float(raj), overwrite=overwrite)
+        self.writeData(psrGroup, 'decj', np.float(decj), overwrite=overwrite)
 
         # Write the unit conversions for the design matrix (to timing model
         # parameters
@@ -451,10 +491,17 @@ class DataFile(object):
         psr.flags = map(str, self.getData(psrname, 'efacequad', 'Flags'))
 
         # Read the position of the pulsar
-        rajind = np.flatnonzero(np.array(psr.ptmdescription) == 'RAJ')
-        decjind = np.flatnonzero(np.array(psr.ptmdescription) == 'DECJ')
-        psr.raj = np.array(self.getData(psrname, 'tmp_valpre'))[rajind]
-        psr.decj = np.array(self.getData(psrname, 'tmp_valpre'))[decjind]
+        if self.hasField(psrname, 'raj'):
+            psr.raj = np.float(self.getData(psrname, 'raj'))
+        else:
+            rajind = np.flatnonzero(np.array(psr.ptmdescription) == 'RAJ')
+            psr.raj = np.array(self.getData(psrname, 'tmp_valpre'))[rajind]
+
+        if self.hasField(psrname, 'decj'):
+            psr.decj = np.float(self.getData(psrname, 'decj'))
+        else:
+            decjind = np.flatnonzero(np.array(psr.ptmdescription) == 'DECJ')
+            psr.decj = np.array(self.getData(psrname, 'tmp_valpre'))[decjind]
 
         # Obtain residuals, TOAs, etc.
         psr.toas = np.array(self.getData(psrname, 'TOAs'))

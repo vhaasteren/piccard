@@ -46,6 +46,8 @@ import tempfile
 
 from .constants import *
 from .datafile import *
+from .signals import *
+from .seplik import *
 from . import anisotropygammas as ang  # Internal module
 from .triplot import *
 
@@ -4677,7 +4679,7 @@ class ptaLikelihood(object):
                 "pmin":[toamin, -18.0, 0.0, 0.0, 0.0],
                 "pmax":[toamax, -10.0, 2*np.pi, np.pi, np.pi],
                 "pwidth":[30*24*3600.0, 0.1, 0.1, 0.1, 0.1],
-                "pstart":[0.5*(toamax-toamin), -15.0, 3.0, 1.0, 1.0],
+                "pstart":[0.5*(toamax+toamin), -15.0, 3.0, 1.0, 1.0],
                 "prior":'flat'
                 })
             signals.append(newsignal)
@@ -4942,7 +4944,10 @@ class ptaLikelihood(object):
                 stype='jitter', corr='single')
         numEquads = self.getNumberOfSignalsFromDict(signals, \
                 stype='equad', corr='single')
-        separateEfacs = (numEfacs + numEquads + numJits) > 2
+        if self.likfunc[:5] == 'mark6':
+            separateEfacs = (numEfacs + numEquads) > 2
+        else:
+            separateEfacs = (numEfacs + numEquads + numJits) > 2
 
         # When doing Gibbs, we really do not want to separate this stuff
         if  likfunc in ['gibbs', 'mark11']:
@@ -7607,6 +7612,8 @@ class ptaLikelihood(object):
                 -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) \
                 +0.5*rGSigmaGr - 0.5*PhiaLD - 0.5*SigmaLD - 0.5*ThetaLD \
                 +rScr
+
+
 
 
 
