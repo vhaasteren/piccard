@@ -335,8 +335,11 @@ class DataFile(object):
         elif 'ELONG' in t2pulsar and 'ELAT' in t2pulsar:
             if ephem is None:
                 raise ImportError("pyephem not installed")
+
+            # tempo/tempo2 RAJ/DECJ always refer precession/nutation-wise to
+            # epoch J2000. Posepoch does not apply here (only to proper motion)
             ec = ephem.Ecliptic(t2pulsar.prefit['ELONG'].val, t2pulsar.prefit['ELAT'].val)
-            eq = ephem.Equatorial(ec)
+            eq = ephem.Equatorial(ec, epoch=ephem.J2000)
             raj = np.float(eq.ra)
             decj = np.float(eq.dec)
         else:

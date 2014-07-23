@@ -38,7 +38,8 @@ class sepLikelihood(object):
     importance sampling
     """
 
-    def __init__(self, likobs, numcpars, chaintuples=None, mlnoisepars=None):
+    def __init__(self, likobs, numcpars, chaintuples=None, mlnoisepars=None,
+            bvary=None):
         """
         Initialize the full likelihood with a list of ptaLikelihood objects. For
         the moment, assume that only the last couple of parameters belong to the
@@ -49,9 +50,15 @@ class sepLikelihood(object):
         @param chaintuples: If not None, then contains the MCMC chains of
                             individual pulsar runs. List of tuples with
                             chaintuples[ii] = (lp, ll, chain, labels)
-        @param mlnoisepars: If not None, this is an array with the ML noise
-                            parameters
+        @param mlnoisepars: If not None, this is an array/list with the ML noise
+                            parameters (list of arrays per likelihood object).
+                            If None, these values are taken from pstart.
+        @param bvary:       In case we don't want to vary some parameters, take
+                            those from pstart, and don't require them in
+                            loglikelhood
 
+        For pmin/pmax/pwidth/pstart of the common signal, it uses the values of
+        the last (index -1) likelihood object
         """
         self.likobs = likobs
         self.numcpars = numcpars
@@ -59,7 +66,6 @@ class sepLikelihood(object):
         self.single_ll = []
         self.single_chain = []
         self.single_labels = []
-        self.mlnoisepars = mlnoisepars
         self.likfunc = 'sep'
 
         if chaintuples is not None:
@@ -69,11 +75,35 @@ class sepLikelihood(object):
                 self.single_chain.append(ct[2])
                 self.single_labels.append(ct[3])
 
+        npars = 0
+        for ii, lo in enumerate(likobs):
+            npars += lo.dimensions-self.numcpars
+        npars += self.numcpars
+
+        # Which parameters are varying
+        if bvary is None:
+            self.bvary = np.array([1]*npars, dtype=np.bool)
+        else:
+            if len(bvary) != npars:
+                raise ValueError("given bvary not the right length!")
+            self.bvary = bvary
+
+        # The ML parameters, as used in the loglikelihood/logprior for
+        # parameters that are not varying
+        if mlnoisepars is None:
+            self.pml = self.pstart
+        else:
+            self.pml = np.array([])
+            for ii, lo in enumerate(self.likobs):
+                self.pml = np.append(self.pml, mlnoisepars[ii])
+            self.pml = np.append(self.pml, self.likobs[-1].pstart[-self.numcpars:])
+
 
     @property
     def dimensions(self):
         """
         Return the number of parameters of the combined likelihood
+        """
         """
         if self.mlnoisepars is None:
             # No ML parameters
@@ -81,8 +111,10 @@ class sepLikelihood(object):
         else:
             # ML parameters, only search over numcpars
             npars = self.numcpars
-
         return npars
+        """
+        return np.sum(self.bvary)
+
 
     @property
     def pwidth(self):
@@ -90,11 +122,12 @@ class sepLikelihood(object):
         Return the width vector
         """
         pnoise = np.array([])
-        if self.mlnoisepars is None:
-            for lo in self.likobs:
-                pnoise = np.append(pnoise, lo.pwidth[:-self.numcpars])
+        #if self.mlnoisepars is None:
+        for lo in self.likobs:
+            pnoise = np.append(pnoise, lo.pwidth[:-self.numcpars])
 
-        return np.append(pnoise, self.likobs[-1].pwidth[-self.numcpars:])
+        ptot = np.append(pnoise, self.likobs[-1].pwidth[-self.numcpars:])
+        return ptot[self.bvary]
 
     @property
     def pmin(self):
@@ -102,11 +135,12 @@ class sepLikelihood(object):
         Return the min vector
         """
         pnoise = np.array([])
-        if self.mlnoisepars is None:
-            for lo in self.likobs:
-                pnoise = np.append(pnoise, lo.pmin[:-self.numcpars])
+        #if self.mlnoisepars is None:
+        for lo in self.likobs:
+            pnoise = np.append(pnoise, lo.pmin[:-self.numcpars])
 
-        return np.append(pnoise, self.likobs[-1].pmin[-self.numcpars:])
+        ptot = np.append(pnoise, self.likobs[-1].pmin[-self.numcpars:])
+        return ptot[self.bvary]
 
     @property
     def pmax(self):
@@ -114,11 +148,12 @@ class sepLikelihood(object):
         Return the max vector
         """
         pnoise = np.array([])
-        if self.mlnoisepars is None:
-            for lo in self.likobs:
-                pnoise = np.append(pnoise, lo.pmax[:-self.numcpars])
+        #if self.mlnoisepars is None:
+        for lo in self.likobs:
+            pnoise = np.append(pnoise, lo.pmax[:-self.numcpars])
 
-        return np.append(pnoise, self.likobs[-1].pmax[-self.numcpars:])
+        ptot = np.append(pnoise, self.likobs[-1].pmax[-self.numcpars:])
+        return ptot[self.bvary]
 
     @property
     def pstart(self):
@@ -126,11 +161,12 @@ class sepLikelihood(object):
         Return the start vector
         """
         pnoise = np.array([])
-        if self.mlnoisepars is None:
-            for lo in self.likobs:
-                pnoise = np.append(pnoise, lo.pstart[:-self.numcpars])
+        #if self.mlnoisepars is None:
+        for lo in self.likobs:
+            pnoise = np.append(pnoise, lo.pstart[:-self.numcpars])
 
-        return np.append(pnoise, self.likobs[-1].pstart[-self.numcpars:])
+        ptot = np.append(pnoise, self.likobs[-1].pstart[-self.numcpars:])
+        return ptot[self.bvary]
 
     def saveResiduals(self, chainsdir):
         """
@@ -149,29 +185,33 @@ class sepLikelihood(object):
         fil = open(ptfile, "w")
 
         parind = 0
+        saveparind = 0
 
         for ll, likob in enumerate(self.likobs):
             for ii, pd in enumerate(likob.pardes):
+                saveind = -1
                 savepar = True
 
                 pind = pd['index']
 
-                if self.mlnoisepars is not None:
-                    savepar = False
-                    if ll == len(self.likobs)-1 and pind >= likob.dimensions - self.numcpars:
-                        savepar = True
+                if (pind >= 0 and pind < likob.dimensions - self.numcpars) or \
+                        (pind >= likob.dimensions-self.numcpars and \
+                        pind<likob.dimensions and ll==len(self.likobs)-1):
+                    if self.bvary[parind]:
+                        saveind = int(saveparind)
+                        saveparind += 1
+                    parind += 1
 
-                if savepar:
+                if not (ll<len(self.likobs)-1 and
+                        pind>=likob.dimensions-self.numcpars):
                     fil.write("{0:d} \t{1:d} \t{2:s} \t{3:s} \t{4:s} \t{5:s} \t{6:s}\n".format(\
-                        parind,
+                        saveind,
                         likob.pardes[ii]['pulsar'],
                         likob.pardes[ii]['sigtype'],
                         likob.pardes[ii]['correlation'],
                         likob.pardes[ii]['name'],
                         likob.pardes[ii]['id'],
                         likob.pardes[ii]['pulsarname']))
-
-                    parind += 1
 
         fil.close()
 
@@ -184,19 +224,24 @@ class sepLikelihood(object):
 
         @return:        Log-prior
         """
+        allpars = self.pml.copy()
+        allpars[self.bvary] = pars
 
-        cpars = pars[-self.numcpars:]
+        cpars = allpars[-self.numcpars:]
 
         lpr = 0.0   # Log-prior
 
         pind = 0
         for ii, likob in enumerate(self.likobs):
             nppars = likob.dimensions - self.numcpars
-            if self.mlnoisepars is None:
-                psrpars = np.append(pars[pind:pind+nppars], cpars)
-                pind += nppars
-            else:
-                psrpars = np.append(self.mlnoisepars[ii], cpars)
+            psrpars = np.append(allpars[pind:pind+nppars], cpars)
+            pind += nppars
+
+            #if self.mlnoisepars is None:
+            #    psrpars = np.append(pars[pind:pind+nppars], cpars)
+            #    pind += nppars
+            #else:
+            #    psrpars = np.append(self.mlnoisepars[ii], cpars)
 
             p_lpr = likob.logprior(psrpars)
 
@@ -213,19 +258,24 @@ class sepLikelihood(object):
 
         @return:        Log-likelihood
         """
+        allpars = self.pml.copy()
+        allpars[self.bvary] = pars
 
-        cpars = pars[-self.numcpars:]
+        cpars = allpars[-self.numcpars:]
 
         ll = 0.0   # Log-likelihood
 
         pind = 0
         for ii, likob in enumerate(self.likobs):
             nppars = likob.dimensions - self.numcpars
-            if self.mlnoisepars is None:
-                psrpars = np.append(pars[pind:pind+nppars], cpars)
-                pind += nppars
-            else:
-                psrpars = np.append(self.mlnoisepars[ii], cpars)
+            psrpars = np.append(allpars[pind:pind+nppars], cpars)
+            pind += nppars
+
+            #if self.mlnoisepars is None:
+            #    psrpars = np.append(pars[pind:pind+nppars], cpars)
+            #    pind += nppars
+            #else:
+            #    psrpars = np.append(self.mlnoisepars[ii], cpars)
 
 
             p_ll = likob.loglikelihood(psrpars)
@@ -244,6 +294,24 @@ class sepLikelihood(object):
         @return:        Log-posterior
         """
         return self.logprior(pars) + self.loglikelihood(pars)
+
+    def loglikelihoodhc(self, cube, ndim, nparams):
+        """
+        For MultiNest, we need some acacadabra
+        """
+        acube = np.zeros(ndim)
+
+        for ii in range(ndim):
+            acube[ii] = cube[ii]
+
+        return self.loglikelihood(acube)
+
+    def samplefromprior(self, cube, ndim, nparams):
+        pmin = self.pmin
+        pmax = self.pmax
+        for ii in range(ndim):
+            cube[ii] = pmin[ii] + cube[ii] * (pmax[ii] - pmin[ii])
+
 
 def RunImportance_SepLik_MCMC(seplik, steps, chainsdir, burnin=1000):
     """

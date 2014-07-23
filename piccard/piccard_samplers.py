@@ -2249,7 +2249,11 @@ Run a MultiNest algorithm on the likelihood
 Implementation from "pyMultinest"
 
 """
-def RunMultiNest(likob, chainroot, rseed=16, resume=False):
+def RunMultiNest(likob, chainroot, rseed=16, resume=False, n_live_points=500,
+        importance_nested_sampling=False, const_efficiency_mode=False,
+        n_clustering_params=None, verbose=True, multimodal=True,
+        n_iter_before_update=100, max_modes=100, evidence_tolerance=0.5,
+        write_output=True, sampling_efficiency=0.3):
     # Save the parameters to file
     likob.saveModelParameters(chainroot + 'post_equal_weights.dat.mnparameters.txt')
 
@@ -2270,21 +2274,21 @@ def RunMultiNest(likob, chainroot, rseed=16, resume=False):
 
 
     pymultinest.run(likob.loglikelihoodhc, likob.samplefromprior, ndim,
-            importance_nested_sampling = False,
-            const_efficiency_mode=False,
-            n_clustering_params = None,
+            importance_nested_sampling = importance_nested_sampling,
+            const_efficiency_mode=const_efficiency_mode,
+            n_clustering_params = n_clustering_params,
             resume = resume,
-            verbose = True,
-            n_live_points = 500,
+            verbose = verbose,
+            n_live_points = n_live_points,
             init_MPI = False,
-            multimodal = True,
+            multimodal = multimodal,
             outputfiles_basename=chainroot,
-            n_iter_before_update=100,
+            n_iter_before_update=n_iter_before_update,
             seed=rseed,
-            max_modes=100,
-            evidence_tolerance=0.5,
-            write_output=True,
-            sampling_efficiency = 0.3)
+            max_modes=max_modes,
+            evidence_tolerance=evidence_tolerance,
+            write_output=write_output,
+            sampling_efficiency = sampling_efficiency)
 
     sys.stdout.flush()
 
