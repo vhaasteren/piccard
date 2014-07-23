@@ -91,7 +91,11 @@ class sepLikelihood(object):
         # The ML parameters, as used in the loglikelihood/logprior for
         # parameters that are not varying
         if mlnoisepars is None:
-            self.pml = self.pstart
+            #self.pml = self.pstart
+            self.pml = np.array([])
+            for ii, lo in enumerate(self.likobs):
+                self.pml = np.append(self.pml, lo.pstart[:-self.numcpars])
+            self.pml = np.append(self.pml, self.likobs[-1].pstart[-self.numcpars:])
         else:
             self.pml = np.array([])
             for ii, lo in enumerate(self.likobs):
