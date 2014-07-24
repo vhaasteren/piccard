@@ -705,18 +705,18 @@ def AntennaPatternPC(rajp, decjp, raj, decj):
     """
     Omega = np.array([-np.cos(decj)*np.cos(raj), \
                       -np.cos(decj)*np.sin(raj), \
-                      np.sin(decj)])
+                      -np.sin(decj)])
     
     mhat = np.array([-np.sin(raj), np.cos(raj), 0])
     nhat = np.array([-np.cos(raj)*np.sin(decj), \
                      -np.sin(decj)*np.sin(raj), \
                      np.cos(decj)])
 
-    p = np.array([np.cos(rajp)*np.cos(decj), \
-                  np.sin(rajp)*np.cos(decj), \
-                  np.sin(decj)])
+    p = np.array([np.cos(rajp)*np.cos(decjp), \
+                  np.sin(rajp)*np.cos(decjp), \
+                  np.sin(decjp)])
 
-    Fp = 0.5 * (np.dot(mhat, p)**2 - np.dot(nhat, p)**2) / (1 + np.dot(Omega, p))
+    Fp = 0.5 * (np.dot(nhat, p)**2 - np.dot(mhat, p)**2) / (1 + np.dot(Omega, p))
     Fc = np.dot(mhat, p) * np.dot(nhat, p) / (1 + np.dot(Omega, p))
 
     return Fp, Fc

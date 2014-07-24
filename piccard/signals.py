@@ -319,9 +319,9 @@ def bwmsignal(parameters, raj, decj, t):
 
     parameter[0] = TOA time (sec) the burst hits the earth
     parameter[1] = amplitude of the burst (strain h)
-    parameter[2] = azimuthal angle (rad)
-    parameter[3] = polar angle (rad)
-    parameter[4] = polarisation angle (rad)
+    parameter[2] = azimuthal angle (rad)    [0, 2pi]
+    parameter[3] = polar angle (rad)        [0, pi]
+    parameter[4] = polarisation angle (rad) [0, pi]
 
     raj = Right Ascension of the pulsar (rad)
     decj = Declination of the pulsar (rad)
@@ -340,7 +340,7 @@ def bwmsignal(parameters, raj, decj, t):
     Fp = Fr[0, 0]
     Fc = Fr[0, 1]
 
-    pol = np.cos(parameters[4]) * Fp + np.sin(parameters[4]) * Fc
+    pol = np.cos(2*parameters[4]) * Fp + np.sin(2*parameters[4]) * Fc
 
     # Define the heaviside function
     heaviside = lambda x: 0.5 * (np.sign(x) + 1)
