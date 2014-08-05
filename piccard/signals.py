@@ -26,7 +26,11 @@ import os, glob
 import sys
 import json
 import tempfile
-import healpy as hp
+
+try:
+    import healpy as hp
+except:
+    hp = None
 
 from .constants import *
 
