@@ -50,6 +50,7 @@ from .signals import *
 from .seplik import *
 from . import anisotropygammas as ang  # Internal module
 from .triplot import *
+from .acf import *
 
 try:    # If without libstempo, can still read hdf5 files
     import libstempo
