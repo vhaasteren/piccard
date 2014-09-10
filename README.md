@@ -38,7 +38,7 @@ expanded still.
 
 
 ## Manual ##
-Under construction
+Under construction. Last update 2014-09-10
 
 
 ## Requirements ##
