@@ -55,19 +55,21 @@ def real_sph_harm(mm, ll, phi, theta):
 
     return ans.real
 
-def signalResponse(ptapsrs, gwtheta, gwphi):
+def signalResponse(ptapsrs, gwtheta, gwphi, dirconv=True):
     """
     Create the signal response matrix
+    @param dirconv: True when Omega in direction of source (not prop.)
     """
     psrpos_phi = np.array([ptapsrs[ii].raj for ii in range(len(ptapsrs))])
     psrpos_theta = np.array([np.pi/2.0 - ptapsrs[ii].decj for ii in range(len(ptapsrs))])
 
-    return signalResponse_fast(psrpos_theta, psrpos_phi, gwtheta, gwphi)
+    return signalResponse_fast(psrpos_theta, psrpos_phi, gwtheta, gwphi, dirconv)
 
 
-def signalResponse_fast(ptheta_a, pphi_a, gwtheta_a, gwphi_a):
+def signalResponse_fast(ptheta_a, pphi_a, gwtheta_a, gwphi_a, dirconv=True):
     """
     Create the signal response matrix FAST
+    @param dirconv: True when Omega in direction of source (not prop.)
     """
     npsrs = len(ptheta_a)
 
@@ -75,10 +77,10 @@ def signalResponse_fast(ptheta_a, pphi_a, gwtheta_a, gwphi_a):
     gwphi, pphi = np.meshgrid(gwphi_a, pphi_a)
     gwtheta, ptheta = np.meshgrid(gwtheta_a, ptheta_a)
 
-    return createSignalResponse(pphi, ptheta, gwphi, gwtheta)
+    return createSignalResponse(pphi, ptheta, gwphi, gwtheta, dirconv=dirconv)
 
 
-def createSignalResponse(pphi, ptheta, gwphi, gwtheta):
+def createSignalResponse(pphi, ptheta, gwphi, gwtheta, dirconv=True):
     """
     Create the signal response matrix. All parameters are assumed to be of the
     same dimensionality.
@@ -87,12 +89,13 @@ def createSignalResponse(pphi, ptheta, gwphi, gwtheta):
     @param ptheta:  Theta of the pulsars
     @param gwphi:   Phi of GW location
     @param gwtheta: Theta of GW location
+    @param dirconv: True when Omega in direction of source (not prop.)
 
     @return:    Signal response matrix of Earth-term
 
     """
-    Fp = createSignalResponse_pol(pphi, ptheta, gwphi, gwtheta, plus=True)
-    Fc = createSignalResponse_pol(pphi, ptheta, gwphi, gwtheta, plus=False)
+    Fp = createSignalResponse_pol(pphi, ptheta, gwphi, gwtheta, plus=True, dirconv=dirconv)
+    Fc = createSignalResponse_pol(pphi, ptheta, gwphi, gwtheta, plus=False, dirconv=dirconv)
 
     F = np.zeros((Fp.shape[0], 2*Fp.shape[1]))
     F[:, 0::2] = Fp
@@ -100,7 +103,8 @@ def createSignalResponse(pphi, ptheta, gwphi, gwtheta):
 
     return F
 
-def createSignalResponse_pol(pphi, ptheta, gwphi, gwtheta, plus=True, norm=True):
+def createSignalResponse_pol(pphi, ptheta, gwphi, gwtheta, plus=True, norm=True,
+        dirconv=True):
     """
     Create the signal response matrix. All parameters are assumed to be of the
     same dimensionality.
@@ -110,9 +114,16 @@ def createSignalResponse_pol(pphi, ptheta, gwphi, gwtheta, plus=True, norm=True)
     @param gwphi:   Phi of GW location
     @param gwtheta: Theta of GW location
     @param plus:    Whether or not this is the plus-polarization
+    @param dirconv: True when Omega in direction of source (not of propagation)
 
     @return:    Signal response matrix of Earth-term
     """
+    if dirconv:
+        dc = 1.0
+    else:
+        dc = -1.0
+
+
     # Create the direction vectors. First dimension will be collapsed later
     Omega = np.array([-np.sin(gwtheta)*np.cos(gwphi), \
                       -np.sin(gwtheta)*np.sin(gwphi), \
@@ -144,13 +155,98 @@ def createSignalResponse_pol(pphi, ptheta, gwphi, gwtheta, plus=True, norm=True)
     if plus:
         # The sum over axis=0 represents an inner-product
         Fsig = 0.5 * c * (np.sum(nhat * p, axis=0)**2 - np.sum(mhat * p, axis=0)**2) / \
-                (1 + np.sum(Omega * p, axis=0))
+                (1 + dc*np.sum(Omega * p, axis=0))
     else:
         # The sum over axis=0 represents an inner-product
         Fsig = c * np.sum(mhat * p, axis=0) * np.sum(nhat * p, axis=0) / \
-                (1 + np.sum(Omega * p, axis=0))
+                (1 + dc*np.sum(Omega * p, axis=0))
 
     return Fsig
+
+
+def dip_signal_response(ptapsrs, diptheta, dipphi):
+    """
+    Create the signal response matrix (dipole signal, for ephemeris)
+    """
+    psrpos_phi = np.array([ptapsrs[ii].raj for ii in range(len(ptapsrs))])
+    psrpos_theta = np.array([np.pi/2.0 - ptapsrs[ii].decj for ii in range(len(ptapsrs))])
+
+    return dip_signalResponse_fast(psrpos_theta, psrpos_phi, diptheta, dipphi)
+
+
+def dip_signalResponse_fast(ptheta_a, pphi_a, diptheta_a, dipphi_a):
+    """
+    Create the signal response matrix FAST (dipole signal, for ephemeris)
+    """
+    npsrs = len(ptheta_a)
+
+    # Create a meshgrid for both phi and theta directions
+    dipphi, pphi = np.meshgrid(dipphi_a, pphi_a)
+    diptheta, ptheta = np.meshgrid(diptheta_a, ptheta_a)
+
+    return dip_createSignalResponse(pphi, ptheta, dipphi, diptheta)
+
+
+def dip_createSignalResponse(pphi, ptheta, dipphi, diptheta):
+    """
+    Create the signal response matrix. All parameters are assumed to be of the
+    same dimensionality. (dipole signal, for ephemeris)
+
+    @param pphi:    Phi of the pulsars
+    @param ptheta:  Theta of the pulsars
+    @param dipphi:   Phi of Dipole location
+    @param diptheta: Theta of Dipole location
+
+    @return:    Signal response matrix of Dipole
+
+    """
+    F1 = dip_createSignalResponse_pol(pphi, ptheta, dipphi, diptheta, ksi=0.0)
+    F2 = dip_createSignalResponse_pol(pphi, ptheta, dipphi, diptheta, ksi=0.5*np.pi)
+
+    F = np.zeros((F1.shape[0], 2*F1.shape[1]))
+    F[:, 0::2] = F1
+    F[:, 1::2] = F2
+
+    return F
+
+
+def dip_createSignalResponse_pol(pphi, ptheta, dipphi, diptheta, ksi=0.0, norm=True):
+    """
+    Create the signal response matrix. All parameters are assumed to be of the
+    same dimensionality.
+
+    @param pphi:    Phi of the pulsars
+    @param ptheta:  Theta of the pulsars
+    @param dipphi:   Phi of Dip location
+    @param diptheta: Theta of Dip location
+    @param ksi:    Whether this is normalized
+
+    @return:    Signal response matrix of Dipole
+    """
+    # Create the direction vectors. First dimension will be collapsed later
+    Omega = np.array([-np.sin(diptheta)*np.cos(dipphi), \
+                      -np.sin(diptheta)*np.sin(dipphi), \
+                      -np.cos(diptheta)])
+
+    mhat = np.array([-np.sin(dipphi), np.cos(dipphi), np.zeros(dipphi.shape)])
+    nhat = np.array([-np.cos(dipphi)*np.cos(diptheta), \
+                     -np.cos(diptheta)*np.sin(dipphi), \
+                     np.sin(diptheta)])
+
+    p = np.array([np.cos(pphi)*np.sin(ptheta), \
+                  np.sin(pphi)*np.sin(ptheta), \
+                  np.cos(ptheta)])
+
+    # Pixel normalization
+    npixels = Omega.shape[2]
+    c = np.sqrt(1.5) / np.sqrt(npixels)
+
+    # Now the Dipole signal
+    Fsig = np.cos(ksi) * np.sum(nhat * p, axis=0) + \
+            np.sin(ksi) * np.sum(mhat * p, axis=0)
+
+    return c*Fsig
+
 
 
 

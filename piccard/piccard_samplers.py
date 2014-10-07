@@ -1410,7 +1410,7 @@ def reconstructDM(likob, chainfile, outputdir, burnin=0, thin=1, \
     @param sampler:     What method was used to generate the mcmc chain. 
                         (auto=autodetect). Options:('emcee', 'MultiNest',
                         'ptmcmc')
-    @param dmparlist:      Which timing model parameters to include for the DM
+    @param dmparlist:   Which timing model parameters to include for the DM
                         variation reconstruction. 'DM' is omitted, because it is
                         highly covariant with pulse shape evolution.
     """

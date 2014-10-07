@@ -43,12 +43,16 @@ import os as os
 import sys
 import json
 import tempfile
+import healpy as hp
 
 from .constants import *
 from .datafile import *
 from .signals import *
 from .seplik import *
-from . import anisotropygammas as ang  # Internal module
+#from . import anisotropygammas as ang  # Internal module
+
+from AnisCoefficients_pix import CorrBasis
+
 from .triplot import *
 from .acf import *
 
@@ -692,97 +696,22 @@ class aniCorrelations(object):
 
         return corrreturn
 
-def AntennaPatternPC(rajp, decjp, raj, decj):
-    """
-    Return the x,+ polarisation antenna pattern for a given source position and
-    polsar position
-
-    @param rajp:    Right ascension pulsar
-    @param decj:    Declination pulsar
-    @param raj:     Right ascension source
-    @param dec:     Declination source
-
-    NOTE: This function is INCORRECT. Use the definitions from signals.py now
-    """
-    Omega = np.array([-np.cos(decj)*np.cos(raj), \
-                      -np.cos(decj)*np.sin(raj), \
-                      -np.sin(decj)])
-    
-    mhat = np.array([-np.sin(raj), np.cos(raj), 0])
-    nhat = np.array([-np.cos(raj)*np.sin(decj), \
-                     -np.sin(decj)*np.sin(raj), \
-                     np.cos(decj)])
-
-    p = np.array([np.cos(rajp)*np.cos(decjp), \
-                  np.sin(rajp)*np.cos(decjp), \
-                  np.sin(decjp)])
-
-    Fp = 0.5 * (np.dot(nhat, p)**2 - np.dot(mhat, p)**2) / (1 + np.dot(Omega, p))
-    Fc = np.dot(mhat, p) * np.dot(nhat, p) / (1 + np.dot(Omega, p))
-
-    return Fp, Fc
-
 
 # The GWB general anisotropic correlations in the pixel-basis
 class pixelCorrelations(object):
-    phiarr = None           # The phi pulsar position parameters
-    thetaarr = None         # The theta pulsar position parameters
-    cmat = None             # The correlation matrix
-    Fp = None               # Plus antenna pattern
-    Fc = None               # Cross antenna pattern
-    npixels = 4
+    """
+    Class that calculates the cross-pulsar correlations as generated buy an
+    anisotropically-correlated signal.
+    """
+    def __init__(self, psrs, lmax=1, nside=32, nsideprior=8):
+        npsrs = len(psrs)
+        self.lmax = lmax
+        self.phiarr = np.array([psrs[ii].raj for ii in range(npsrs)])
+        self.phiarr = np.array([0.5*np.pi-psrs[ii].decj for ii in range(npsrs)])
+        self.thetaarr = np.zeros(npsrs)
 
-    def __init__(self, psrs=None, npixels=4):
-        # If we have a pulsars object, initialise the angular quantities
-        if psrs != None:
-            self.setmatrices(psrs, npixels)
-            self.npixels = npixels
-        else:
-            self.phiarr = None           # The phi pulsar position parameters
-            self.thetaarr = None         # The theta pulsar position parameters
-            self.cmat = None
-            self.Fp = None
-            self.Fc = None
-
-    def setmatrices(self, psrs, npixels=4):
-        # First set all the pulsar positions
-        self.phiarr = np.zeros(len(psrs))
-        self.thetaarr = np.zeros(len(psrs))
-        self.cmat = np.zeros((len(psrs), len(psrs)))
-        self.Fp = np.zeros((len(psrs), npixels))
-        self.Fc = np.zeros((len(psrs), npixels))
-        self.npixels = npixels
-
-        for ii in range(len(psrs)):
-            self.phiarr[ii] = psrs[ii].raj
-            self.thetaarr[ii] = 0.5*np.pi - psrs[ii].decj
-
-    # Return the full correlation matrix that depends on the gwb direction
-    def corrmat(self, pixpars):
-        """
-        pixpars[0]: right ascension source
-        pixpars[1]: declination source
-        ... etc.
-        """
-        for ii in range(len(self.phiarr)):
-            for pp in range(self.npixels):
-                self.Fp[ii, pp], self.Fc[ii, pp] = AntennaPatternPC( \
-                        self.phiarr[ii], 0.5*np.pi - self.thetaarr[ii], \
-                        pixpars[2*pp], pixpars[1+2*pp])
-
-        for ii in range(len(self.phiarr)):
-            for jj in range(ii, len(self.phiarr)):
-                self.cmat[ii, jj] = 0.0
-                for pp in range(self.npixels):
-                    if ii == jj:
-                        self.cmat[ii, jj] += 0.5*self.Fp[ii, pp]**2 + \
-                                            0.5*self.Fc[ii, pp]**2
-                    else:
-                        self.cmat[ii, jj] += 0.5*self.Fp[ii, pp]*self.Fp[jj, pp] + \
-                                            0.5*self.Fc[ii, pp]*self.Fc[jj, pp]
-                        self.cmat[jj, ii] = self.cmat[ii, jj]
-
-        return self.cmat / self.npixels
+        self.nsideprior = nsideprior
+        self.npixprior = hp.
 
 
 
