@@ -711,7 +711,7 @@ class pixelCorrelations(object):
         self.thetaarr = np.zeros(npsrs)
 
         self.nsideprior = nsideprior
-        self.npixprior = hp.
+        self.npixprior = 0 # hp.
 
 
 
@@ -1914,7 +1914,7 @@ class ptaPulsar(object):
         # For creating the auxiliaries it does not really matter: we are now
         # creating all quantities per default
         # TODO: set this parameter in another place?
-        if twoComponent and likfunc!='mark11':
+        if twoComponent and likfunc!='mark11' and likfunc[:5]!='gibbs':
             self.twoComponentNoise = True
 
         # Before writing anything to file, we need to know right away how many
@@ -2625,7 +2625,7 @@ class ptaPulsar(object):
             # No need to write anything just yet?
             pass
 
-        if likfunc == 'gibbs' or write == 'all':
+        if likfunc[:5] == 'gibbs' or write == 'all':
             # Prepare the new design matrix bases
             self.gibbs_set_design(gibbsmodel)
 
@@ -2991,7 +2991,7 @@ class ptaPulsar(object):
             self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat'))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
 
-        if likfunc == 'gibbs':
+        if likfunc[:5] == 'gibbs':
             self.Zmat = np.array(h5df.getData(self.name, 'pic_Zmat'))
             self.tmpConv = np.array(h5df.getData(self.name, 'pic_tmpConv'))
             self.tmpConvi = np.array(h5df.getData(self.name, 'pic_tmpConvi'))
