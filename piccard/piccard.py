@@ -379,8 +379,8 @@ def hdcorrmat(ptapsrs):
     """
     npsrs = len(ptapsrs)
     
-    raj = [ptapsrs[i].raj[0] for i in range(npsrs)]
-    decj = [ptapsrs[i].decj[0] for i in range(npsrs)]
+    raj = [np.atleast_1d(ptapsrs[i].raj)[0] for i in range(npsrs)]
+    decj = [np.atleast_1d(ptapsrs[i].decj)[0] for i in range(npsrs)]
     pp = np.array([np.cos(decj)*np.cos(raj), np.cos(decj)*np.sin(raj), np.sin(decj)]).T
     cosp = np.array([[np.dot(pp[i], pp[j]) for i in range(npsrs)] for j in range(npsrs)])
     cosp[cosp > 1.0] = 1.0
