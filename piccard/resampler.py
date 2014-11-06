@@ -22,7 +22,8 @@ class GWresampler(object):
     """
     A likelihood resampler class that uses previous MCMC chains
     """
-    def __init__(self, hdmat, dirlist, burnin=0, thin=1, sampler='auto'):
+    def __init__(self, hdmat, dirlist, burnin=0, thin=1, sampler='auto', \
+            rho_prior_min=-19.0, rho_prior_max=-9.0):
         """
         This init function accepts a list of directories with MCMC chains (most
         likely from the Gibbs sampler). Crucial about the MCMC chains is that
@@ -34,6 +35,7 @@ class GWresampler(object):
         @param burnin:      How many samples to burn before using them
         @param thin:        Chain thinning length
         @param sampler:     'auto'/'ptmcmc'/'multinest'/'emcee'
+        @param rho_prior:   
         """
         self.Npsr = len(dirlist)        # Number of pulsars
         self.freqs = np.zeros(0)        # Spectrum frequencies
@@ -44,6 +46,10 @@ class GWresampler(object):
         self.l_oirho = []               # Indices in MCMC chain (spectrum)
         self.Tmax = 0.0                 # 1.0/min(freqs)
         self.hdmat = hdmat              # Hellings & Downs matrix
+
+        # Set the priors on the noise
+        self.rho_prior_min = rho_prior_min * np.ones(self.Npsr)
+        self.rho_prior_max = rho_prior_max * np.ones(self.Npsr)
 
         for ii, direc in enumerate(dirlist):
             (llf, lpf, chainf, labels, pulsarid, pulsarname, stype, mlpso, mlpsopars) = \
@@ -63,17 +69,20 @@ class GWresampler(object):
                 self.Tmax = 1.0 / np.min(self.freqs)
 
             # Check that the labels are consistent with each other so far
-            if not self.checkFreqs(np.array(labels)):
+            if not self.checkFreqs(np.array(labels), ii):
                 raise ValueError("Fmat/spectrum frequencies don't match up")
 
             # Add the rho and a chain
-            localchain_a = chainf[burnin::thin, self.l_oia[-1]]
-            localchain_rho = chainf[burnin::thin, self.l_oirho[-1]]
+            localchain_a = chainf[burnin::thin, self.l_oia[ii]]
+            localchain_rho = chainf[burnin::thin, self.l_oirho[ii]]
             self.l_chain.append(np.append(localchain_a, localchain_rho, axis=1))
 
-    def checkFreqs(self, labels):
+    def checkFreqs(self, labels, psrind):
         """
         Check whether all the provided frequencies match up
+        
+        @param labels:  List of the MCMC labels for the pulsar
+        @param psrind:  Index of the pulsar
         """
         return np.all(self.freqs == np.array(labels)[self.l_oirho[-1]].astype(np.float)) and \
                np.all(self.freqs ==np.array(labels)[self.l_oia[-1]][::2].astype(np.float)) and \
@@ -81,11 +90,12 @@ class GWresampler(object):
 
     def randomSample_indiv(self, psrind):
         """
-        Given a pulsar number, draw a random sample of a/rho from the MCMC chain
+        Given a pulsar number, draw a random sample of a/rho from the noise-only
+        MCMC chain
 
         @param psrind:  pulsar index
 
-        @return:    np.append(a, rho)
+        @return:        np.append(a, rho)
         """
         return self.l_chain[psrind][np.random.randint(0, len(self.l_chain[psrind]))]
 
@@ -98,7 +108,7 @@ class GWresampler(object):
         @param psrind:  pulsar index
         @param ifreq:   frequency index
 
-        @return:    np.append(a, rho)
+        @return:        np.append(a, rho)
         """
         return self.l_chain[psrind][np.random.randint(0, len(self.l_chain[psrind])), [2*ifreq, 2*ifreq+1, 2*self.nfreqs+ifreq]]
 
@@ -118,60 +128,92 @@ class GWresampler(object):
     def gwPSD(self, Agw, gammagw):
         """
         Given a GWB amplitude and spectral index, calculate the PSD of that GWB
+        at the frequencies of self.freqs
 
         @param Agw:     log10(GW amplitude)
         @param gammagw: GWB spectral index
 
-        @return:        PSDgwb
+        @return:        PSDgwb [s^2 / bin]  (one bin has size 1/Tmax)
         """
         freqpy = self.freqs * pic_spy
         return (10**(2*Agw) * pic_spy**3 / (12*np.pi*np.pi * self.Tmax)) * freqpy ** (-gammagw)
 
-    def transformParsFreqs_indiv(self, rho, Agw, gammagw):
+    def transformParsFreqs_indiv(self, psrind, rho, Agw, gammagw):
         """
         Given the combined noise+GW values rho for a pulsar, calculate the
         noise amplitudes with a GWB modelled by A and gamma
 
+        @param psrind:  pulsar index
         @param rho:     log10(Noise+GW) PSD values
         @param Agw:     log10(GW amplitude)
         @param gammagw: GWB spectral index
 
-        @return:        rho_new
+        @return:        rho_noise
         """
         pc_gw = self.gwPSD(Agw, gammagw)
-        if not np.all(10**rho > pc_gw):
+        if not np.all(10**rho - pc_gw > 10**self.rho_prior_min[psrind]) or \
+                not np.all(10**rho - pc_gw < 10**self.rho_prior_max[psrind]):
             raise ValueError("outofbound")
 
         return np.log10(10**rho - pc_gw)
 
-    def transformParsFreqs_freq(self, ifreq, rho, Agw, gammagw):
+    def transformParsFreqs_freq(self, psrind, ifreq, rho, Agw, gammagw):
         """
         Like transformParsFreqs_indiv, but now for a single frequency only
 
+        @param psrind:  pulsar index
         @param ifreq:   Index of frequency of the transformation
         @param rho:     log10(Noise+GW) PSD value
         @param Agw:     log10(GW amplitude)
         @param gammagw: GWB spectral index
 
-        @return:        rho_new
+        @return:        rho_noise
         """
         pc_gw = self.gwPSD(Agw, gammagw)[ifreq]
-        if not 10**rho > pc_gw:
-            raise ValueError("outofbound")
+        if not 10**rho - pc_gw > 10**self.rho_prior_min[psrind] or \
+                not 10**rho - pc_gw < 10**self.rho_prior_max[psrind]:
+            raise ValueError("Outside of prior")
 
         return np.log10(10**rho - pc_gw)
 
-    def conditionalSample_indiv(self, psrind, Agw, gammagw, decouple=True):
+    def transformJacobian_indiv(self, rho_full, rho_noise):
+        """
+        Return the transformation Jacobian: log(J) (single pulsar)
+
+        @param l_rho_full:  scalar/array of full PSD coefficients
+        @param l_rho_noise: scalar/array of noise PSD coefficients
+
+        @return:            log(|J|)
+        """
+        return np.log(10) * np.sum(np.atleast_1d(rho_full - rho_noise))
+
+    def transformJacobian(self, l_rho_full, l_rho_noise):
+        """
+        Return the transformation Jacobian: log(J)
+
+        @param rho_full:    scalar/array of full PSD coefficients
+        @param rho_noise:   scalar/array of noise PSD coefficients
+
+        @return:            log(|J|)
+        """
+        return np.sum([self.transformJacobian_indiv(l_rho_full[ii], \
+                l_rho_noise[ii]) for ii in range(len(l_rho_full))])
+
+    def conditionalSample_indiv(self, psrind, Agw, gammagw, \
+            decouple=True, usetransform=True):
         """
         Given the GWB parameters, draw a random sample of GW+noise parameters
         (rho), and transform these to our new parameterization.
 
-        @param psrind:      pulsar index
-        @param Agw:         log10(GW amplitude)
-        @param gammagw:     GWB spectral index
-        @param decouple:    Decouple frequencies True/False. Better for high S/N
+        @param psrind:          pulsar index
+        @param Agw:             log10(GW amplitude)
+        @param gammagw:         GWB spectral index
+        @param decouple:        Decouple frequencies True/False. Likely better
+                                for high S/N
+        @param usetransform:    Use a coordinate transform to high S/N noise
+                                region
 
-        @return:        np.append(a, rho_full, rho_noise)
+        @return:                np.append(a, rho_full, rho_noise)
         """
         if decouple:
             newpars = np.zeros(3*self.nfreqs)
@@ -185,14 +227,17 @@ class GWresampler(object):
                         newpars[[2*ii, 2*ii+1, 2*self.nfreqs+ii]] = \
                             self.randomSample_freq(psrind, ii)
                         newrho = newpars[2*self.nfreqs+ii]
-                        rho_noise[ii] = self.transformParsFreqs_freq(ii, newrho, Agw, gammagw)
+                        if usetransform:
+                            rho_noise[ii] = self.transformParsFreqs_freq(psrind, ii, newrho, Agw, gammagw)
+                        else:
+                            rho_noise[ii] = newrho[ii]
                         no_sample = False
                     except ValueError:
                         pass
 
                     iter += 1
                     if iter == 1000:
-                        print("Many iterations necessary for sampler!")
+                        print("Jumping outside of prior a lot!")
         else:
             no_sample = True
             iter = 0
@@ -204,7 +249,10 @@ class GWresampler(object):
                 try:
                     newpars = self.randomSample_indiv(psrind)
                     newrho = newpars[2*self.nfreqs:]
-                    rho_noise = self.transformParsFreqs_indiv(newrho, Agw, gammagw)
+                    if usetransform:
+                        rho_noise = self.transformParsFreqs_indiv(psrind, newrho, Agw, gammagw)
+                    else:
+                        rho_noise = newrho
                     no_sample = False
                 except ValueError:
                     pass
@@ -215,21 +263,24 @@ class GWresampler(object):
 
         return np.append(newpars, rho_noise)
 
-    def conditionalSample(self, Agw, gammagw, decouple=True):
+    def conditionalSample(self, Agw, gammagw, decouple=True, usetransform=True):
         """
         Given the GWB parameters, draw a random sample of GW+noise parameters
         for all pulsars, and transform these to our new parameterization
 
-        @param Agw:     log10(GW amplitude)
-        @param gammagw: GWB spectral index
-        @param decouple:    Decouple frequencies True/False. Better for high S/N
+        @param Agw:             log10(GW amplitude)
+        @param gammagw:         GWB spectral index
+        @param decouple:        Decouple frequencies True/False. Likely better
+                                for high S/N
+        @param usetransform:    Use a coordinate transform to high S/N noise
+                                region
 
-        @return:        Matrix with N_pulsar rows of [a, rho_full, rho_noise]
+        @return:                Matrix with Npsr rows [a, rho_full, rho_noise]
         """
         rv = np.zeros((self.Npsr, 4*self.nfreqs))
         for ii in range(self.Npsr):
             rv[ii,:] = self.conditionalSample_indiv(ii, Agw, gammagw, \
-                    decouple=decouple)
+                    decouple=decouple, usetransform=usetransform)
 
         return rv
 
@@ -296,20 +347,25 @@ class GWresampler(object):
 
         return rv
 
-    def loglik(self, Agw, gammagw, n=1000, decouple=True):
+    def loglik(self, Agw, gammagw, n=1, decouple=True, usetransform=True):
         """
         Given Agw and gammagw, calculate the likelihood marginalized over all
         the noise parameters by averaging over n samples.
 
-        @param Agw:     log10(GW amplitude)
-        @param gammagw: GWB spectral index
-        @param decouple:    Decouple frequencies True/False. Better for high S/N
+        @param Agw:             log10(GW amplitude)
+        @param gammagw:         GWB spectral index
+        @param n:               Number of repetitions to average over
+        @param decouple:        Decouple frequencies True/False. Likely better
+                                for high S/N
+        @param usetransform:    Use a coordinate transform to high S/N noise
+                                region
 
         @return:        Log-likelihood
         """
         rv = 0.0
         for ii in range(n):
-            newpars = self.conditionalSample(Agw, gammagw, decouple=decouple)
+            newpars = self.conditionalSample(Agw, gammagw, \
+                    decouple=decouple, usetransform=usetransform)
             l_a = newpars[:, :2*self.nfreqs]
             l_rho_full = newpars[:, 2*self.nfreqs:3*self.nfreqs]
             l_rho_noise = newpars[:, 3*self.nfreqs:]
@@ -318,5 +374,37 @@ class GWresampler(object):
             ll_full = self.loglik_full(l_a, l_rho_noise, Agw, gammagw)
 
             rv += np.exp(ll_full - ll_orig) / n
+
+            if usetransform:
+                rv += self.transformJacobian(l_rho_full, l_rho_noise) / n
+
+        return np.log(rv)
+
+    def loglik_gwonly(self, Agw, gammagw, n=1):
+        """
+        Given Agw and gammagw, calculate the likelihood for a no-noise model
+
+        @param Agw:             log10(GW amplitude)
+        @param gammagw:         GWB spectral index
+        @param n:               Number of repetitions to average over
+
+        @return:        Log-likelihood
+        """
+        rv = 0.0
+        for ii in range(n):
+            newpars = self.conditionalSample(Agw, gammagw, \
+                    decouple=False, usetransform=False)
+
+            l_a = newpars[:, :2*self.nfreqs]
+            l_rho_full = 0.0*newpars[:, 2*self.nfreqs:3*self.nfreqs] - 20.0
+            l_rho_noise = 0.0*newpars[:, 3*self.nfreqs:] - 20.0
+            #l_rho_full = newpars[:, 2*self.nfreqs:3*self.nfreqs]
+            #l_rho_noise = newpars[:, 3*self.nfreqs:]
+
+            #ll_orig = self.loglik_orig(l_a, l_rho_full)
+            ll_full = self.loglik_full(l_a, l_rho_noise, Agw, gammagw)
+
+            #rv += np.exp(ll_full - ll_orig) / n
+            rv += np.exp(ll_full) / n
 
         return np.log(rv)
