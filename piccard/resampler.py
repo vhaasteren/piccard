@@ -89,6 +89,20 @@ class GWresampler(object):
         """
         return self.l_chain[psrind][np.random.randint(0, len(self.l_chain[psrind]))]
 
+    def randomSample_freq(self, psrind, ifreq):
+        """
+        Like randomSample_indiv, but now do it for a single frequency. Using it
+        this way effectively decouples all frequencies, which might be a good
+        approximation.
+
+        @param psrind:  pulsar index
+        @param ifreq:   frequency index
+
+        @return:    np.append(a, rho)
+        """
+        return self.l_chain[psrind][np.random.randint(0, len(self.l_chain[psrind])), [2*ifreq, 2*ifreq+1, 2*self.nfreqs+ifreq]]
+
+
     def randomSample(self):
         """
         Draw a random sample of a/rho for all pulsars simultaneously
@@ -130,50 +144,92 @@ class GWresampler(object):
 
         return np.log10(10**rho - pc_gw)
 
-    def conditionalSample_indiv(self, psrind, Agw, gammagw):
+    def transformParsFreqs_freq(self, ifreq, rho, Agw, gammagw):
+        """
+        Like transformParsFreqs_indiv, but now for a single frequency only
+
+        @param ifreq:   Index of frequency of the transformation
+        @param rho:     log10(Noise+GW) PSD value
+        @param Agw:     log10(GW amplitude)
+        @param gammagw: GWB spectral index
+
+        @return:        rho_new
+        """
+        pc_gw = self.gwPSD(Agw, gammagw)[ifreq]
+        if not 10**rho > pc_gw:
+            raise ValueError("outofbound")
+
+        return np.log10(10**rho - pc_gw)
+
+    def conditionalSample_indiv(self, psrind, Agw, gammagw, decouple=True):
         """
         Given the GWB parameters, draw a random sample of GW+noise parameters
         (rho), and transform these to our new parameterization.
 
-        @param psrind:  pulsar index
-        @param Agw:     log10(GW amplitude)
-        @param gammagw: GWB spectral index
+        @param psrind:      pulsar index
+        @param Agw:         log10(GW amplitude)
+        @param gammagw:     GWB spectral index
+        @param decouple:    Decouple frequencies True/False. Better for high S/N
 
         @return:        np.append(a, rho_full, rho_noise)
         """
-        no_sample = True
-        iter = 0
-        while(no_sample and iter <= 10000):
-            # TODO: Is there any other way to do this sampling? Strong S/N seems
-            # inefficient/biased now
-            # Question: if we assume the frequencies to be not covariant, can we
-            # decouple them from the chain? Most probably not...  --- RvH
-            try:
-                newpars = self.randomSample_indiv(psrind)
-                newrho = newpars[2*self.nfreqs:]
-                rho_noise = self.transformParsFreqs_indiv(newrho, Agw, gammagw)
-                no_sample = False
-            except ValueError:
-                pass
+        if decouple:
+            newpars = np.zeros(3*self.nfreqs)
+            rho_noise = np.zeros(self.nfreqs)
 
-            if iter == 1000:
-                print("Many iterations necessary for sampler!")
+            for ii in range(self.nfreqs):
+                no_sample = True
+                iter = 0
+                while(no_sample and iter <= 10000):
+                    try:
+                        newpars[[2*ii, 2*ii+1, 2*self.nfreqs+ii]] = \
+                            self.randomSample_freq(psrind, ii)
+                        newrho = newpars[2*self.nfreqs+ii]
+                        rho_noise[ii] = self.transformParsFreqs_freq(ii, newrho, Agw, gammagw)
+                        no_sample = False
+                    except ValueError:
+                        pass
+
+                    iter += 1
+                    if iter == 1000:
+                        print("Many iterations necessary for sampler!")
+        else:
+            no_sample = True
+            iter = 0
+            while(no_sample and iter <= 10000):
+                # TODO: Is there any other way to do this sampling? Strong S/N seems
+                # inefficient/biased now
+                # Question: if we assume the frequencies to be not covariant, can we
+                # decouple them from the chain? Most probably not...  --- RvH
+                try:
+                    newpars = self.randomSample_indiv(psrind)
+                    newrho = newpars[2*self.nfreqs:]
+                    rho_noise = self.transformParsFreqs_indiv(newrho, Agw, gammagw)
+                    no_sample = False
+                except ValueError:
+                    pass
+
+                iter += 1
+                if iter == 1000:
+                    print("Many iterations necessary for sampler!")
 
         return np.append(newpars, rho_noise)
 
-    def conditionalSample(self, Agw, gammagw):
+    def conditionalSample(self, Agw, gammagw, decouple=True):
         """
         Given the GWB parameters, draw a random sample of GW+noise parameters
         for all pulsars, and transform these to our new parameterization
 
         @param Agw:     log10(GW amplitude)
         @param gammagw: GWB spectral index
+        @param decouple:    Decouple frequencies True/False. Better for high S/N
 
         @return:        Matrix with N_pulsar rows of [a, rho_full, rho_noise]
         """
         rv = np.zeros((self.Npsr, 4*self.nfreqs))
         for ii in range(self.Npsr):
-            rv[ii,:] = self.conditionalSample_indiv(ii, Agw, gammagw)
+            rv[ii,:] = self.conditionalSample_indiv(ii, Agw, gammagw, \
+                    decouple=decouple)
 
         return rv
 
@@ -236,23 +292,24 @@ class GWresampler(object):
             # Add the log-likelihood for the cosine and the sine modes
             rv += -0.5 * np.dot(a_cos, sl.cho_solve(cf, a_cos)) - \
                    0.5 * np.dot(a_sin, sl.cho_solve(cf, a_sin)) - \
-                   2*np.log(2*np.pi) - logdet
+                   2*self.Npsr*np.log(2*np.pi) - logdet
 
         return rv
 
-    def loglik(self, Agw, gammagw, n=1000):
+    def loglik(self, Agw, gammagw, n=1000, decouple=True):
         """
         Given Agw and gammagw, calculate the likelihood marginalized over all
         the noise parameters by averaging over n samples.
 
         @param Agw:     log10(GW amplitude)
         @param gammagw: GWB spectral index
+        @param decouple:    Decouple frequencies True/False. Better for high S/N
 
         @return:        Log-likelihood
         """
         rv = 0.0
         for ii in range(n):
-            newpars = self.conditionalSample(Agw, gammagw)
+            newpars = self.conditionalSample(Agw, gammagw, decouple=decouple)
             l_a = newpars[:, :2*self.nfreqs]
             l_rho_full = newpars[:, 2*self.nfreqs:3*self.nfreqs]
             l_rho_noise = newpars[:, 3*self.nfreqs:]
