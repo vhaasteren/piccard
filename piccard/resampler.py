@@ -396,15 +396,11 @@ class GWresampler(object):
                     decouple=False, usetransform=False)
 
             l_a = newpars[:, :2*self.nfreqs]
-            l_rho_full = 0.0*newpars[:, 2*self.nfreqs:3*self.nfreqs] - 20.0
-            l_rho_noise = 0.0*newpars[:, 3*self.nfreqs:] - 20.0
-            #l_rho_full = newpars[:, 2*self.nfreqs:3*self.nfreqs]
-            #l_rho_noise = newpars[:, 3*self.nfreqs:]
+            l_rho_full = newpars[:, 2*self.nfreqs:3*self.nfreqs]
+            l_rho_noise = newpars[:, 3*self.nfreqs:]
 
-            #ll_orig = self.loglik_orig(l_a, l_rho_full)
             ll_full = self.loglik_full(l_a, l_rho_noise, Agw, gammagw)
 
-            #rv += np.exp(ll_full - ll_orig) / n
             rv += np.exp(ll_full) / n
 
         return np.log(rv)
