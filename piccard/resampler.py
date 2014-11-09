@@ -46,6 +46,7 @@ class GWresampler(object):
         self.l_oirho = []               # Indices in MCMC chain (spectrum)
         self.Tmax = 0.0                 # 1.0/min(freqs)
         self.hdmat = hdmat              # Hellings & Downs matrix
+        self.have_spectrum = True       # Whether or not we have a spectrum
 
         # Set the priors on the noise
         self.rho_prior_min = rho_prior_min * np.ones(self.Npsr)
@@ -64,9 +65,14 @@ class GWresampler(object):
 
             if ii == 0:
                 # Store the frequencies
-                self.freqs = np.array(labels)[self.l_oirho[-1]].astype(np.float)
+                self.freqs = np.array(labels)[self.l_oia[ii]][::2].astype(np.float)
                 self.nfreqs = len(self.freqs)
                 self.Tmax = 1.0 / np.min(self.freqs)
+
+                if np.sum(self.l_oirho[ii]) == 0:
+                    self.have_spectrum = False
+                else:
+                    self.have_spectrum = True
 
             # Check that the labels are consistent with each other so far
             if not self.checkFreqs(np.array(labels), ii):
@@ -84,9 +90,14 @@ class GWresampler(object):
         @param labels:  List of the MCMC labels for the pulsar
         @param psrind:  Index of the pulsar
         """
-        return np.all(self.freqs == np.array(labels)[self.l_oirho[-1]].astype(np.float)) and \
-               np.all(self.freqs ==np.array(labels)[self.l_oia[-1]][::2].astype(np.float)) and \
-               np.all(self.freqs == np.array(labels)[self.l_oia[-1]][1::2].astype(np.float))
+        if self.have_spectrum:
+            spok = np.all(self.freqs == np.array(labels)[self.l_oirho[psrind]].astype(np.float))
+        else:
+            spok = True
+
+        return np.all(self.freqs == np.array(labels)[self.l_oia[psrind]][::2].astype(np.float)) and \
+                np.all(self.freqs == np.array(labels)[self.l_oia[psrind]][1::2].astype(np.float)) and \
+                spok
 
     def randomSample_indiv(self, psrind):
         """
@@ -185,7 +196,7 @@ class GWresampler(object):
 
         @return:            log(|J|)
         """
-        return np.log(10) * np.sum(np.atleast_1d(rho_full - rho_noise))
+        return np.sum(np.atleast_1d(rho_full - rho_noise)) * np.log(10)
 
     def transformJacobian(self, l_rho_full, l_rho_noise):
         """
@@ -363,6 +374,7 @@ class GWresampler(object):
         @return:        Log-likelihood
         """
         rv = 0.0
+        jc = 0.0
         for ii in range(n):
             newpars = self.conditionalSample(Agw, gammagw, \
                     decouple=decouple, usetransform=usetransform)
@@ -376,11 +388,11 @@ class GWresampler(object):
             rv += np.exp(ll_full - ll_orig) / n
 
             if usetransform:
-                rv += self.transformJacobian(l_rho_full, l_rho_noise) / n
+                jc += np.exp(self.transformJacobian(l_rho_full, l_rho_noise)) / n
 
-        return np.log(rv)
+        return np.log(rv) + np.log(jc)
 
-    def loglik_gwonly(self, Agw, gammagw, n=1):
+    def loglik_gwonly(self, Agw, gammagw):
         """
         Given Agw and gammagw, calculate the likelihood for a no-noise model
 
@@ -391,16 +403,11 @@ class GWresampler(object):
         @return:        Log-likelihood
         """
         rv = 0.0
-        for ii in range(n):
-            newpars = self.conditionalSample(Agw, gammagw, \
-                    decouple=False, usetransform=False)
+        newpars = self.conditionalSample(Agw, gammagw, \
+                decouple=False, usetransform=False)
 
-            l_a = newpars[:, :2*self.nfreqs]
-            l_rho_full = newpars[:, 2*self.nfreqs:3*self.nfreqs]
-            l_rho_noise = newpars[:, 3*self.nfreqs:]
+        l_a = newpars[:, :2*self.nfreqs]
+        l_rho_full = 0*newpars[:, 2*self.nfreqs:3*self.nfreqs] - 20
+        l_rho_noise = 0*newpars[:, 3*self.nfreqs:] - 20
 
-            ll_full = self.loglik_full(l_a, l_rho_noise, Agw, gammagw)
-
-            rv += np.exp(ll_full) / n
-
-        return np.log(rv)
+        return self.loglik_full(l_a, l_rho_noise, Agw, gammagw)
