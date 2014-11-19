@@ -3962,8 +3962,8 @@ class ptaLikelihood(object):
             varyEfac=True, incEquad=False, \
             separateCEquads=False, separateEquads=False, \
             separateEfacs=False, \
-            incCEquad=False, \
-            incJitter=False, \
+            incCEquad=False, expandCEquad=False, \
+            incJitter=False, expandJitter=False, \
             incSingleFreqNoise=False, \
                                         # True
             singlePulsarMultipleFreqNoise=None, \
@@ -4082,7 +4082,9 @@ class ptaLikelihood(object):
                     signals.append(newsignal)
 
             if incCEquad or incJitter:
-                if not 'jitter' in gibbsmodel:
+                if not 'jitter' in gibbsmodel and \
+                        not (expandJitter or expandCEquad):
+                    # We are expanding the Jitter/CEquad in the Gibbs sampler
                     gibbsmodel.append('jitter')
                 if separateCEquads:
                     for flagval in uflagvals:

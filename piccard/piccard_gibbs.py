@@ -377,25 +377,11 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+###############################################################################
+###############################################################################
+########## Below here, it is all concerned with mark1 Gibbs sampler ###########
+###############################################################################
+###############################################################################
 
 
 
@@ -2542,130 +2528,6 @@ def gibbsQuantities(likob, parameters):
 
     if likob.haveDetSources:
         likob.updateDetSources(parameters)
-
-
-def MLGibbs(likob, chainsdir, tol=1.0e-3, noWrite=False):
-    """
-    Run an iterative maximizer, utilising the blocked Gibbs likelihood
-    representation, that iteratively uses analytic expressions and a Particle
-    Swarm Optimiser.
-
-    @param likob:       The likelihood object, containing everything
-    @param chainsdir:   Where to save the MCMC chain
-    @param tol:         Fractional tolerance in parameters / stopping criterion
-    @param noWrite:     If True, do not write results to file
-    """
-    if not likob.likfunc in ['gibbs']:
-        raise ValueError("Likelihood not initialised for Gibbs sampling")
-
-    if not noWrite:
-        mlfilename = chainsdir + '/pso.txt'
-
-    raise RuntimeError("THIS FUNCTION IS NOT UP TO DATE: MLGibbs")
-
-    # Save the description of all the parameters
-    likob.saveModelParameters(chainsdir + '/ptparameters.txt')
-
-    ndim = likob.dimensions         # The non-Gibbs model parameters
-    ncoeffs = np.sum(likob.npz)     # The Gibbs-only parameters/coefficients
-    pars = likob.pstart.copy()      # The Gibbs
-
-    # Make a list of all the blocked signal samplers (except for the coefficient
-    # samplers)
-    loglik_N = gibbs_prepare_loglik_N(likob, pars)
-    loglik_J = gibbs_prepare_loglik_J(likob, pars)
-    loglik_Det = gibbs_prepare_loglik_Det(likob, pars)
-
-    if not 'corrim' in likob.gibbsmodel:
-        loglik_PSD = gibbs_prepare_loglik_Phi(likob, pars)
-        loglik_corrPSD = gibbs_prepare_loglik_corrPhi(likob, pars)
-        loglik_imPSD = []
-    else:
-        loglik_PSD = []
-        loglik_corrPSD = []
-        loglik_imPSD = gibbs_prepare_loglik_imPhi(likob, pars)
-
-    # The gibbs coefficients will be set by gibbs_sample_a
-    a = None
-
-    mlpars = (1 + 10*tol) * pars
-    fullml = np.zeros(ndim + ncoeffs)
-
-    # Keep track of iterations
-    iter = 0
-
-    while not np.all( (mlpars - pars) / pars < tol):
-        # Not converged yet
-        mlpars = pars.copy()
-        doneIteration = False
-
-        # At iteration:
-        iter += 1
-        sys.stdout.write('\rParticle Swarm Optimise iteration: {0}  (max = {1})'.\
-                        format(iter, np.max(mlpars - pars)/pars))
-        sys.stdout.flush()
-
-        # Calculate the required likelihood quantities
-        gibbsQuantities(likob, pars)
-
-        # If necessary, invert the correlation matrix Svec & Scor with Ffreqs_gw
-        # and Fmat_gw
-        if 'correx' in likob.gibbsmodel:
-            gibbs_prepare_correlations(likob)
-
-        while not doneIteration:
-            try:
-                # Generate new coefficients
-                a = gibbs_sample_a(likob, a, ml=True)
-
-                fullml[ndim:] = np.hstack(a)
-
-                doneIteration = True
-
-            except np.linalg.LinAlgError:
-                # Why does SVD sometimes not converge?
-                # Try different values...
-                iter += 1
-
-                if iter > 100:
-                    print "WARNING: numpy.linalg problems"
-
-            # Generate new white noise parameers
-            pars = gibbs_sample_loglik_N(likob, pars, loglik_N, ml=True)
-
-            # Generate new red noise parameters
-            pars = gibbs_sample_loglik_Phi(likob, a, pars, loglik_PSD, ml=True)
-
-            # Generate new correlated equad/jitter parameters
-            pars = gibbs_sample_loglik_J(likob, a, pars, loglik_J, ml=True)
-
-            # If we have 'm, sample from the deterministic sources
-            pars = gibbs_sample_loglik_Det(likob, pars, loglik_Det, ml=True)
-
-            pars = gibbs_sample_loglik_imPhi(likob, a, pars, loglik_imPSD, ml=True)
-
-            if 'correx' in likob.gibbsmodel and likob.have_gibbs_corr:
-                # Generate new GWB parameters
-                pars = gibbs_sample_loglik_corrPhi(likob, a, pars, loglik_corrPSD, ml=True)
-
-        fullml[:ndim] = pars
-
-    # Great, found a ML value!
-    sys.stdout.write("PSO maximum found!\n")
-
-    # Open the file in append mode
-    if not noWrite:
-        mlfile = open(mlfilename, 'w')
-
-        mlfile.write('\t'.join(["%.17e"%\
-                (fullml[kk]) for kk in range(ndim+ncoeffs)]))
-        mlfile.write('\n')
-        mlfile.close()
-
-    return fullml
-
-
-
 
 
 
