@@ -8,7 +8,7 @@ import os as os
 import glob
 import sys
 
-from .piccard import *
+from piccard import *
 
 
 

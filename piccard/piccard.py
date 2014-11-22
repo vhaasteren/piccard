@@ -45,16 +45,16 @@ import json
 import tempfile
 import healpy as hp
 
-from .constants import *
-from .datafile import *
-from .signals import *
-from .seplik import *
+from constants import *
+from datafile import *
+from signals import *
+from seplik import *
 #from . import anisotropygammas as ang  # Internal module
 
 from AnisCoefficients_pix import CorrBasis
 
-from .triplot import *
-from .acf import *
+from triplot import *
+from acf import *
 
 try:    # If without libstempo, can still read hdf5 files
     import libstempo

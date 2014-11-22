@@ -38,7 +38,7 @@ import sys
 import json
 import tempfile
 
-from .constants import *
+from constants import *
 
 
 try:    # If without libstempo, can still read hdf5 files

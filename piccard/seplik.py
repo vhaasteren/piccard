@@ -25,8 +25,8 @@ import sys
 import json
 import tempfile
 
-from .constants import *
-from .datafile import *
+from constants import *
+from datafile import *
 
 
 class sepLikelihood(object):

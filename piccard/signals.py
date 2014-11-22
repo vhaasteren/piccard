@@ -32,7 +32,7 @@ try:
 except:
     hp = None
 
-from .constants import *
+from constants import *
 
 
 

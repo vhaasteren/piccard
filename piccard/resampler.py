@@ -15,8 +15,8 @@ import os as os
 import glob
 import sys
 
-from .piccard import *
-from .piccard_samplers import *
+from piccard import *
+from piccard_samplers import *
 
 class GWresampler(object):
     """

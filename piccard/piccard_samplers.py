@@ -11,12 +11,12 @@ import sys
 import json
 import tempfile
 
-from .piccard import *
-from . import pytwalk                  # Internal module
-from . import pydnest                  # Internal module
-from . import rjmcmchammer as rjemcee  # Internal module
-from . import PTMCMC_generic as ptmcmc
-from .triplot import *
+from piccard import *
+import pytwalk                  # Internal module
+import pydnest                  # Internal module
+import rjmcmchammer as rjemcee  # Internal module
+import PTMCMC_generic as ptmcmc
+from triplot import *
 
 try:
     import statsmodels.api as smapi

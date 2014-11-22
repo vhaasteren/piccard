@@ -1,13 +1,16 @@
 import os
 import sys
-import piccard
+#import piccard
+import numpy
 
 try:
     from setuptools import setup
-    setup
+    from setuptools import Extension
 except ImportError:
     from distutils.core import setup
-    setup
+    from distutils.extension import Extension
+
+from Cython.Build import cythonize
 
 
 if sys.argv[-1] == "publish":
@@ -17,7 +20,7 @@ if sys.argv[-1] == "publish":
 
 setup(
     name="piccard",
-    version=piccard.__version__,
+    version='2014.11',
     author="Rutger van Haasteren",
     author_email="vhaasteren@gmail.com",
     packages=["piccard"],
@@ -39,4 +42,6 @@ setup(
         "Operating System :: OS Independent",
         "Programming Language :: Python",
     ],
+    ext_modules = cythonize(Extension('piccard.jitter_extension', ['piccard/jitter_extension.pyx'],
+            include_dirs = [numpy.get_include()]))
 )
