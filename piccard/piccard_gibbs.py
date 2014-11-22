@@ -8,14 +8,16 @@ import os as os
 import glob
 import sys
 
-from .piccard import *
-from .piccard_pso import *
-from . import PTMCMC_generic as ptmcmc
+from piccard import *
+from piccard_pso import *
+from jitter_extension import *
+import PTMCMC_generic as ptmcmc
 
 
 """
 This file implements a blocked Gibbs sampler. Gibbs sampling is a special case
-of Metropolis-Hastings, and in Pulsar Timing data analysis it can be used to
+implements a specific type of jump, just like all the other MCMC jumps (e.g.
+Metropolis-Hastings), and in Pulsar Timing data analysis it can be used to
 increase the mixing rate of the chain. We still use the PAL/PAL2 version of
 PTMCMC_generic to do the actual MCMC steps, but the steps are performed in
 parameter blocks.
@@ -803,6 +805,201 @@ class pulsarNoiseLL(object):
             raise ValueError("dimensions not set correctly")
 
         return len(self.vNvec)
+
+
+class pulsarJNoiseLL(object):
+    """
+    This class represents the likelihood function in the block with
+    white-noise-only parameters.
+    """
+
+    def __init__(self, residuals, psrindex, maskJvec=None):
+        """
+        @param residuals:   Initialise the residuals we'll work with
+        @param psrindex:    Index of the pulsar this noise applies to
+        @param maskJvec:    Selection mask of the jitter Jvec
+        """
+        # TODO: change vis_efac/fis_efac to an ID, with the values
+        #       0 (efac), 1 (equad), 2 (cequad/jitter)
+        #       change is_efac to which='efac'/'equad'/'cequad'or'jitter'
+        self.vNvec = []                             # Mask residuals (varying)
+        self.fNvec = []                             # Mask residuals (fixed)
+        #self.vis_efac = []                          # Is it an efac? (varying)
+        #self.fis_efac = []                          # Is it an equad (fixed)
+        self.vsig_id = []                           # Type of signal
+        self.fsig_id = []                           # Type of signal
+
+        self.residuals = residuals                  # The residuals
+        self.Nvec = np.zeros(len(residuals))        # Full noise vector
+        self.pmin = np.zeros(0)                     # Minimum of prior domain
+        self.pmax = np.zeros(0)                     # Maximum of prior domain
+        self.pstart = np.zeros(0)                   # Start position
+        self.pwidth = np.zeros(0)                   # Initial step-size
+        self.fval = np.zeros(0)                     # Current value (non-varying)
+        self.pindex = np.zeros(0, dtype=np.int)     # Index of parameters
+
+        self.psrindex = psrindex                    # Inde xof pulsar
+        self.maskJvec = maskJvec                    # Selection mask Jvec
+
+        self.sampler = None                         # The PTMCMC sampler
+        self.singleChain = None     # How a long a ginle run is
+        self.fullChain = None       # Maximum of total chain
+        self.curStep = 0            # Current iteration
+        self.covUpdate = 400        # Number of iterations between AM covariance
+                                    # updates
+
+
+    def addSignal(self, Nvec, which, pmin, pmax, pstart, pwidth, index, \
+            fixed=False):
+        """
+        Add a efac/equad signal to this model
+        @param Nvec:    To which residuals does this signal apply?
+                        ex: (0, 0, toaerr**2, toaerr**2, 0, 0, 0)
+        @param which:   'efac'/'equad'/'jitter'or'cequad'
+        @param pmin:    Minimum of the prior domain
+        @param pmax:    Maximum of the prior domain
+        @param fixed:   Whether or not we vary this parameter
+        """
+        if not fixed:
+            self.vNvec.append(Nvec)
+            self.vis_efac.append(is_efac)
+            self.pmin = np.append(self.pmin, [pmin])
+            self.pmax = np.append(self.pmax, [pmax])
+            self.pstart = np.append(self.pstart, [pstart])
+            self.pwidth = np.append(self.pwidth, [pwidth])
+            self.pindex = np.append(self.pindex, index)
+        else:
+            self.fNvec.append(Nvec)
+            self.fis_efac.append(is_efac)
+            self.fval = np.append(self.fval, pstart)
+
+    def initSampler(self, singleChain=20, fullChain=20000, covUpdate=400):
+        """
+        Initialise the PTMCMC sampler for future repeated use
+
+        @param singleChain:     Lenth of a single small MCMC chain
+        @param fullChain:       Lenth of full chain that is used for
+                                cov-estimates
+        @param covUpdate:       Number of iterations before cov updates
+                                (should be multiple of singleChain)
+        """
+        ndim = self.dimensions()
+        cov = np.diag(self.pwidth**2)
+        self.sampler = ptmcmc.PTSampler(ndim, self.loglikelihood, \
+                self.logprior, cov=cov, outDir='./gibbs-chains/', \
+                verbose=False, nowrite=True)
+
+        self.singleChain = singleChain
+        self.fullChain = fullChain
+        self.curStep = 0
+        self.covUpdate = covUpdate
+
+    def runSampler(self, p0):
+        """
+        Run the MCMC sampler, starting from position p0, for self.singleChain
+        steps. Note: the covariance update length is also used as a length for
+        the differential evolution burn-in. There is no chain-thinning
+
+        @param p0:  Current value in parameter space
+
+        @return:    New/latest value in parameter space
+        """
+
+        # Run the sampler for a small minichain
+        self.sampler.sample(p0, self.curStep+self.singleChain, \
+                maxIter=self.fullChain, covUpdate=self.covUpdate, \
+                burn=self.covUpdate, i0=self.curStep, thin=1)
+
+        self.curStep += self.singleChain
+        retPos = self.sampler._chain[self.curStep-1, :].copy()
+
+        # Subtract the mean off of the just-created samples. And because
+        # covUpdate is supposed to be a multiple of singleChain, this will not
+        # mess up the Adaptive Metropolis shizzle
+        self.sampler._chain[self.curStep-self.singleChain:self.curStep, :] = \
+                self.sampler._chain[self.curStep-self.singleChain:self.curStep, :] - \
+                np.mean(self.sampler._chain[self.curStep-self.singleChain:self.curStep, :])
+
+        # Check whether we're almost at the end of the chain
+        if self.fullChain - self.curStep <= self.covUpdate:
+            midStep = int(self.fullChain / 2)
+
+            # Copy the end half of the chain to the beginning
+            self.sampler._lnprob[:self.curStep-midStep] = \
+                    self.sampler._lnprob[midStep:self.curStep]
+            self.sampler._lnlike[:self.curStep-midStep] = \
+                    self.sampler._lnlike[midStep:self.curStep]
+            self.sampler._chain[:self.curStep-midStep, :] = \
+                    self.sampler._chain[midStep:self.curStep, :]
+            self.sampler._AMbuffer[:self.curStep-midStep, :] = \
+                    self.sampler._AMbuffer[midStep:self.curStep, :]
+            self.sampler._DEbuffer = self.sampler._AMbuffer[0:self.covUpdate]
+
+            # We are now at half the chain-length again
+            self.curStep = self.curStep - midStep
+
+        return retPos
+
+    def runPSO(self):
+        """
+        Run a particle swarm optimiser on the posterior, and return the optimum
+        """
+        ndim = self.dimensions()
+        nparticles = int(ndim**2/2) + 5*ndim
+        maxiterations = 500
+
+        swarm = Swarm(nparticles, self.pmin, self.pmax, self.logposterior)
+
+        for ii in range(maxiterations):
+            swarm.iterateOnce()
+
+            if np.all(swarm.Rhat() < 1.02):
+                # Convergence critirion satisfied!
+                # print "N converged in {0}".format(ii)
+                break
+
+        return swarm.bestx
+
+    def setNewData(self, residuals):
+        self.residuals = residuals
+
+    def loglikelihood(self, parameters):
+        """
+        @param parameters:  the vector with model parameters
+        """
+        self.Nvec[:] = 0
+        for ii, par in enumerate(parameters):
+            if self.vis_efac[ii]:
+                self.Nvec += par**2 * self.vNvec[ii]
+            else:
+                self.Nvec += 10**(2*par) * self.vNvec[ii]
+
+        for ii, par in enumerate(self.fval):
+            if self.fis_efac[ii]:
+                self.Nvec += par**2 * self.fNvec[ii]
+            else:
+                self.Nvec += 10**(2*par) * self.fNvec[ii]
+
+        return -0.5 * np.sum(self.residuals**2 / self.Nvec) - \
+                0.5 * np.sum(np.log(self.Nvec))
+
+    def logprior(self, parameters):
+        bok = -np.inf
+        #bok = -1e99
+        if np.all(self.pmin <= parameters) and np.all(parameters <= self.pmax):
+            bok = 0
+
+        return bok
+
+    def logposterior(self, parameters):
+        return self.logprior(parameters) + self.loglikelihood(parameters)
+
+    def dimensions(self):
+        if len(self.vNvec) != len(self.vis_efac):
+            raise ValueError("dimensions not set correctly")
+
+        return len(self.vNvec)
+
 
 
 class pulsarPSDLL(object):
@@ -2790,3 +2987,26 @@ def RunGibbs_mark1(likob, steps, chainsdir, noWrite=False):
 
     sys.stdout.write("\n")
 
+def quantize_fast(times,dt=1):
+    """ From libstempo: produce the quantisation matrix fast """
+    N = np
+
+    isort = N.argsort(times)
+    
+    bucket_ref = [times[isort[0]]]
+    bucket_ind = [[isort[0]]]
+    
+    for i in isort[1:]:
+        if times[i] - bucket_ref[-1] < dt:
+            bucket_ind[-1].append(i)
+        else:
+            bucket_ref.append(times[i])
+            bucket_ind.append([i])
+    
+    t = N.array([N.mean(times[l]) for l in bucket_ind],'d')
+    
+    U = N.zeros((len(times),len(bucket_ind)),'d')
+    for i,l in enumerate(bucket_ind):
+        U[l,i] = 1
+    
+    return t, U
