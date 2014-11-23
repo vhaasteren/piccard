@@ -10,7 +10,7 @@ import sys
 
 from piccard import *
 from piccard_pso import *
-from jitter_extension import *
+from jitterext import *
 import PTMCMC_generic as ptmcmc
 
 

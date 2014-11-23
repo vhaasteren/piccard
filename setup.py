@@ -42,6 +42,6 @@ setup(
         "Operating System :: OS Independent",
         "Programming Language :: Python",
     ],
-    ext_modules = cythonize(Extension('piccard.jitter_extension', ['piccard/jitter_extension.pyx'],
+    ext_modules = cythonize(Extension('piccard.jitterext', ['piccard/jitterext.pyx'],
             include_dirs = [numpy.get_include()]))
 )
