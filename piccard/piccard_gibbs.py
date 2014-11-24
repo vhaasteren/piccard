@@ -222,8 +222,9 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
 
                 likob.setSinglePsrNoise(apars[:ndim], pp=ii)
 
+            ##################################################################
             # We should not be saving the whole chain here, but that's for later !!!!!!!!!!!!!!!!!!!
-            # concern
+            ##################################################################
 
             if 'dm' in likob.gibbsmodel and sampler_D[ii] is not None:
                 sampler = sampler_D[ii]
@@ -860,6 +861,9 @@ class pulsarJNoiseLL(object):
         @param pmax:    Maximum of the prior domain
         @param fixed:   Whether or not we vary this parameter
         """
+        ################ CONTINUE HERE ##################
+        ################ CONTINUE HERE ##################
+        ################ CONTINUE HERE ##################
         if not fixed:
             self.vNvec.append(Nvec)
             self.vis_efac.append(is_efac)
