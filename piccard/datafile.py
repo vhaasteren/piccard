@@ -483,7 +483,7 @@ class DataFile(object):
     TODO: The HDF5 file is opened and closed every call of 'getData'. That seems
           kind of inefficient
     """
-    def readPulsar(self, psr, psrname):
+    def readPulsar(self, psr, psrname, sorting='jitterext'):
         psr.name = psrname
 
         # Read the content of the par/tim files in a string
@@ -520,4 +520,3 @@ class DataFile(object):
 
         # We do not read the (co)G-matrix anymore here. Happens when
         # initialising the model
-

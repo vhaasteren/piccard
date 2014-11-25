@@ -19,6 +19,7 @@ def block_shermor_inv(r, Nvec, Jvec, select):
     Nir = np.zeros(len(r))
     Jldet = 0.0
     xNx = 0.0
+    Umat = np.zeros(10, 10)
     
     nobs = Umat.shape[0]
     nbs = Umat.shape[1]
