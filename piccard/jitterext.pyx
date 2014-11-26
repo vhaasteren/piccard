@@ -10,36 +10,28 @@ def block_shermor_inv(r, Nvec, Jvec, select):
     @param r:       The timing residuals, array (n)
     @param Nvec:    The white noise amplitude, array (n)
     @param Jvec:    The jitter amplitude, array (k)
-    @param select:  The start/finish indices for the jitter blocks (k x l x 2)
+    @param select:  The start/finish indices for the jitter blocks (k x 2)
 
     For this version, the residuals need to be sorted properly so that all the
-    blocks are continuous in memory. Here, there are n residuals, k jitter
-    parameters, and (maximally) l blocks per jitter parameter.
+    blocks are continuous in memory. Here, there are n residuals, and k jitter
+    parameters.
     """
     Nir = np.zeros(len(r))
-    Jldet = 0.0
-    xNx = 0.0
-    Umat = np.zeros(10, 10)
-    
-    nobs = Umat.shape[0]
-    nbs = Umat.shape[1]
-    nbl = nobs / nbs
-    
-    for cc, col in enumerate(Umat.T):
-        #u = (col == 1.0)
-        Nblock = Nvec[cc*nbl:cc*(nbl+1)]
-        rblock = r[cc*nbl:cc*(nbl+1)]
-        
-        ji = 1.0 / Jvec[cc]
-        ni = 1.0 / Nblock
-        beta = 1.0 / (np.sum(ni) + ji)
+    nepochs = len(Jvec)
 
-        #xNx += np.sum(rblock**2 / Nblock) - beta*np.sum(rblock*Nblock)**2
-        xNx += np.dot(rblock, rblock * ni) - beta * np.dot(rblock, ni)**2
-        
-        #Jldet += np.sum(np.log(Nblock)) + np.log(Jvec[cc]) - np.log(beta)
-        Jldet += np.einsum('i->', np.log(Nblock)) + np.log(Jvec[cc]) - np.log(beta)
-        
+    ni = 1.0 / Nvec
+    ji = 1.0 / Jvec
+    Jldet = np.einsum('i->', np.log(Nvec))
+    xNx = np.dot(r, r * ni)
+
+    for cc in range(nepochs):
+        rblock = r[select[cc,0]:select[cc,1]]
+        niblock = ni[select[cc,0]:select[cc,1]]
+
+        beta = 1.0 / (np.einsum('i->', niblock)+ji[cc])
+        xNx -= beta * np.dot(rblock, niblock)**2
+        Jldet += np.log(Jvec[cc]) - np.log(beta)
+
     return Jldet, xNx
 
 

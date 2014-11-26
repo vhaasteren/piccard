@@ -72,144 +72,15 @@ try:
 except ImportError:
     OrderedDict = dict
 
-
-"""
-Basic implementation of the model/likelihood. Most of the likelihood functions
-use models as outlined in Lentati et al. (2013).
-
-mark1loglikelihood: The red noise Fourier modes are included numerically. Larger
-dimensional space, but quicker evaluation. At his point, the inversion of the
-Phi matrix is only fast if phi is diagonal.
-
-mark2loglikelihood: only efac + equad signals
-
-mark3loglikelihood: analytically integrated over the red noise Fourier modes. DM
-variations are projected on these modes, which is very suboptimal. Do not use
-with DM variations. The Phi matrix inversion is not optimised per frequency. At
-least one red signal must be included for each pulsar
-
-mark6loglikelihood: analytically integrated over the red noise
-Fourier modes, and the DM variation Fourier modes. The integration is done
-simultaneously. Makes for a larger Phi matrix.
-
-mark7loglikelihood: like mark3loglikelihood, but allows for RJMCMC Fourier mode
-selection
-
-mark8loglikelihood: like mark6loglikelihood, but allows for RJMCMC Fourier mode
-selection
-
-mark9loglikelihood: like mark3loglikelihood, but allows for an extra noise
-source, which models a single frequency-source with a variable frequency and
-amplitude
-"""
 class ptaPulsar(object):
-    parfile_content = None      # The actual content of the original par-file
-    timfile_content = None      # The actual content of the original tim-file
-    t2psr = None                # A libstempo object, if libstempo is imported
-
-    raj = 0
-    decj = 0
-    toas = None
-    toaerrs = None
-    prefitresiduals = None
-    residuals = None
-    detresiduals = None         # Residuals after subtraction of deterministic sources
-    gibbsresiduals = None       # Residuals used in Gibbs sampling  (QUESTION: why no parameter?)
-    gibbscoefficients = None    # Coefficients used in Gibbs sampling  (QUESTION: why no parameter?)
-    freqs = None
-    Gmat = None
-    Gcmat = None
-    Mmat = None
-    ptmpars = []
-    ptmparerrs = []
-    ptmdescription = []
-    flags = None
-    name = "J0000+0000"
-    Tmax = None
-
-    # Design matrix indices for different Gibbs conditionals
-    Mmat_g = None
-    Mmask_F = None
-    Mmask_D = None
-    Mmask_U = None
-
-    # The auxiliary quantities
-    Fmat = None
-    SFmat = None            # Fmatrix for the frequency lines
-    FFmat = None            # Total of Fmat and SFmat
-    Fdmmat = None
-    Hmat = None             # The compression matrix
-    Homat = None            # The orthogonal-to compression matrix
-    Hcmat = None            # The co-compression matrix
-    Hocmat = None           # The orthogonal co-compression matrix
-    Umat = None
-    Uimat = None
-    avetoas = None          
-    SFdmmat = None         # Fdmmatrix for the dm frequency lines
-    #FFdmmat = None         # Total of SFdmmatrix and Fdmmat
-    #Dmat = None
-    Dvec = None
-    DF = None
-    DSF = None
-    DFF = None              # Total of DF and DSF
-    Ffreqs = None       # Frequencies of the red noise
-    SFfreqs = None      # Single modelled frequencies
-    SFdmfreqs = None
-    frequencyLinesAdded = 0      # Whether we have > 1 single frequency line
-    dmfrequencyLinesAdded = 0      # Whether we have > 1 single frequency line
-    Fdmfreqs = None
-    Emat = None
-    EEmat = None
-    Zmat = None         # For the Gibbs sampling, this is the Fmat/Emat
-    Zmat_M = None       # For the Gibbs sampling, this is the Fmat/Emat
-    Zmat_F = None       # For the Gibbs sampling, this is the Fmat/Emat
-    Zmat_D = None
-    Zmat_U = None
-    Zmask_F = None      # Which columns of the full Zmat are in Zmat_F
-    Zmask_D = None
-    Zmask_U = None
-    Zmask_M = None
-    Gr = None
-    GGr = None
-    GtF = None
-    GtD = None
-    GtU = None
-    #GGtD = None
-    AGr = None      # Replaces GGr in 2-component noise model
-    AoGr = None     #   Same but for orthogonal basis (when compressing)
-    AGF = None      # Replaces GGtF in 2-component noise model
-    #AoGF = None     #   Same but for orthogonal basis (when compressing)
-    AGD = None      # Replaces GGtD in 2-component noise model
-    #AoGD = None     #   Same but for orthogonal basis (when compressing)
-    AGE = None      # Replaces GGtE in 2-component noise model
-    #AoGE = None     #   Same but for orthogonal basis (when compressing)
-    AGU = None      # Replace GGtU in 2-component noise model
-    #AoGU = None     #   Same .... you got it
-
-    # Auxiliaries used in the likelihood
-    twoComponentNoise = False       # Whether we use the 2-component noise model
-    Nvec = None             # The total white noise (eq^2 + ef^2*err)
-    Wvec = None             # The weights in 2-component noise
-    Wovec = None            # The weights in 2-component orthogonal noise
-    Nwvec = None            # Total noise in 2-component basis (eq^2 + ef^2*Wvec)
-    Nwovec = None           # Total noise in 2-component orthogonal basis
-    Jweight = None          # The weight of the jitter noise in compressed basis
-    Jvec = None
-
-    # To select the number of Frequency modes
-    bfinc = None        # Number of modes of all internal matrices
-    bfdminc = None      # Number of modes of all internal matrices (DM)
-    bcurfinc = None     # Current number of modes in RJMCMC
-    bcurfdminc = None   # Current number of modes in RJMCMC
-
-    # Indices for when we are in mark11
-    fourierind = None
-    dmfourierind = None
-    jitterfourierind = None
+    """
+    Pulsar class. Keeps track of all the per-pulsar quantities, allows for
+    reading/writing HDF5 files, and creates auxiliary quantities.
+    """
 
     def __init__(self):
-        self.parfile_content = None
-        self.timfile_content = None
+        self.parfile_content = None      # The actual content of the original par-file
+        self.timfile_content = None      # The actual content of the original tim-file
         self.t2psr = None
 
         self.raj = 0
@@ -218,7 +89,9 @@ class ptaPulsar(object):
         self.toaerrs = None
         self.prefitresiduals = None
         self.residuals = None
-        self.detresiduals = None     # Residuals after subtraction of deterministic sources
+        self.detresiduals = None        # Residuals after subtraction of deterministic sources
+        self.gibbsresiduals = None      # Residuals used in Gibbs sampling  (QUESTION: why no parameter?)
+        self.gibbscoefficients = None   # Coefficients used in Gibbs sampling  (QUESTION: why no parameter?)
         self.freqs = None
         self.Gmat = None
         self.Gcmat = None
@@ -230,22 +103,38 @@ class ptaPulsar(object):
         self.name = "J0000+0000"
         self.Tmax = None
 
+        self.isort = slice(None, None, None)        # Slice map: hdf5file -> psr
+        self.iisort = slice(None, None, None)       # Slice map: psr -> hdf5file
+
+        # Design matrix indices for different Gibbs conditionals
+        self.Mmat_g = None
+        self.Mmask_F = None
+        self.Mmask_D = None
+        self.Mmask_U = None
+
+        # The auxiliary quantities
         self.Fmat = None
-        self.SFmat = None
-        self.FFmat = None
+        self.SFmat = None            # Fmatrix for the frequency lines
+        self.FFmat = None            # Total of Fmat and SFmat
         self.Fdmmat = None
-        self.Hmat = None
-        self.Homat = None
-        self.Hcmat = None
-        self.Hocmat = None
+        self.Hmat = None             # The compression matrix
+        self.Homat = None            # The orthogonal-to compression matrix
+        self.Hcmat = None            # The co-compression matrix
+        self.Hocmat = None           # The orthogonal co-compression matrix
         self.Umat = None
         self.Uimat = None
         self.avetoas = None
+        self.SFdmmat = None         # Fdmmatrix for the dm frequency lines
         #self.Dmat = None
         self.Dvec = None
         self.DF = None
-        self.Ffreqs = None
-        self.SFfreqs = None
+        self.DSF = None
+        self.DFF = None              # Total of DF and DSF
+        self.Ffreqs = None          # Frequencies of the red noise
+        self.SFfreqs = None      # Single modelled frequencies
+        self.SFdmfreqs = None
+        self.frequencyLinesAdded = 0      # Whether we have > 1 single frequency line
+        self.dmfrequencyLinesAdded = 0      # Whether we have > 1 single frequency line
         self.Fdmfreqs = None
         self.Emat = None
         self.EEmat = None
@@ -256,25 +145,105 @@ class ptaPulsar(object):
         #self.GGtFF = None
         #self.GGtD = None
 
-        self.bfinc = None
-        self.bfdminc = None
-        self.bprevfinc = None
-        self.bprevfdminc = None
+        self.Zmat = None         # For the Gibbs sampling, this is the Fmat/Emat
+        self.Zmat_M = None       # For the Gibbs sampling, this is the Fmat/Emat
+        self.Zmat_F = None       # For the Gibbs sampling, this is the Fmat/Emat
+        self.Zmat_D = None
+        self.Zmat_U = None
+        self.Zmask_F = None      # Which columns of the full Zmat are in Zmat_F
+        self.Zmask_D = None
+        self.Zmask_U = None
+        self.Zmask_M = None
+        self.Gr = None
+        self.GGr = None
+        self.GtF = None
+        self.GtD = None
+        self.GtU = None
+        #self.GGtD = None
+        self.AGr = None      # Replaces GGr in 2-component noise model
+        self.AoGr = None     #   Same but for orthogonal basis (when compressing)
+        self.AGF = None      # Replaces GGtF in 2-component noise model
+        #self.AoGF = None     #   Same but for orthogonal basis (when compressing)
+        self.AGD = None      # Replaces GGtD in 2-component noise model
+        #self.AoGD = None     #   Same but for orthogonal basis (when compressing)
+        self.AGE = None      # Replaces GGtE in 2-component noise model
+        #self.AoGE = None     #   Same but for orthogonal basis (when compressing)
+        self.AGU = None      # Replace GGtU in 2-component noise model
+        #self.AoGU = None     #   Same .... you got it
+
+        # Auxiliaries used in the likelihood
+        self.twoComponentNoise = False       # Whether we use the 2-component noise model
+        self.Nvec = None             # The total white noise (eq^2 + ef^2*err)
+        self.Wvec = None             # The weights in 2-component noise
+        self.Wovec = None            # The weights in 2-component orthogonal noise
+        self.Nwvec = None            # Total noise in 2-component basis (eq^2 + ef^2*Wvec)
+        self.Nwovec = None           # Total noise in 2-component orthogonal basis
+        self.Jweight = None          # The weight of the jitter noise in compressed basis
+        self.Jvec = None
+
+        # To select the number of Frequency modes
+        self.bfinc = None        # Number of modes of all internal matrices
+        self.bfdminc = None      # Number of modes of all internal matrices (DM)
+        self.bprevfinc = None     # Current number of modes in RJMCMC
+        self.bprevfdminc = None   # Current number of modes in RJMCMC
 
         # Indices for when we are in mark11
         self.fourierind = None
         self.dmfourierind = None
         self.jitterfourierind = None
 
-    """
-    Read the pulsar data (TOAs, residuals, design matrix, etc..) from an HDF5
-    file
+    def readFromH5_old(self, h5df, psrname):
+        h5df.readPulsar_old(self, psrname)
 
-    @param h5df:        The DataFile object we are reading from
-    @param psrname:     Name of the Pulsar to be read from the HDF5 file
-    """
-    def readFromH5(self, h5df, psrname):
-        h5df.readPulsar(self, psrname)
+    def readFromH5(self, h5df, psrname, sort=None):
+        """
+        Read the pulsar data (TOAs, residuals, design matrix, etc..) from an
+        HDF5 file
+
+        @param h5df:        The DataFile object we are reading from
+        @param psrname:     Name of the Pulsar to be read from the HDF5 file
+        @param sort:        In which way do we want to sort the TOAs
+                            (None, 'time', 'jitterext')
+        """
+        self.name = psrname
+
+        # Read the content of the par/tim files in a string
+        self.parfile_content = str(h5df.getData(psrname, 'parfile', required=False))
+        self.timfile_content = str(h5df.getData(psrname, 'timfile', required=False))
+
+        # Read the timing model parameter descriptions
+        self.ptmdescription = map(str, h5df.getData(psrname, 'tmp_name'))
+        self.ptmpars = np.array(h5df.getData(psrname, 'tmp_valpre'))
+        self.ptmparerrs = np.array(h5df.getData(psrname, 'tmp_errpre'))
+
+        # Read the position of the pulsar
+        if h5df.hasField(psrname, 'raj'):
+            self.raj = np.float(h5df.getData(psrname, 'raj'))
+        else:
+            rajind = np.flatnonzero(np.array(self.ptmdescription) == 'RAJ')
+            self.raj = np.array(h5df.getData(psrname, 'tmp_valpre'))[rajind]
+
+        if h5df.hasField(psrname, 'decj'):
+            self.decj = np.float(h5df.getData(psrname, 'decj'))
+        else:
+            decjind = np.flatnonzero(np.array(self.ptmdescription) == 'DECJ')
+            self.decj = np.array(h5df.getData(psrname, 'tmp_valpre'))[decjind]
+
+        # Read the flags, and the residuals, and determine the sorting/slicing
+        toas = np.array(h5df.getData(psrname, 'TOAs'))
+        flags = np.array(map(str, h5df.getData(psrname, 'efacequad', 'Flags')))
+
+        self.isort, self.iisort = argsortTOAs(toas, flags, which=sort, dt=10.0)
+
+        self.toas = np.array(h5df.getData(psrname, 'TOAs'))[self.isort]
+        self.flags = np.array(map(str, h5df.getData(psrname, 'efacequad', 'Flags')))[self.isort]
+
+        self.toaerrs = np.array(h5df.getData(psrname, 'toaErr'))[self.isort]
+        self.prefitresiduals = np.array(h5df.getData(psrname, 'prefitRes'))[self.isort]
+        self.residuals = np.array(h5df.getData(psrname, 'postfitRes'))[self.isort]
+        self.detresiduals = np.array(h5df.getData(psrname, 'prefitRes'))[self.isort]
+        self.freqs = np.array(h5df.getData(psrname, 'freq'))[self.isort]
+        self.Mmat = np.array(h5df.getData(psrname, 'designmatrix'))[self.isort,:]
 
     """
     Initialise the libstempo object for use in nonlinear timing model modelling.
@@ -703,7 +672,7 @@ class ptaPulsar(object):
             # To be sure, just construct the averages again. But is already done
             # in 'createPulsarAuxiliaries'
             if likfunc[:5] != 'mark4':
-                (self.avetoas, self.Umat) = dailyaveragequantities(self.toas)
+                (self.avetoas, self.Umat) = quantize_fast(self.toas)
                 Wjit = np.sum(self.Umat, axis=0)
                 self.Jweight = np.sum(Wjit * self.Umat, axis=1)
 
@@ -862,7 +831,7 @@ class ptaPulsar(object):
                 print "WARNING: this type of compression is only for testing purposes"
 
                 # Calculate Umat and Ui
-                (self.avetoas, self.Umat, Ui) = dailyaveragequantities(self.toas, calcInverse=True)
+                (self.avetoas, self.Umat, Ui) = quantize_fast(self.toas, calcInverse=True)
                 UUi = np.dot(self.Umat, Ui)
                 GF = np.dot(self.Gmat.T, np.dot(UUi, Ftot))
 
@@ -1214,24 +1183,24 @@ class ptaPulsar(object):
 
         # Create the dailay averaged residuals
         (self.avetoas, self.Umat, self.Uimat) = \
-                dailyaveragequantities(self.toas, calcInverse=True)
+                quantize_fast(self.toas, calcInverse=True)
         Wjit = np.sum(self.Umat, axis=0)
         self.Jweight = np.sum(Wjit * self.Umat, axis=1)
 
         # Write these quantities to disk
         if write != 'no':
-            h5df.addData(self.name, 'pic_Fmat', self.Fmat)
+            h5df.addData(self.name, 'pic_Fmat', self.Fmat[self.iisort,:])
             h5df.addData(self.name, 'pic_Ffreqs', self.Ffreqs)
-            h5df.addData(self.name, 'pic_Fdmmat', self.Fdmmat)
+            h5df.addData(self.name, 'pic_Fdmmat', self.Fdmmat[self.iisort,:])
             h5df.addData(self.name, 'pic_Fdmfreqs', self.Fdmfreqs)
             #h5df.addData(self.name, 'pic_Dmat', self.Dmat)
-            h5df.addData(self.name, 'pic_Dvec', self.Dvec)
-            h5df.addData(self.name, 'pic_DF', self.DF)
+            h5df.addData(self.name, 'pic_Dvec', self.Dvec[self.iisort])
+            h5df.addData(self.name, 'pic_DF', self.DF[self.iisort,:])
 
             h5df.addData(self.name, 'pic_avetoas', self.avetoas)
-            h5df.addData(self.name, 'pic_Umat', self.Umat)
-            h5df.addData(self.name, 'pic_Uimat', self.Uimat)
-            h5df.addData(self.name, 'pic_Jweight', self.Jweight)
+            h5df.addData(self.name, 'pic_Umat', self.Umat[self.iisort,:])
+            h5df.addData(self.name, 'pic_Uimat', self.Uimat[:,self.iisort])
+            h5df.addData(self.name, 'pic_Jweight', self.Jweight[self.iisort])
 
         # Next we'll need the G-matrices, and the compression matrices.
         if compression != 'dont':
@@ -1250,14 +1219,14 @@ class ptaPulsar(object):
             self.constructCompressionMatrix(compression, nfmodes=2*nf,
                     ndmodes=2*ndmf, threshold=threshold, tmpars=tmpars)
             if write != 'no':
-                h5df.addData(self.name, 'pic_Hcmat', self.Hcmat)
-                h5df.addData(self.name, 'pic_Gcmat', self.Gcmat)
+                h5df.addData(self.name, 'pic_Hcmat', self.Hcmat[self.iisort,:])
+                h5df.addData(self.name, 'pic_Gcmat', self.Gcmat[self.iisort,:])
 
                 if not noGmatWrite:
-                    h5df.addData(self.name, 'pic_Gmat', self.Gmat)
-                    h5df.addData(self.name, 'pic_Hmat', self.Hmat)
-                    h5df.addData(self.name, 'pic_Homat', self.Homat)
-                    h5df.addData(self.name, 'pic_Hocmat', self.Hocmat)
+                    h5df.addData(self.name, 'pic_Gmat', self.Gmat[self.iisort,:])
+                    h5df.addData(self.name, 'pic_Hmat', self.Hmat[self.iisort,:])
+                    h5df.addData(self.name, 'pic_Homat', self.Homat[self.iisort,:])
+                    h5df.addData(self.name, 'pic_Hocmat', self.Hocmat[self.iisort,:])
 
 
 
@@ -1295,7 +1264,7 @@ class ptaPulsar(object):
             if write != 'none':
                 # Write all these quantities to the HDF5 file
                 h5df.addData(self.name, 'pic_Gr', self.Gr)
-                h5df.addData(self.name, 'pic_GGr', self.GGr)
+                h5df.addData(self.name, 'pic_GGr', self.GGr[self.iisort])
                 h5df.addData(self.name, 'pic_GtF', self.GtF)
                 h5df.addData(self.name, 'pic_GtD', self.GtD)
 
@@ -1335,7 +1304,7 @@ class ptaPulsar(object):
             if write != 'none':
                 # Write all these quantities to the HDF5 file
                 h5df.addData(self.name, 'pic_Gr', self.Gr)
-                h5df.addData(self.name, 'pic_GGr', self.GGr)
+                h5df.addData(self.name, 'pic_GGr', self.GGr[self.iisort])
                 if self.twoComponentNoise:
                     h5df.addData(self.name, 'pic_Wvec', self.Wvec)
                     h5df.addData(self.name, 'pic_Amat', self.Amat)
@@ -1376,7 +1345,7 @@ class ptaPulsar(object):
             if write != 'none':
                 # Write all these quantities to the HDF5 file
                 h5df.addData(self.name, 'pic_Gr', self.Gr)
-                h5df.addData(self.name, 'pic_GGr', self.GGr)
+                h5df.addData(self.name, 'pic_GGr', self.GGr[self.iisort])
                 h5df.addData(self.name, 'pic_GtF', self.GtF)
 
                 if self.twoComponentNoise:
@@ -1425,7 +1394,7 @@ class ptaPulsar(object):
             if write != 'none':
                 # Write all these quantities to the HDF5 file
                 h5df.addData(self.name, 'pic_Gr', self.Gr)
-                h5df.addData(self.name, 'pic_GGr', self.GGr)
+                h5df.addData(self.name, 'pic_GGr', self.GGr[self.iisort])
                 h5df.addData(self.name, 'pic_GtF', self.GtF)
                 h5df.addData(self.name, 'pic_UtF', self.UtF)
                 h5df.addData(self.name, 'pic_UtD', self.UtD)
@@ -1486,12 +1455,12 @@ class ptaPulsar(object):
             if write != 'none':
                 # Write all these quantities to the HDF5 file
                 h5df.addData(self.name, 'pic_Gr', self.Gr)
-                h5df.addData(self.name, 'pic_GGr', self.GGr)
+                h5df.addData(self.name, 'pic_GGr', self.GGr[self.iisort])
                 h5df.addData(self.name, 'pic_GtF', self.GtF)
                 h5df.addData(self.name, 'pic_UtF', self.UtF)
                 h5df.addData(self.name, 'pic_UtD', self.UtD)
-                h5df.addData(self.name, 'pic_SFmat', self.SFmat)
-                h5df.addData(self.name, 'pic_FFmat', self.FFmat)
+                h5df.addData(self.name, 'pic_SFmat', self.SFmat[self.iisort, :])
+                h5df.addData(self.name, 'pic_FFmat', self.FFmat[self.iisort, :])
                 h5df.addData(self.name, 'pic_SFfreqs', self.SFfreqs)
                 h5df.addData(self.name, 'pic_UtFF', self.UtFF)
 
@@ -1557,10 +1526,10 @@ class ptaPulsar(object):
             if write != 'none':
                 # Write all these quantities to the HDF5 file
                 h5df.addData(self.name, 'pic_Gr', self.Gr)
-                h5df.addData(self.name, 'pic_GGr', self.GGr)
+                h5df.addData(self.name, 'pic_GGr', self.GGr[self.iisort])
                 h5df.addData(self.name, 'pic_GtF', self.GtF)
                 #h5df.addData(self.name, 'pic_GGtD', self.GGtD)
-                h5df.addData(self.name, 'pic_Emat', self.Emat)
+                h5df.addData(self.name, 'pic_Emat', self.Emat[self.iisort, :])
                 #h5df.addData(self.name, 'pic_GGtE', self.GGtE)
 
                 if self.twoComponentNoise:
@@ -1609,7 +1578,7 @@ class ptaPulsar(object):
             if write != 'none':
                 # Write all these quantities to the HDF5 file
                 h5df.addData(self.name, 'pic_Gr', self.Gr)
-                h5df.addData(self.name, 'pic_GGr', self.GGr)
+                h5df.addData(self.name, 'pic_GGr', self.GGr[self.iisort])
                 h5df.addData(self.name, 'pic_GtF', self.GtF)
 
                 if self.twoComponentNoise:
@@ -1671,10 +1640,10 @@ class ptaPulsar(object):
             if write != 'none':
                 # Write all these quantities to the HDF5 file
                 h5df.addData(self.name, 'pic_Gr', self.Gr)
-                h5df.addData(self.name, 'pic_GGr', self.GGr)
+                h5df.addData(self.name, 'pic_GGr', self.GGr[self.iisort])
                 h5df.addData(self.name, 'pic_GtF', self.GtF)
                 #h5df.addData(self.name, 'pic_GGtD', self.GGtD)
-                h5df.addData(self.name, 'pic_Emat', self.Emat)
+                h5df.addData(self.name, 'pic_Emat', self.Emat[self.iisort, :])
                 #h5df.addData(self.name, 'pic_GGtE', self.GGtE)
 
                 if self.twoComponentNoise:
@@ -1736,10 +1705,10 @@ class ptaPulsar(object):
             if write != 'none':
                 # Write all these quantities to the HDF5 file
                 h5df.addData(self.name, 'pic_Gr', self.Gr)
-                h5df.addData(self.name, 'pic_GGr', self.GGr)
+                h5df.addData(self.name, 'pic_GGr', self.GGr[self.iisort])
                 h5df.addData(self.name, 'pic_GtF', self.GtF)
-                h5df.addData(self.name, 'pic_SFmat', self.SFmat)
-                h5df.addData(self.name, 'pic_FFmat', self.FFmat)
+                h5df.addData(self.name, 'pic_SFmat', self.SFmat[self.iisort, :])
+                h5df.addData(self.name, 'pic_FFmat', self.FFmat[self.iisort, :])
                 h5df.addData(self.name, 'pic_SFfreqs', self.SFfreqs)
 
                 if self.twoComponentNoise:
@@ -1834,19 +1803,19 @@ class ptaPulsar(object):
             if write != 'none':
                 # Write all these quantities to the HDF5 file
                 h5df.addData(self.name, 'pic_Gr', self.Gr)
-                h5df.addData(self.name, 'pic_GGr', self.GGr)
+                h5df.addData(self.name, 'pic_GGr', self.GGr[self.iisort])
                 h5df.addData(self.name, 'pic_GtF', self.GtF)
                 #h5df.addData(self.name, 'pic_GGtD', self.GGtD)
-                h5df.addData(self.name, 'pic_Emat', self.Emat)
+                h5df.addData(self.name, 'pic_Emat', self.Emat[self.iisort, :])
                 #h5df.addData(self.name, 'pic_GGtE', self.GGtE)
-                h5df.addData(self.name, 'pic_SFmat', self.SFmat)
-                h5df.addData(self.name, 'pic_SFdmmat', self.SFdmmat)
-                h5df.addData(self.name, 'pic_FFmat', self.FFmat)
+                h5df.addData(self.name, 'pic_SFmat', self.SFmat[self.iisort, :])
+                h5df.addData(self.name, 'pic_SFdmmat', self.SFdmmat[self.iisort, :])
+                h5df.addData(self.name, 'pic_FFmat', self.FFmat[self.iisort, :])
                 h5df.addData(self.name, 'pic_SFfreqs', self.SFfreqs)
-                h5df.addData(self.name, 'pic_DSF', self.DSF)
-                h5df.addData(self.name, 'pic_DFF', self.DFF)
-                h5df.addData(self.name, 'pic_EEmat', self.EEmat)
-                h5df.addData(self.name, 'pic_GGtEE', self.GGtEE)
+                h5df.addData(self.name, 'pic_DSF', self.DSF[self.iisort, :])
+                h5df.addData(self.name, 'pic_DFF', self.DFF[self.iisort, :])
+                h5df.addData(self.name, 'pic_EEmat', self.EEmat[self.iisort, :])
+                h5df.addData(self.name, 'pic_GGtEE', self.GGtEE[self.iisort, :])
 
                 if self.twoComponentNoise:
                     h5df.addData(self.name, 'pic_Wvec', self.Wvec)
@@ -1911,7 +1880,7 @@ class ptaPulsar(object):
             if write != 'none':
                 # Write all these quantities to the HDF5 file
                 #h5df.addData(self.name, 'pic_Gr', self.Gr)
-                h5df.addData(self.name, 'pic_Zmat', self.Zmat)
+                h5df.addData(self.name, 'pic_Zmat', self.Zmat[self.iisort, :])
                 h5df.addData(self.name, 'pic_tmpConv', self.tmpConv)
                 h5df.addData(self.name, 'pic_tmpConvi', self.tmpConvi)
 
@@ -1969,16 +1938,23 @@ class ptaPulsar(object):
         # Ok, this model seems good to go. Let's start
 
         # G/H compression matrices
-        self.Gmat = np.array(h5df.getData(self.name, 'pic_Gmat', dontread=memsave))
-        self.Gcmat = np.array(h5df.getData(self.name, 'pic_Gcmat', dontread=memsave))
-        self.Homat = np.array(h5df.getData(self.name, 'pic_Homat', dontread=memsave))
+        vslice = self.isort
+        mslice = (self.isort, slice(None, None, None))
+        self.Gmat = np.array(h5df.getData(self.name, 'pic_Gmat', \
+                dontread=memsave, isort=mslice))
+        self.Gcmat = np.array(h5df.getData(self.name, 'pic_Gcmat', \
+                dontread=memsave, isort=mslice))
+        self.Homat = np.array(h5df.getData(self.name, 'pic_Homat', \
+                dontread=memsave, isort=mslice))
         self.Hocmat = np.array(h5df.getData(self.name, 'pic_Hocmat',
-            dontread=(not evalCompressionComplement)))
+            dontread=(not evalCompressionComplement), isort=mslice))
 
-        self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat'))
+        self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
+                isort=mslice))
 
         self.Gr = np.array(h5df.getData(self.name, 'pic_Gr'))
-        self.GGr = np.array(h5df.getData(self.name, 'pic_GGr', dontread=memsave))
+        self.GGr = np.array(h5df.getData(self.name, 'pic_GGr', \
+                dontread=memsave, isort=vslice))
         self.Wvec = np.array(h5df.getData(self.name, 'pic_Wvec',
             dontread=(not self.twoComponentNoise)))
         self.Wovec = np.array(h5df.getData(self.name, 'pic_Wovec',
@@ -1990,10 +1966,11 @@ class ptaPulsar(object):
         self.AoGr = np.array(h5df.getData(self.name, 'pic_AoGr',
             dontread=(not self.twoComponentNoise)))
         self.Ffreqs = np.array(h5df.getData(self.name, 'pic_Ffreqs'))
-        self.Dvec = np.array(h5df.getData(self.name, 'pic_Dvec'))
+        self.Dvec = np.array(h5df.getData(self.name, 'pic_Dvec', isort=vslice))
 
         if ndmf > 0:
-            self.Fdmfreqs = np.array(h5df.getData(self.name, 'pic_Fdmfreqs'))
+            self.Fdmfreqs = np.array(h5df.getData(self.name, 'pic_Fdmfreqs', \
+                    isort=mslice))
         else:
             self.Fdmfreqs = np.zeros(0)
 
@@ -2012,7 +1989,8 @@ class ptaPulsar(object):
                 raise ValueError("Uncompressed file detected. Re-calculating all quantities.")
 
         if likfunc == 'mark1':
-            self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat', dontread=noGmat))
+            self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat', \
+                    dontread=noGmat, isort=mslice))
             #self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat',
             #    dontread=memsave))
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF'))
@@ -2023,14 +2001,18 @@ class ptaPulsar(object):
                 dontread=(memsave and not self.twoComponentNoise)))
             #self.AoGF = np.array(h5df.getData(self.name, 'pic_AoGF',
                 #dontread=(memsave and not self.twoComponentNoise)))
-            self.Fdmmat = np.array(h5df.getData(self.name, 'pic_Fdmmat', dontread=memsave))
+            self.Fdmmat = np.array(h5df.getData(self.name, 'pic_Fdmmat', \
+                            dontread=memsave, isort=mslice))
             #self.Dmat = np.array(h5df.getData(self.name, 'pic_Dmat', dontread=memsave))
-            self.DF = np.array(h5df.getData(self.name, 'pic_DF', dontread=memsave))
-            self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat', dontread=memsave))
+            self.DF = np.array(h5df.getData(self.name, 'pic_DF', \
+                    dontread=memsave, isort=mslice))
+            self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat', \
+                    dontread=memsave, isort=mslice))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
 
         if likfunc == 'mark2':
-            self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat', dontread=memsave))
+            self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat', \
+                    dontread=memsave, isort=mslice))
             #self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
             #        dontread=self.twoComponentNoise))
             self.AGr = np.array(h5df.getData(self.name, 'pic_AGr',
@@ -2039,7 +2021,7 @@ class ptaPulsar(object):
 
         if likfunc == 'mark3' or likfunc == 'mark3fa':
             self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat',
-                dontread=memsave))
+                dontread=memsave, isort=mslice))
             #self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
             #        dontread=self.twoComponentNoise))
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
@@ -2049,12 +2031,13 @@ class ptaPulsar(object):
                 dontread=(not self.twoComponentNoise)))
             #self.AoGF = np.array(h5df.getData(self.name, 'pic_AoGF',
             #    dontread=(memsave and not self.twoComponentNoise)))
-            self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat'))
+            self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat', \
+                    isort=mslice))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
 
         if likfunc == 'mark4':
-            self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat',
-                dontread=memsave))
+            self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat', \
+                dontread=memsave, isort=mslice))
             #self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
             #        dontread=self.twoComponentNoise))
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
@@ -2067,21 +2050,27 @@ class ptaPulsar(object):
             #self.AoGU = np.array(h5df.getData(self.name, 'pic_AoGU',
             #    dontread=(memsave and not self.twoComponentNoise)))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
-            self.Umat = np.array(h5df.getData(self.name, 'pic_Umat'))
-            self.Jweight = np.array(h5df.getData(self.name, 'pic_Jweight'))
-            self.Uimat = np.array(h5df.getData(self.name, 'pic_Uimat'))
-            self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat', dontread=memsave))
+            self.Umat = np.array(h5df.getData(self.name, 'pic_Umat', \
+                    isort=mslice))
+            self.Jweight = np.array(h5df.getData(self.name, 'pic_Jweight', \
+                    isort=vslice))
+            self.Uimat = np.array(h5df.getData(self.name, 'pic_Uimat', \
+                    isort=(slice(None, None, None), self.isort)))
+            self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat', \
+                    dontread=memsave, isort=mslice))
 
         if likfunc == 'mark4ln':
-            self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat',
-                dontread=memsave))
+            self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat', \
+                dontread=memsave, isort=mslice))
             #self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
             #        dontread=self.twoComponentNoise))
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
             self.UtF = np.array(h5df.getData(self.name, 'pic_UtF', dontread=memsave))
             self.UtD = np.array(h5df.getData(self.name, 'pic_UtD'))
-            self.SFmat = np.array(h5df.getData(self.name, 'pic_SFmat', dontread=memsave))
-            self.FFmat = np.array(h5df.getData(self.name, 'pic_FFmat', dontread=memsave))
+            self.SFmat = np.array(h5df.getData(self.name, 'pic_SFmat', \
+                    dontread=memsave, isort=mslice))
+            self.FFmat = np.array(h5df.getData(self.name, 'pic_FFmat', \
+                            dontread=memsave, isort=mslice))
             self.SFfreqs = np.array(h5df.getData(self.name, 'pic_SFfreqs'))
             self.UtFF = np.array(h5df.getData(self.name, 'pic_UtFF', dontread=memsave))
             self.AGr = np.array(h5df.getData(self.name, 'pic_AGr',
@@ -2091,19 +2080,24 @@ class ptaPulsar(object):
             #self.AoGU = np.array(h5df.getData(self.name, 'pic_AoGU',
             #    dontread=(memsave and not self.twoComponentNoise)))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
-            self.Umat = np.array(h5df.getData(self.name, 'pic_Umat'))
-            self.Jweight = np.array(h5df.getData(self.name, 'pic_Jweight'))
-            self.Uimat = np.array(h5df.getData(self.name, 'pic_Uimat'))
-            self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat', dontread=memsave))
+            self.Umat = np.array(h5df.getData(self.name, 'pic_Umat', \
+                    isort=mslice))
+            self.Jweight = np.array(h5df.getData(self.name, 'pic_Jweight', \
+                    isort=vslice))
+            self.Uimat = np.array(h5df.getData(self.name, 'pic_Uimat', \
+                    isort=(slice(None, None, None), self.isort)))
+            self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat', \
+                    dontread=memsave, isort=mslice))
 
         if likfunc == 'mark6' or likfunc == 'mark6fa':
-            self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat',
-                dontread=memsave))
+            self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat', \
+                dontread=memsave, isort=mslice))
             #self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
             #        dontread=self.twoComponentNoise))
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
             #self.GGtD = np.array(h5df.getData(self.name, 'pic_GGtD', dontread=memsave))
-            self.Emat = np.array(h5df.getData(self.name, 'pic_Emat'))
+            self.Emat = np.array(h5df.getData(self.name, 'pic_Emat', \
+                    isort=mslice))
             #self.GGtE = np.array(h5df.getData(self.name, 'pic_GGtE', dontread=memsave))
             self.AGr = np.array(h5df.getData(self.name, 'pic_AGr',
                 dontread=(not self.twoComponentNoise)))
@@ -2119,15 +2113,18 @@ class ptaPulsar(object):
             #    dontread=(memsave and not self.twoComponentNoise)))
             #self.AoGE = np.array(h5df.getData(self.name, 'pic_AoGE',
             #    dontread=(memsave and not self.twoComponentNoise)))
-            self.Fdmmat = np.array(h5df.getData(self.name, 'pic_Fdmmat', dontread=memsave))
+            self.Fdmmat = np.array(h5df.getData(self.name, 'pic_Fdmmat', \
+                            dontread=memsave, isort=mslice))
             #self.Dmat = np.array(h5df.getData(self.name, 'pic_Dmat', dontread=memsave))
-            self.DF = np.array(h5df.getData(self.name, 'pic_DF', dontread=memsave))
-            self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat', dontread=memsave))
+            self.DF = np.array(h5df.getData(self.name, 'pic_DF', \
+                    dontread=memsave, isort=mslice))
+            self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat', \
+                    dontread=memsave, isort=mslice))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
 
         if likfunc == 'mark7':
-            self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat',
-                dontread=memsave))
+            self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat', \
+                dontread=memsave, isort=mslice))
             #self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
             #        dontread=self.twoComponentNoise))
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
@@ -2137,17 +2134,19 @@ class ptaPulsar(object):
                 dontread=(memsave and not self.twoComponentNoise)))
             #self.AoGF = np.array(h5df.getData(self.name, 'pic_AoGF',
             #    dontread=(memsave and not self.twoComponentNoise)))
-            self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat'))
+            self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat', \
+                    isort=mslice))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
 
         if likfunc == 'mark8':
-            self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat',
-                dontread=memsave))
+            self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat', \
+                dontread=memsave, isort=mslice))
             #self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
             #        dontread=self.twoComponentNoise))
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
             #self.GGtD = np.array(h5df.getData(self.name, 'pic_GGtD', dontread=memsave))
-            self.Emat = np.array(h5df.getData(self.name, 'pic_Emat', dontread=memsave))
+            self.Emat = np.array(h5df.getData(self.name, 'pic_Emat', \
+                    dontread=memsave, isort=mslice))
             #self.GGtE = np.array(h5df.getData(self.name, 'pic_GGtE', dontread=memsave))
             self.AGr = np.array(h5df.getData(self.name, 'pic_AGr',
                 dontread=(not self.twoComponentNoise)))
@@ -2163,20 +2162,25 @@ class ptaPulsar(object):
             #    dontread=(memsave and not self.twoComponentNoise)))
             #self.AoGE = np.array(h5df.getData(self.name, 'pic_AoGE',
             #    dontread=(memsave and not self.twoComponentNoise)))
-            self.Fdmmat = np.array(h5df.getData(self.name, 'pic_Fdmmat', dontread=memsave))
+            self.Fdmmat = np.array(h5df.getData(self.name, 'pic_Fdmmat', \
+                    dontread=memsave, isort=mslice))
             #self.Dmat = np.array(h5df.getData(self.name, 'pic_Dmat'))
-            self.DF = np.array(h5df.getData(self.name, 'pic_DF'))
-            self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat'))
+            self.DF = np.array(h5df.getData(self.name, 'pic_DF', \
+                    isort=mslice))
+            self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat', \
+                    isort=mslice))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
 
         if likfunc == 'mark9':
-            self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat',
-                dontread=memsave))
+            self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat', \
+                dontread=memsave, isort=mslice))
             #self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
             #        dontread=self.twoComponentNoise))
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
-            self.SFmat = np.array(h5df.getData(self.name, 'pic_SFmat', dontread=memsave))
-            self.FFmat = np.array(h5df.getData(self.name, 'pic_FFmat', dontread=memsave))
+            self.SFmat = np.array(h5df.getData(self.name, 'pic_SFmat', \
+                    dontread=memsave, isort=mslice))
+            self.FFmat = np.array(h5df.getData(self.name, 'pic_FFmat', \
+                    dontread=memsave, isort=mslice))
             self.SFfreqs = np.array(h5df.getData(self.name, 'pic_SFfreqs'))
             self.AGr = np.array(h5df.getData(self.name, 'pic_AGr',
                 dontread=(not self.twoComponentNoise)))
@@ -2188,26 +2192,35 @@ class ptaPulsar(object):
             #    dontread=(memsave and not self.twoComponentNoise)))
             #self.AoGFF = np.array(h5df.getData(self.name, 'pic_AoGFF',
             #    dontread=(memsave and not self.twoComponentNoise)))
-            self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat'))
+            self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat', \
+                    isort=mslice))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
 
         if likfunc == 'mark10':
-            self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat',
-                dontread=memsave))
+            self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat', \
+                dontread=memsave, isort=mslice))
             #self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
             #        dontread=self.twoComponentNoise))
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
             #self.GGtD = np.array(h5df.getData(self.name, 'pic_GGtD', dontread=memsave))
-            self.Emat = np.array(h5df.getData(self.name, 'pic_Emat'))
+            self.Emat = np.array(h5df.getData(self.name, 'pic_Emat', \
+                    isort=mslice))
             #self.GGtE = np.array(h5df.getData(self.name, 'pic_GGtE', dontread=memsave))
-            self.SFmat = np.array(h5df.getData(self.name, 'pic_SFmat', dontread=memsave))
-            self.SFdmmat = np.array(h5df.getData(self.name, 'pic_SFdmmat', dontread=memsave))
-            self.FFmat = np.array(h5df.getData(self.name, 'pic_FFmat', dontread=memsave))
+            self.SFmat = np.array(h5df.getData(self.name, 'pic_SFmat', \
+                    dontread=memsave, isort=mslice))
+            self.SFdmmat = np.array(h5df.getData(self.name, 'pic_SFdmmat', \
+                    dontread=memsave, isort=mslice))
+            self.FFmat = np.array(h5df.getData(self.name, 'pic_FFmat', \
+                    dontread=memsave, isort=mslice))
             self.SFfreqs = np.array(h5df.getData(self.name, 'pic_SFfreqs'))
-            self.DSF = np.array(h5df.getData(self.name, 'pic_DSF', dontread=memsave))
-            self.DFF = np.array(h5df.getData(self.name, 'pic_DFF'))
-            self.EEmat = np.array(h5df.getData(self.name, 'pic_EEmat'))
-            self.GGtEE = np.array(h5df.getData(self.name, 'pic_GGtEE'))
+            self.DSF = np.array(h5df.getData(self.name, 'pic_DSF', \
+                    dontread=memsave, isort=mslice))
+            self.DFF = np.array(h5df.getData(self.name, 'pic_DFF', \
+                    isort=mslice))
+            self.EEmat = np.array(h5df.getData(self.name, 'pic_EEmat', \
+                    isort=mslice))
+            self.GGtEE = np.array(h5df.getData(self.name, 'pic_GGtEE', \
+                    isort=mslice))
             self.AGr = np.array(h5df.getData(self.name, 'pic_AGr',
                 dontread=(not self.twoComponentNoise)))
             self.AGF = np.array(h5df.getData(self.name, 'pic_AGF',
@@ -2230,23 +2243,31 @@ class ptaPulsar(object):
             #    dontread=(memsave and not self.twoComponentNoise)))
             #self.AoGEE = np.array(h5df.getData(self.name, 'pic_AoGEE',
             #    dontread=(memsave and not self.twoComponentNoise)))
-            self.Fdmmat = np.array(h5df.getData(self.name, 'pic_Fdmmat', dontread=memsave))
+            self.Fdmmat = np.array(h5df.getData(self.name, 'pic_Fdmmat', \
+                    dontread=memsave, isort=mslice))
             #self.Dmat = np.array(h5df.getData(self.name, 'pic_Dmat'))
-            self.DF = np.array(h5df.getData(self.name, 'pic_DF'))
-            self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat'))
+            self.DF = np.array(h5df.getData(self.name, 'pic_DF', \
+                    isort=mslice))
+            self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat', \
+                    isort=mslice))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
 
         if likfunc[:5] == 'gibbs':
-            self.Zmat = np.array(h5df.getData(self.name, 'pic_Zmat'))
+            self.Zmat = np.array(h5df.getData(self.name, 'pic_Zmat', \
+                    isort=mslice))
             self.tmpConv = np.array(h5df.getData(self.name, 'pic_tmpConv'))
             self.tmpConvi = np.array(h5df.getData(self.name, 'pic_tmpConvi'))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
-            self.Umat = np.array(h5df.getData(self.name, 'pic_Umat'))
-            self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat'))
+            self.Umat = np.array(h5df.getData(self.name, 'pic_Umat', \
+                    isort=mslice))
+            self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat', \
+                    isort=mslice))
 
             if len(self.Fdmfreqs) > 0:
-                self.DF = np.array(h5df.getData(self.name, 'pic_DF'))
-                self.Fdmmat = np.array(h5df.getData(self.name, 'pic_Fdmmat'))
+                self.DF = np.array(h5df.getData(self.name, 'pic_DF', \
+                        isort=mslice))
+                self.Fdmmat = np.array(h5df.getData(self.name, 'pic_Fdmmat', \
+                        isort=mslice))
             else:
                 self.Fdmmat = np.zeros((len(self.toas),0))
                 self.DF = np.zeros((len(self.toas),0))
@@ -2318,125 +2339,34 @@ class ptaPulsar(object):
 
 
 class ptaLikelihood(object):
-    # The DataFile object
-    h5df = None
+    """
+    Basic implementation of the model/likelihood.
 
-    # The ptaPulsar objects
-    ptapsrs = []
+    mark1loglikelihood: The red noise Fourier modes are included numerically. Larger
+    dimensional space, but quicker evaluation. At his point, the inversion of the
+    Phi matrix is only fast if phi is diagonal.
 
-    # The model/signals description
-    ptasignals = []
+    mark2loglikelihood: only efac + equad signals
 
-    # Gibbs 'signals': which coefficients are included? Do this more elegantly
-    # in the future. Possible values for now:
-    # design, rednoise, dm, jitter, correx/corrim
-    gibbsmodel = []
+    mark3loglikelihood: analytically integrated over the red noise Fourier modes. DM
+    variations are projected on these modes, which is very suboptimal. Do not use
+    with DM variations. The Phi matrix inversion is not optimised per frequency. At
+    least one red signal must be included for each pulsar
 
-    dimensions = 0
-    pmin = None
-    pmax = None
-    pstart = None
-    pwidth = None
-    pardes = None
-    haveStochSources = False
-    haveDetSources = False
+    mark6loglikelihood: analytically integrated over the red noise
+    Fourier modes, and the DM variation Fourier modes. The integration is done
+    simultaneously. Makes for a larger Phi matrix.
 
-    # What likelihood function to use
-    likfunc = 'mark3'
+    mark7loglikelihood: like mark3loglikelihood, but allows for RJMCMC Fourier mode
+    selection
 
-    # Whether we evaluate the complement of the compressed likelihood
-    compression = 'None'
-    evallikcomp = False
+    mark8loglikelihood: like mark6loglikelihood, but allows for RJMCMC Fourier mode
+    selection
 
-    # Whether we use the option of forcing the frequency lines to be ordered in
-    # the prior
-    orderFrequencyLines = False
-
-    # Additional informative quantities (reset after RJMCMC jump)
-    npf = None      # Number of frequencies per pulsar (red noise/signal)
-    npff = None     # Number of frequencies per pulsar (single-freq components)
-    npfdm = None    # Number of frequencies per pulsar (DM)
-    npe = None      # Number of frequencies per pulsar (rn + DM)
-    npobs = None    # Number of observations per pulsar
-    npgs = None     # Number of non-projected observations per pulsar (columns Hmat)
-    npgos = None    # Number of orthogonal non-projected observations per pulsar (columns Homat)
-    npu = None      # Number of avetoas per pulsar
-    npm = None      # Number of columns of design matrix (full design matrix)
-    npz = None      # Number of columns of Zmat
-    npz_f = None      # Number of columns of Zmat
-    npz_d = None      # Number of columns of Zmat
-    npz_U = None      # Number of columns of Zmat
-    Tmax = None     # One Tmax to rule them all...
-
-    # Which pulsars have which red noise frequencies...
-    freqmask = None     # Mask which have which
-    freqb = None        # Quadratic Fourier coefficients, in a 2D-array
-
-    # The Phi, Theta, and Sigma matrices
-    Phi = None          # mark1, mark3, mark?, mark6                (Noise & corr)
-    Phivec = None       # mark1, mark3, mark?, mark6          gibbs (Noise)
-    Thetavec = None     #               mark?, mark6          gibbs (DM)
-    Muvec = None        #                             mark11        (Jitter)
-    Svec = None         #                                     gibbs (GWB PSD)
-    Scor = None         #                                     gibbs (GWB corr)
-    Scor_im = None      #                                     gibbs (GWB impl)
-    Scor_im_cf = None   #                                     gibbs (GWB impl)
-    Scor_im_inv = None  #                                     gibbs (GWB impl)
-    Sigma = None        #        mark3, mark?, mark6                (everything)
-    Sigma_F = None      #                                     gibbs
-    Sigma_F_cf = None   #                                     gibbs
-    GNGldet = None      # mark1, mark3, mark?, mark6                (log-det)
-
-    Fmat_gw = None      # The F-matrix, but for GWs
-    Ffreqs_gw = None    # Frequencies of the GWs
-
-    # Other quantities that we do not want to re-initialise every likelihood call
-    rGr = None          # mark1, mark3, mark?, mark6
-    rGFa = None         # mark1
-    aFGFa = None        # mark1
-    avec = None         # mark1
-    rGF = None          #        mark3, mark?
-    rGE = None          #                      mark6
-    rGZ_F = None        #                                     gibbs
-    rGZ_D = None        #                                     gibbs
-    rGZ_U = None        #                                     gibbs
-    FGGNGGF = None      #        mark3, mark?
-    EGGNGGE = None      #                      mark6
-    ZGGNGGZ = None      #                              gibbs
-    NGGF = None         #        mark3, mark?  mark6
-
-
-    # Gibbs auxiliaries for the marginalised conditionals
-    GcNiGc_inv = []
-    NiGc = []
-    GcNiGcF = []
-    GcNiGcD = []
-    GcNiGcU = []
-    NiF = []
-    NiD = []
-    NiU = []
-    rGr_F = np.zeros(0)
-    rGr_D = np.zeros(0)
-    rGr_U = np.zeros(0)
-    rGD = []
-    rGU = []
-    #rGF = np.zeros(0)
-    DGGNGGD = []
-    UGGNGGU = []
-    #FGGNGGF = np.zeros((0, 0))
-
-    # Gibbs auxiliaries for the generative conditionals
-    gibbs_ll_N = None
-    gibbs_ll_D = None           
-    gibbs_ll_U = None
-    gibbs_ll_F = None
-
-    gibbs_current_a = []         # List of quadratic parameters
-    gibbs_proposed_a = []         # List of quadratic parameters
-
-    # Whether we have already called the likelihood in one call, so we can skip
-    # some things in comploglikelihood
-    skipUpdateToggle = False
+    mark9loglikelihood: like mark3loglikelihood, but allows for an extra noise
+    source, which models a single frequency-source with a variable frequency and
+    amplitude
+    """
 
 
     """
@@ -2447,13 +2377,16 @@ class ptaLikelihood(object):
     @param pulsars:         Which pulsars to read ('all' = all, otherwise provide a
                             list: ['J0030+0451', 'J0437-4715', ...])
                             WARNING: duplicates are _not_ checked for.
+    @param sort:            How to internally sort the TOAs (None, 'time',
+                            'jitterext'). Default: 'jitterext'
     """
     def __init__(self, h5filename=None, jsonfilename=None, pulsars='all', \
-                 auxFromFile=True, noGmat=False, verbose=False, noCreate=False):
+                 auxFromFile=True, noGmat=False, \
+                 verbose=False, noCreate=False, sort='jitterext'):
         self.clear()
 
         if h5filename is not None:
-            self.initFromFile(h5filename, pulsars=pulsars)
+            self.initFromFile(h5filename, pulsars=pulsars, sort=sort)
 
             if jsonfilename is not None:
                 self.initModelFromFile(jsonfilename, auxFromFile=auxFromFile, \
@@ -2465,19 +2398,120 @@ class ptaLikelihood(object):
     """
     # TODO: Do we need to delete all with 'del'?
     def clear(self):
-        self.h5df = None
-        self.ptapsrs = []
-        self.ptasignals = []
+        self.h5df = None                        # The DataFile object
+        self.ptapsrs = []                       # The ptaPulsar objects
+        self.ptasignals = []                    # The model/signals description
+
+        # Gibbs 'signals': which coefficients are included? Do this more elegantly
+        # in the future. Possible values for now:
+        # design, rednoise, dm, jitter, correx/corrim
+        self.gibbsmodel = []
+
 
         self.dimensions = 0
         self.pmin = None
         self.pmax = None
         self.pstart = None
         self.pwidth = None
-        self.likfunc = 'mark3'
+
+        self.pardes = None
+        self.haveStochSources = False
+        self.haveDetSources = False
+
+        self.likfunc = 'mark3'                  # What likelihood function to use
+        self.compression = 'None'
+        evallikcomp = False    # Evaluate complement of compressed likelihood
+
+        # Whether we use the option of forcing the frequency lines to be ordered in
+        # the prior
         self.orderFrequencyLines = False
         self.haveStochSources = False
         self.haveDetSources = False
+
+        # Additional informative quantities (reset after RJMCMC jump)
+        self.npf = None      # Number of frequencies per pulsar (red noise/signal)
+        self.npff = None     # Number of frequencies per pulsar (single-freq components)
+        self.npfdm = None    # Number of frequencies per pulsar (DM)
+        self.npe = None      # Number of frequencies per pulsar (rn + DM)
+        self.npobs = None    # Number of observations per pulsar
+        self.npgs = None     # Number of non-projected observations per pulsar (columns Hmat)
+        self.npgos = None    # Number of orthogonal non-projected observations per pulsar (columns Homat)
+        self.npu = None      # Number of avetoas per pulsar
+        self.npm = None      # Number of columns of design matrix (full design matrix)
+        self.npz = None      # Number of columns of Zmat
+        self.npz_f = None      # Number of columns of Zmat
+        self.npz_d = None      # Number of columns of Zmat
+        self.npz_U = None      # Number of columns of Zmat
+        self.Tmax = None     # One Tmax to rule them all...
+
+        # Which pulsars have which red noise frequencies...
+        self.freqmask = None     # Mask which have which
+        self.freqb = None        # Quadratic Fourier coefficients, in a 2D-array
+
+        # The Phi, Theta, and Sigma matrices
+        self.Phi = None          # mark1, mark3, mark?, mark6                (Noise & corr)
+        self.Phivec = None       # mark1, mark3, mark?, mark6          gibbs (Noise)
+        self.Thetavec = None     #               mark?, mark6          gibbs (DM)
+        self.Muvec = None        #                             mark11        (Jitter)
+        self.Svec = None         #                                     gibbs (GWB PSD)
+        self.Scor = None         #                                     gibbs (GWB corr)
+        self.Scor_im = None      #                                     gibbs (GWB impl)
+        self.Scor_im_cf = None   #                                     gibbs (GWB impl)
+        self.Scor_im_inv = None  #                                     gibbs (GWB impl)
+        self.Sigma = None        #        mark3, mark?, mark6                (everything)
+        self.Sigma_F = None      #                                     gibbs
+        self.Sigma_F_cf = None   #                                     gibbs
+        self.GNGldet = None      # mark1, mark3, mark?, mark6                (log-det)
+
+        self.Fmat_gw = None      # The F-matrix, but for GWs
+        self.Ffreqs_gw = None    # Frequencies of the GWs
+
+        # Other quantities that we do not want to re-initialise every likelihood call
+        self.rGr = None          # mark1, mark3, mark?, mark6
+        self.rGFa = None         # mark1
+        self.aFGFa = None        # mark1
+        self.avec = None         # mark1
+        self.rGF = None          #        mark3, mark?
+        self.rGE = None          #                      mark6
+        self.rGZ_F = None        #                                     gibbs
+        self.rGZ_D = None        #                                     gibbs
+        self.rGZ_U = None        #                                     gibbs
+        self.FGGNGGF = None      #        mark3, mark?
+        self.EGGNGGE = None      #                      mark6
+        self.ZGGNGGZ = None      #                              gibbs
+        self.NGGF = None         #        mark3, mark?  mark6
+
+
+        # Gibbs auxiliaries for the marginalised conditionals
+        self.GcNiGc_inv = []
+        self.NiGc = []
+        self.GcNiGcF = []
+        self.GcNiGcD = []
+        self.GcNiGcU = []
+        self.NiF = []
+        self.NiD = []
+        self.NiU = []
+        self.rGr_F = np.zeros(0)
+        self.rGr_D = np.zeros(0)
+        self.rGr_U = np.zeros(0)
+        self.rGD = []
+        self.rGU = []
+        #self.rGF = np.zeros(0)
+        self.DGGNGGD = []
+        self.UGGNGGU = []
+        #self.FGGNGGF = np.zeros((0, 0))
+
+        # Gibbs auxiliaries for the generative conditionals
+        self.gibbs_ll_N = None
+        self.gibbs_ll_D = None           
+        self.gibbs_ll_U = None
+        self.gibbs_ll_F = None
+
+        self.gibbs_current_a = []         # List of quadratic parameters
+        self.gibbs_proposed_a = []         # List of quadratic parameters
+
+        # Whether we have already called the likelihood in one call, so we can skip
+        # some things in comploglikelihood
         self.skipUpdateToggle = False
 
 
@@ -2489,8 +2523,11 @@ class ptaLikelihood(object):
                         list: ['J0030+0451', 'J0437-4715', ...])
                         WARNING: duplicates are _not_ checked for.
     @param append:      If set to True, do not delete earlier read-in pulsars
+    @param sort:        How to internally sort the residuals
+                        (None, 'time', 'jitterext'. Need jitterext for fast
+                        jitter)
     """
-    def initFromFile(self, filename, pulsars='all', append=False):
+    def initFromFile(self, filename, pulsars='all', append=False, sort=None):
         # Retrieve the pulsar list
         self.h5df = DataFile(filename)
         psrnames = self.h5df.getPulsarList()
@@ -2516,7 +2553,7 @@ class ptaLikelihood(object):
         # Initialise all pulsars
         for psrname in readpsrs:
             newpsr = ptaPulsar()
-            newpsr.readFromH5(self.h5df, psrname)
+            newpsr.readFromH5(self.h5df, psrname, sort=sort)
             self.ptapsrs.append(newpsr)
 
     def getPulsarNames(self):
@@ -2655,7 +2692,7 @@ class ptaLikelihood(object):
 
         if signal['flagname'] != 'pulsarname':
             # This efac only applies to some TOAs, not all of 'm
-            ind = np.array(self.ptapsrs[signal['pulsarind']].flags) != signal['flagvalue']
+            ind = self.ptapsrs[signal['pulsarind']].flags != signal['flagvalue']
             signal['Nvec'][ind] = 0.0
 
         self.ptasignals.append(signal.copy())
@@ -2690,7 +2727,7 @@ class ptaLikelihood(object):
 
         if signal['flagname'] != 'pulsarname':
             # This equad only applies to some TOAs, not all of 'm
-            ind = np.array(psr.flags) != signal['flagvalue']
+            ind = psr.flags != signal['flagvalue']
             signal['Nvec'][ind] = 0.0
 
             if signal['stype'] == 'jitter':
@@ -3621,7 +3658,7 @@ class ptaLikelihood(object):
                     signals.append(newsignal)
 
                 if incJitter or incCEquad:
-                    (avetoas, Umat) = dailyaveragequantities(m2psr.toas)
+                    (avetoas, Umat) = quantize_fast(m2psr.toas)
                     nmodes = len(avetoas)
                     bvary = [True]*nmodes
                     pmin = [-1.0e3]*nmodes
@@ -6938,29 +6975,6 @@ class ptaLikelihood(object):
     psrnfinc, psrnfdminc: integer array, indicating how many frequencies per
                           pulsar to include. Overrides psrbfinc and psrbfdminc
 
-    Profiling execution time. Put J0437 of the ipta-2013 set in the file
-    J0437.h5, and load with:
-    =============================================================================
-    setup_mark8 = "import numpy as np, piccard as pic, matplotlib.pyplot as plt
-    ; m3lik = pic.ptaLikelihood() ; m3lik.initFromFile('J0437.h5') ;
-    m3lik.initModelOld(30, modelIndependentGWB=False, modelIndependentNoise=True, modelIndependentDM=True, modelIndependentAniGWB=False, varyEfac=True, incRedNoise=True, incEquad=True, separateEfacs=True, incGWB=False, incDM=True, incAniGWB=False, lAniGWB=2, likfunc='mark6') ; m3lik.initPrior()"
-    =============================================================================
-
-    Call with:
-    setup1: timeit.timeit('m3lik.mark8logposterior(m3lik.pstart, psrnfinc=[4], psrnfdminc=[4])', setup=setup_mark8, number=100)
-    setup2: timeit.timeit('m3lik.mark8logposterior(m3lik.pstart, psrnfinc=[np.random.randint(1,6)], psrnfdminc=[np.random.randint(1,6)])', setup=setup_mark8, number=100)
-
-    Setup:      1           2
-    ---------------------------------------
-    Mark A:   0.04  sec    0.50 sec
-    Mark B:   0.074 sec    0.50 sec
-    Mark C:   0.08 sec     0.51 sec
-    Mark D:   0.09 sec     0.54 sec
-    Mark E:   0.10 sec     0.56 sec
-    Mark F:   0.41 sec     0.82 sec
-    Mark G:   0.83 sec     0.91 sec
-    Mark H:   0.76 sec     0.84 sec
-
     NOTE: Since JSON update this needs some tweaks
     """
     def mark8loglikelihood(self, parameters, psrbfinc=None, psrbfdminc=None, \
@@ -9012,8 +9026,8 @@ class ptaLikelihood(object):
             h5df = DataFile(filename)
 
             for ii, psr in enumerate(self.ptapsrs):
-                h5df.addData(psr.name, 'prefitRes', psr.residuals, overwrite=True)
-                h5df.addData(psr.name, 'postfitRes', psr.residuals, overwrite=True)
+                h5df.addData(psr.name, 'prefitRes', psr.residuals[psr.iisort], overwrite=True)
+                h5df.addData(psr.name, 'postfitRes', psr.residuals[psr.iisort], overwrite=True)
 
                 # If libstempo is installed, update the objects, and write the
                 # par/tim files
@@ -9198,8 +9212,8 @@ class ptaLikelihood(object):
             h5df = DataFile(filename)
 
             for ii, psr in enumerate(self.ptapsrs):
-                h5df.addData(psr.name, 'prefitRes', psr.residuals, overwrite=True)
-                h5df.addData(psr.name, 'postfitRes', psr.residuals, overwrite=True)
+                h5df.addData(psr.name, 'prefitRes', psr.residuals[psr.iisort], overwrite=True)
+                h5df.addData(psr.name, 'postfitRes', psr.residuals[psr.iisort], overwrite=True)
 
 
     # TODO: The following few functions all do virtually the same thing: use

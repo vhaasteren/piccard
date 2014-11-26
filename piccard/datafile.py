@@ -138,9 +138,10 @@ class DataFile(object):
     @param dontread:    If set to true, do not actually read anything
     @param required:    If not required, do not throw an exception, but return
                         'None'
+    @param isort:       If not None, use this as a slice when reading
     """
     def getData(self, psrname, field, subgroup=None, \
-            dontread=False, required=True):
+            dontread=False, required=True, isort=None):
         # Dontread is useful for readability in the 'readPulsarAuxiliaries
         if dontread:
             return None
@@ -170,6 +171,9 @@ class DataFile(object):
                 raise IOError, "Field {0} not present for pulsar {1}".format(field, psrname)
             else:
                 data = None
+
+        if isort is not None:
+            data = data[isort]
 
         return data
 
@@ -473,17 +477,20 @@ class DataFile(object):
 
     """
     Read the basic quantities of a pulsar from an HDF5 file into a ptaPulsar
-    object. No extra model matrices and auxiliary variables are added to the
-    HDF5 file. If any field is not present in the HDF5 file, an IOError
-    exception is raised
+    object. No extra model matrices and auxiliary variables are read from the
+    HDF5 file, not even residuals. If any field is not present in the HDF5 file,
+    an IOError exception is raised
 
     @param psr:     The ptaPulsar object we need to fill with data
     @param psrname: The name of the pulsar to be read from the HDF5 file
 
     TODO: The HDF5 file is opened and closed every call of 'getData'. That seems
           kind of inefficient
+    TODO: This function should not 'know' about the psr object. Reading/writing
+          of these quantities should take place outside of this
     """
-    def readPulsar(self, psr, psrname, sorting='jitterext'):
+    def readPulsar(self, psr, psrname):
+        print("WARNING: readPulsar has been deprecated!")
         psr.name = psrname
 
         # Read the content of the par/tim files in a string

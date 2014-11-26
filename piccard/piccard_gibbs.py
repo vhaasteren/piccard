@@ -814,24 +814,28 @@ class pulsarJNoiseLL(object):
     white-noise-only parameters.
     """
 
-    def __init__(self, residuals, psrindex, maskJvec=None):
+    def __init__(self, residuals, Uinds, psrindex):
         """
         @param residuals:   Initialise the residuals we'll work with
+        @param Uinds:       Replaces Umat, now start/end indices of Jitter
         @param psrindex:    Index of the pulsar this noise applies to
-        @param maskJvec:    Selection mask of the jitter Jvec
         """
-        # TODO: change vis_efac/fis_efac to an ID, with the values
+        # NOTE: vis_efac/fis_efac is changed to an ID, with the values
         #       0 (efac), 1 (equad), 2 (cequad/jitter)
-        #       change is_efac to which='efac'/'equad'/'cequad'or'jitter'
+        #       changed is_efac to which='efac'/'equad'/'cequad'or'jitter'
         self.vNvec = []                             # Mask residuals (varying)
         self.fNvec = []                             # Mask residuals (fixed)
+
         #self.vis_efac = []                          # Is it an efac? (varying)
         #self.fis_efac = []                          # Is it an equad (fixed)
         self.vsig_id = []                           # Type of signal
         self.fsig_id = []                           # Type of signal
 
         self.residuals = residuals                  # The residuals
+        self.Uinds = Uinds                          # Exploder indices (of epochs)
         self.Nvec = np.zeros(len(residuals))        # Full noise vector
+        self.Jvec = np.zeros(len(Uinds))            # Full jitter vector
+
         self.pmin = np.zeros(0)                     # Minimum of prior domain
         self.pmax = np.zeros(0)                     # Maximum of prior domain
         self.pstart = np.zeros(0)                   # Start position
@@ -840,7 +844,6 @@ class pulsarJNoiseLL(object):
         self.pindex = np.zeros(0, dtype=np.int)     # Index of parameters
 
         self.psrindex = psrindex                    # Inde xof pulsar
-        self.maskJvec = maskJvec                    # Selection mask Jvec
 
         self.sampler = None                         # The PTMCMC sampler
         self.singleChain = None     # How a long a ginle run is
@@ -856,26 +859,28 @@ class pulsarJNoiseLL(object):
         Add a efac/equad signal to this model
         @param Nvec:    To which residuals does this signal apply?
                         ex: (0, 0, toaerr**2, toaerr**2, 0, 0, 0)
+                        For 'jitter', which epochs does it apply to
         @param which:   'efac'/'equad'/'jitter'or'cequad'
         @param pmin:    Minimum of the prior domain
         @param pmax:    Maximum of the prior domain
+        @param pstart:  Start position of parameter
+        @param pwidth:  Typical step-size
+        @param index:   Index of parameter in the full parameter array
         @param fixed:   Whether or not we vary this parameter
         """
-        ################ CONTINUE HERE ##################
-        ################ CONTINUE HERE ##################
-        ################ CONTINUE HERE ##################
         if not fixed:
-            self.vNvec.append(Nvec)
-            self.vis_efac.append(is_efac)
+            self.vsig_id.append(which)
             self.pmin = np.append(self.pmin, [pmin])
             self.pmax = np.append(self.pmax, [pmax])
             self.pstart = np.append(self.pstart, [pstart])
             self.pwidth = np.append(self.pwidth, [pwidth])
             self.pindex = np.append(self.pindex, index)
+            self.vNvec.append(Nvec)
         else:
-            self.fNvec.append(Nvec)
-            self.fis_efac.append(is_efac)
+            self.fsig_id.append(which)
             self.fval = np.append(self.fval, pstart)
+            self.fNvec.append(Nvec)
+
 
     def initSampler(self, singleChain=20, fullChain=20000, covUpdate=400):
         """
@@ -967,25 +972,38 @@ class pulsarJNoiseLL(object):
     def setNewData(self, residuals):
         self.residuals = residuals
 
+    ################ CONTINUE HERE ##################
+    ################ CONTINUE HERE ##################
+    ################ CONTINUE HERE ##################
+
     def loglikelihood(self, parameters):
         """
         @param parameters:  the vector with model parameters
         """
-        self.Nvec[:] = 0
+        self.Nvec[:] = 0.0
+        self.Jvec[:] = 0.0
         for ii, par in enumerate(parameters):
-            if self.vis_efac[ii]:
+            if self.vsig_id == 'efac':
                 self.Nvec += par**2 * self.vNvec[ii]
-            else:
+            elif self.vsig_id == 'equad':
                 self.Nvec += 10**(2*par) * self.vNvec[ii]
+            elif self.vsig_id in ['jitter', 'cequad']:
+                self.Jvec += 10**(2*par) * self.vNvec[ii]
 
         for ii, par in enumerate(self.fval):
-            if self.fis_efac[ii]:
+            if self.fsig_id == 'efac':
                 self.Nvec += par**2 * self.fNvec[ii]
-            else:
+            elif self.fsig_id == 'equad':
                 self.Nvec += 10**(2*par) * self.fNvec[ii]
+            elif self.fsig_id in ['jitter', 'cequad']:
+                self.Jvec += 10**(2*par) * self.fNvec[ii]
 
-        return -0.5 * np.sum(self.residuals**2 / self.Nvec) - \
-                0.5 * np.sum(np.log(self.Nvec))
+        # From the jitter extension module
+        Jldet, xNx = block_shermor_inv(self.residuals, \
+                self.Nvec, self.Jvec, self.Uinds)
+
+        return -0.5 * xNx - 0.5 * Jldet - \
+                len(self.residuals)*np.log(2*np.pi)
 
     def logprior(self, parameters):
         bok = -np.inf
@@ -999,7 +1017,10 @@ class pulsarJNoiseLL(object):
         return self.logprior(parameters) + self.loglikelihood(parameters)
 
     def dimensions(self):
-        if len(self.vNvec) != len(self.vis_efac):
+        """
+        How many dimensions are in this conditional likelihood
+        """
+        if len(self.vNvec) != len(self.vsig_id):
             raise ValueError("dimensions not set correctly")
 
         return len(self.vNvec)
