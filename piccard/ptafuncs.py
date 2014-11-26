@@ -893,23 +893,27 @@ def checkTOAsort(toas, flags, which=None, dt=10.0):
 
     return rv
 
-def checkquant(U, flags):
+
+def checkquant(U, flags, uflagvals=None):
     """
     Check the quantization matrix for consistency with the flags
 
-    @param U:       quantization matrix
-    @param flags:   the flags of the TOAs
+    @param U:           quantization matrix
+    @param flags:       the flags of the TOAs
+    @param uflagvals:   subset of flags that are not ignored
 
-    @return:        True/False, whether or not consistent
+    @return:            True/False, whether or not consistent
 
     The quantization matrix is checked for three kinds of consistency:
     - Every quantization epoch has more than one observation
     - No quantization epoch has no observations
     - Only one flag is allowed per epoch
     """
-    uflagvals = list(set(flags))
-    collisioncheck = np.zeros((U.shape[1], len(uflagvals)), dtype=np.int)
+    if uflagvals is None:
+        uflagvals = list(set(flags))
+
     rv = True
+    collisioncheck = np.zeros((U.shape[1], len(uflagvals)), dtype=np.int)
     for ii, flagval in enumerate(uflagvals):
         flagmask = (flags == flagval)
 
@@ -917,9 +921,20 @@ def checkquant(U, flags):
 
         simepoch = np.sum(Umat, axis=0)
         if np.all(simepoch <= 1) and not np.all(simepoch == 0):
-            print("WARNING: quantization matrix contains non-jitter-style data")
+            rv = False
+            #raise ValueError("quantization matrix contains non-jitter-style data")
 
         collisioncheck[:, ii] = simepoch
+
+        # Check continuity of the columns
+        for cc, col in enumerate(Umat.T):
+            if np.sum(col > 1):
+                # More than one TOA for this flag/epoch
+                epinds = np.flatnonzero(col)
+                if len(epinds) != epinds[-1] - epinds[0] + 1:
+                    rv = False
+                    #raise ValueError("quantization matrix epochs not continuous")
+        
 
     epochflags = np.sum(collisioncheck > 0, axis=1)
 
@@ -927,12 +942,12 @@ def checkquant(U, flags):
         rv = False
         #raise ValueError("Some observing epochs include multiple backends")
 
-    if np.any(epochflags < 0):
+    if np.any(epochflags < 1):
         rv = False
         #raise ValueError("Some observing epochs include no observations... ???")
 
     obsum = np.sum(U, axis=0)
-    if np.any(obsum < 0):
+    if np.any(obsum < 1):
         rv = False
         #raise ValueError("Some observing epochs include no observations... ???")
 
@@ -956,7 +971,7 @@ def quant2ind(U):
     for cc, col in enumerate(U.T):
         epinds = np.flatnonzero(col)
         inds[cc, 0] = epinds[0]
-        inds[cc, 1] = epinds[-1]
+        inds[cc, 1] = epinds[-1]+1
 
     return inds
 
@@ -969,14 +984,13 @@ def quantreduce(U, flags):
     @param flags:   the flags of the TOAs
 
     @return     newU, jflags (flags that need jitter)
-
     """
     uflagvals = list(set(flags))
     incepoch = np.zeros(U.shape[1], dtype=np.bool)
     jflags = []
     for ii, flagval in enumerate(uflagvals):
         flagmask = (flags == flagval)
-
+        
         Umat = U[flagmask, :]
         ecnt = np.sum(Umat, axis=0)
         incepoch = np.logical_or(incepoch, ecnt>1)
@@ -985,6 +999,7 @@ def quantreduce(U, flags):
             jflags.append(flagval)
 
     return U[:, incepoch], jflags
+
 
 
 """

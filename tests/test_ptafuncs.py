@@ -80,7 +80,37 @@ def test_argsortTOAs():
     toas = toas[isort]
     flags = flags[isort]
 
+def test_quantinfo():
+    toas = np.array([1.1, 1.2, 1.3, 5.0, 15.4, 15.5, 15.5, 15.6, 15.7, \
+            15.8, 15.9, 30.1, 30.2, 30.2, 30.3, 30.4, 30.5, 30.6, 30.7])
+    flags = ['be1']*19
+    flags[2] = 'be2'
+    flags[3] = 'be2'
+    flags[8] = 'be2'
+    flags[9] = 'be2'
+    flags[11] = 'be2'
+    flags[12] = 'be2'
+    flags[13] = 'be2'
+    flags[18] = 'be3'
+    flags = np.array(flags)
+
+    t, U = quantize_fast(toas, dt=1.0)
+
+    assert checkquant(U, flags) == False
+    assert np.all(quant2ind(U) == \
+            np.array([[0, 3], [3, 4], [4, 11], [11, 19]], dtype=np.int))
+
+    toas = np.array([1.1, 1.2, 3.3, 3.0, 15.4, 15.5, 15.5, 15.6, 13.7, \
+            13.8, 16.9, 18.1, 18.2, 18.2, 30.3, 30.4, 30.5, 30.6, 30.7])
+    t, U = quantize_fast(toas, dt=1.0)
+    assert checkquant(U, flags) == False
+
+    Umat, jflags = quantreduce(U, flags)
+    assert checkquant(Umat, flags, jflags) == True
+
+
 
 
 if __name__=="__main__":
     test_argsortTOAs()
+    test_quantinfo()
