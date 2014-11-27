@@ -1919,12 +1919,14 @@ class ptaPulsar(object):
     @param likfunc:         Which likelihood function to do it for (all/markx/..)
     @param memsave:         Whether to save memory
     @param noGmat:          Whether or not to read in the G-matrix
+    @param gibbsmodel:      What coefficients to include in the Gibbs model
 
     """
     def readPulsarAuxiliaries(self, h5df, Tmax, nfreqs, ndmfreqs, \
             twoComponent=False, nSingleFreqs=0, nSingleDMFreqs=0, \
             compression='None', likfunc='mark3', \
-            evalCompressionComplement=True, memsave=True, noGmat=False):
+            evalCompressionComplement=True, memsave=True, noGmat=False, \
+            gibbsmodel=[]):
         # TODO: set this parameter in another place?
         if twoComponent:
             self.twoComponentNoise = True
@@ -1955,31 +1957,33 @@ class ptaPulsar(object):
         # G/H compression matrices
         vslice = self.isort
         mslice = (self.isort, slice(None, None, None))
-        self.Gmat = np.array(h5df.getData(self.name, 'pic_Gmat', \
-                dontread=memsave, isort=mslice))
-        self.Gcmat = np.array(h5df.getData(self.name, 'pic_Gcmat', \
-                dontread=memsave, isort=mslice))
-        self.Homat = np.array(h5df.getData(self.name, 'pic_Homat', \
-                dontread=memsave, isort=mslice))
-        self.Hocmat = np.array(h5df.getData(self.name, 'pic_Hocmat',
-            dontread=(not evalCompressionComplement), isort=mslice))
+        if likfunc != 'gibbs':
+            self.Gmat = np.array(h5df.getData(self.name, 'pic_Gmat', \
+                    dontread=memsave, isort=mslice))
+            self.Gcmat = np.array(h5df.getData(self.name, 'pic_Gcmat', \
+                    dontread=memsave, isort=mslice))
+            self.Homat = np.array(h5df.getData(self.name, 'pic_Homat', \
+                    dontread=memsave, isort=mslice))
+            self.Hocmat = np.array(h5df.getData(self.name, 'pic_Hocmat',
+                dontread=(not evalCompressionComplement), isort=mslice))
 
-        self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
-                isort=mslice))
+            #self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
+            #        isort=mslice))
 
-        self.Gr = np.array(h5df.getData(self.name, 'pic_Gr'))
-        self.GGr = np.array(h5df.getData(self.name, 'pic_GGr', \
-                dontread=memsave, isort=vslice))
-        self.Wvec = np.array(h5df.getData(self.name, 'pic_Wvec',
-            dontread=(not self.twoComponentNoise)))
-        self.Wovec = np.array(h5df.getData(self.name, 'pic_Wovec',
-            dontread=(not self.twoComponentNoise)))
-        self.Amat = np.array(h5df.getData(self.name, 'pic_Amat',
-            dontread=(memsave and not self.twoComponentNoise)))
-        self.Aomat = np.array(h5df.getData(self.name, 'pic_Aomat',
-            dontread=(memsave and not self.twoComponentNoise)))
-        self.AoGr = np.array(h5df.getData(self.name, 'pic_AoGr',
-            dontread=(not self.twoComponentNoise)))
+            self.Gr = np.array(h5df.getData(self.name, 'pic_Gr'))
+            self.GGr = np.array(h5df.getData(self.name, 'pic_GGr', \
+                    dontread=memsave, isort=vslice))
+            self.Wvec = np.array(h5df.getData(self.name, 'pic_Wvec',
+                dontread=(not self.twoComponentNoise)))
+            self.Wovec = np.array(h5df.getData(self.name, 'pic_Wovec',
+                dontread=(not self.twoComponentNoise)))
+            self.Amat = np.array(h5df.getData(self.name, 'pic_Amat',
+                dontread=(memsave and not self.twoComponentNoise)))
+            self.Aomat = np.array(h5df.getData(self.name, 'pic_Aomat',
+                dontread=(memsave and not self.twoComponentNoise)))
+            self.AoGr = np.array(h5df.getData(self.name, 'pic_AoGr',
+                dontread=(not self.twoComponentNoise)))
+
         self.Ffreqs = np.array(h5df.getData(self.name, 'pic_Ffreqs'))
         self.Dvec = np.array(h5df.getData(self.name, 'pic_Dvec', isort=vslice))
 
@@ -1991,7 +1995,7 @@ class ptaPulsar(object):
 
         # If compression is not done, but Hmat represents a compression matrix,
         # we need to re-evaluate the lot. Raise an error
-        if not noGmat:
+        if not noGmat and likfunc != 'gibbs':
             if compression == 'dont':
                 pass
             elif (compression == 'None' or compression is None) and \
@@ -2006,8 +2010,8 @@ class ptaPulsar(object):
         if likfunc == 'mark1':
             self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat', \
                     dontread=noGmat, isort=mslice))
-            #self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat',
-            #    dontread=memsave))
+            self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat',
+                dontread=self.twoComponentNoise))
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF'))
             self.GtD = np.array(h5df.getData(self.name, 'pic_GtD'))
             self.AGr = np.array(h5df.getData(self.name, 'pic_AGr',
@@ -2028,8 +2032,8 @@ class ptaPulsar(object):
         if likfunc == 'mark2':
             self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat', \
                     dontread=memsave, isort=mslice))
-            #self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
-            #        dontread=self.twoComponentNoise))
+            self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
+                    dontread=self.twoComponentNoise))
             self.AGr = np.array(h5df.getData(self.name, 'pic_AGr',
                 dontread=(not self.twoComponentNoise)))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
@@ -2037,8 +2041,8 @@ class ptaPulsar(object):
         if likfunc == 'mark3' or likfunc == 'mark3fa':
             self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat',
                 dontread=memsave, isort=mslice))
-            #self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
-            #        dontread=self.twoComponentNoise))
+            self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
+                    dontread=self.twoComponentNoise))
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
             self.AGr = np.array(h5df.getData(self.name, 'pic_AGr',
                 dontread=(not self.twoComponentNoise)))
@@ -2053,8 +2057,8 @@ class ptaPulsar(object):
         if likfunc == 'mark4':
             self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat', \
                 dontread=memsave, isort=mslice))
-            #self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
-            #        dontread=self.twoComponentNoise))
+            self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
+                    dontread=self.twoComponentNoise))
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
             self.UtF = np.array(h5df.getData(self.name, 'pic_UtF'))
             self.UtD = np.array(h5df.getData(self.name, 'pic_UtD', dontread=memsave))
@@ -2077,8 +2081,8 @@ class ptaPulsar(object):
         if likfunc == 'mark4ln':
             self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat', \
                 dontread=memsave, isort=mslice))
-            #self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
-            #        dontread=self.twoComponentNoise))
+            self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
+                    dontread=self.twoComponentNoise))
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
             self.UtF = np.array(h5df.getData(self.name, 'pic_UtF', dontread=memsave))
             self.UtD = np.array(h5df.getData(self.name, 'pic_UtD'))
@@ -2107,8 +2111,8 @@ class ptaPulsar(object):
         if likfunc == 'mark6' or likfunc == 'mark6fa':
             self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat', \
                 dontread=memsave, isort=mslice))
-            #self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
-            #        dontread=self.twoComponentNoise))
+            self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
+                    dontread=self.twoComponentNoise))
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
             #self.GGtD = np.array(h5df.getData(self.name, 'pic_GGtD', dontread=memsave))
             self.Emat = np.array(h5df.getData(self.name, 'pic_Emat', \
@@ -2140,8 +2144,8 @@ class ptaPulsar(object):
         if likfunc == 'mark7':
             self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat', \
                 dontread=memsave, isort=mslice))
-            #self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
-            #        dontread=self.twoComponentNoise))
+            self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
+                    dontread=self.twoComponentNoise))
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
             self.AGr = np.array(h5df.getData(self.name, 'pic_AGr',
                 dontread=(not self.twoComponentNoise)))
@@ -2156,8 +2160,8 @@ class ptaPulsar(object):
         if likfunc == 'mark8':
             self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat', \
                 dontread=memsave, isort=mslice))
-            #self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
-            #        dontread=self.twoComponentNoise))
+            self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
+                    dontread=self.twoComponentNoise))
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
             #self.GGtD = np.array(h5df.getData(self.name, 'pic_GGtD', dontread=memsave))
             self.Emat = np.array(h5df.getData(self.name, 'pic_Emat', \
@@ -2189,8 +2193,8 @@ class ptaPulsar(object):
         if likfunc == 'mark9':
             self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat', \
                 dontread=memsave, isort=mslice))
-            #self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
-            #        dontread=self.twoComponentNoise))
+            self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
+                    dontread=self.twoComponentNoise))
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
             self.SFmat = np.array(h5df.getData(self.name, 'pic_SFmat', \
                     dontread=memsave, isort=mslice))
@@ -2214,8 +2218,8 @@ class ptaPulsar(object):
         if likfunc == 'mark10':
             self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat', \
                 dontread=memsave, isort=mslice))
-            #self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
-            #        dontread=self.twoComponentNoise))
+            self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
+                    dontread=self.twoComponentNoise))
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
             #self.GGtD = np.array(h5df.getData(self.name, 'pic_GGtD', dontread=memsave))
             self.Emat = np.array(h5df.getData(self.name, 'pic_Emat', \
@@ -2287,6 +2291,22 @@ class ptaPulsar(object):
             else:
                 self.Fdmmat = np.zeros((len(self.toas),0))
                 self.DF = np.zeros((len(self.toas),0))
+
+            # Prepare the new design matrix bases
+            self.gibbs_set_design(gibbsmodel)
+
+            # Yeah, we've already got Zmat from file... But we've got to do this
+            self.Zmat, self.Zmask = self.getZmat(gibbsmodel, which='all')
+            self.Zmat_M, self.Zmask_M = self.getZmat(gibbsmodel, which='M')
+            self.Zmat_F, self.Zmask_F = self.getZmat(gibbsmodel, which='F')
+            self.Zmat_D, self.Zmask_D = self.getZmat(gibbsmodel, which='D')
+            self.Zmat_U, self.Zmask_U = self.getZmat(gibbsmodel, which='U')
+            self.gibbsresiduals = np.zeros(len(self.toas))
+
+            self.gibbscoefficients = np.zeros(self.Zmat.shape[1])
+
+            self.Wvec = np.zeros(self.Mmat.shape[0]-self.Mmat.shape[1])
+            self.Wovec = np.zeros(0)
 
 
 
@@ -4260,7 +4280,8 @@ class ptaLikelihood(object):
                         nSingleDMFreqs=numSingleDMFreqs[pindex], \
                         likfunc=likfunc, compression=compression, \
                         evalCompressionComplement=evalCompressionComplement, \
-                        memsave=True, noGmat=noGmatWrite)
+                        memsave=True, noGmat=noGmatWrite, \
+                        gibbsmodel=self.gibbsmodel)
             except (StandardError, ValueError, IOError, RuntimeError) as err:
                 # Create the Auxiliaries ourselves
 
