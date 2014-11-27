@@ -50,6 +50,7 @@ from datafile import *
 from signals import *
 from seplik import *
 from ptafuncs import *
+from jitterext import *
 #from . import anisotropygammas as ang  # Internal module
 
 from AnisCoefficients_pix import CorrBasis
@@ -7698,11 +7699,14 @@ class ptaLikelihood(object):
         residuals = self.gibbs_get_custom_subresiduals(pp, np.logical_not(zmask))
 
         # Make ZNZ and Sigma
-        ZNZ = np.dot(Zmat.T, ((1.0/psr.Nvec) * Zmat.T).T)
+        #ZNZ = np.dot(Zmat.T, ((1.0/psr.Nvec) * Zmat.T).T)
+        ZNZ = cython_block_shermor_2D(psr.Zmat, psr.Nvec, psr.Jvec, psr.Uinds)
         Sigma = ZNZ.copy()
 
         # ahat is the slice ML value for the coefficients. Need ENx
-        ENx = np.dot(Zmat.T, residuals / psr.Nvec)
+        Nx = cython_block_shermor_0D(residuals, \
+                psr.Nvec, psr.Jvec, psr.Uinds)
+        ENx = np.dot(psr.Zmat.T, Nx)
 
         # Depending on what signals are in the Gibbs model, we'll have to add
         # prior-covariances to ZNZ
@@ -7816,10 +7820,6 @@ class ptaLikelihood(object):
 
         # Get a sample from the coefficient distribution
         aadd = np.dot(Li, np.random.randn(Li.shape[0]))
-        # See what happens if we use numpy
-        # aadd = np.random.multivariate_normal(np.zeros(Sigi.shape[0]), \
-        #        Sigi)
-        #numpy.random.multivariate_normal(mean, cov[, size])
 
         if ml:
             addcoefficients = ahat
@@ -7848,9 +7848,7 @@ class ptaLikelihood(object):
         # We save the quadratic parameters separately
         a[pp] = psr.gibbscoefficients
 
-        #xi2 = np.sum(psr.gibbsresiduals**2 / psr.Nvec)
-
-        return a #, fulladdcoefficients, xi2
+        return a
 
 
 
@@ -8361,8 +8359,11 @@ class ptaLikelihood(object):
         residuals = self.gibbs_get_custom_subresiduals(pp, \
                 np.array([1]*psr.Zmat.shape[1], dtype=np.bool))
 
-        return -0.5 * np.sum(residuals**2 / psr.Nvec) -\
-                0.5 * np.sum(np.log(psr.Nvec))
+        # Calculate the block-inverse in the Cython jitter extension module
+        jldet, jxi2 = cython_block_shermor_1D(residuals, \
+                psr.Nvec, psr.Jvec, psr.Uinds)
+
+        return -0.5 * jxi2 - 0.5 * jldet
 
 
     def gibbs_psr_DM_loglikelihood_mar(self, parameters, pp, mask, allpars):

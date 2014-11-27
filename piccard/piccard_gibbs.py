@@ -15,16 +15,11 @@ import PTMCMC_generic as ptmcmc
 
 
 """
-This file implements a blocked Gibbs sampler. Gibbs sampling is a special case
-implements a specific type of jump, just like all the other MCMC jumps (e.g.
-Metropolis-Hastings), and in Pulsar Timing data analysis it can be used to
-increase the mixing rate of the chain. We still use the PAL/PAL2 version of
-PTMCMC_generic to do the actual MCMC steps, but the steps are performed in
-parameter blocks.
-
-
-Note: this is the second incarnation of the Gibbs sampler, that uses partially
-overlapping blocks. The overlap is in the quadratic parameters.
+This file implements a blocked Gibbs sampler. Gibbs sampling implements a
+specific type of jump in an MCMC, just like e.g. Metropolis-Hastings, and in
+Pulsar Timing data analysis it can be used to increase the mixing rate of the
+chain. We still use the PAL/PAL2 version of PTMCMC_generic to do the actual MCMC
+steps, but the steps are performed in parameter blocks.
 """
 
 def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
@@ -91,7 +86,11 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
     sampler_J = []
     for ii, psr in enumerate(likob.ptapsrs):
         # Start with the noise search for pulsar ii
-        Nmask = likob.gibbs_get_signal_mask(ii, ['efac', 'equad'], ncoeffs)
+        if 'jitter' in likob.gibbsmodel:
+            Nmask = likob.gibbs_get_signal_mask(ii, ['efac', 'equad'], ncoeffs)
+        else:
+            Nmask = likob.gibbs_get_signal_mask(ii, \
+                    ['efac', 'equad', 'jitter', 'cequad'], ncoeffs)
 
         if np.sum(Nmask) > 0:
             psrNpars = apars[Nmask]
@@ -206,7 +205,11 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
             # Jump in the white noise parameters
             sampler = sampler_N[ii]
             if sampler is not None:
-                Nmask = likob.gibbs_get_signal_mask(ii, ['efac', 'equad'])
+                if 'jitter' in likob.gibbsmodel:
+                    Nmask = likob.gibbs_get_signal_mask(ii, ['efac', 'equad'])
+                else:
+                    Nmask = likob.gibbs_get_signal_mask(ii, \
+                            ['efac', 'equad', 'jitter', 'cequad'])
                 psrNpars = apars[Nmask]
 
                 sampler.logl.args = [ii, Nmask, apars]
@@ -360,15 +363,6 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
                     chainfile_b.write('\n')
                 chainfile.close()
             stepind = 0
-
-        #if not noWrite:
-        #    xi2file = open(xi2filename, 'a+')
-
-        #    xi2file.write('{0}\t'.format(step))
-        #    xi2file.write('\t'.join(["%.17e"%\
-        #            (xi2[kk]) for kk in range(len(xi2))]))
-        #    xi2file.write('\n')
-        #    xi2file.close()
 
         percent = (step * 100.0 / steps)
         sys.stdout.write("\rGibbs: %d%%" %percent)
@@ -535,8 +529,12 @@ def gibbs_loglikelihood(likob, aparameters):
     ldet = 0
     for ii, psr in enumerate(likob.ptapsrs):
         # The quadratic form of the residuals
-        xi2 += np.sum(psr.gibbsresiduals ** 2 / psr.Nvec)
-        ldet += np.sum(np.log(psr.Nvec))
+        #xi2 += np.sum(psr.gibbsresiduals ** 2 / psr.Nvec)
+        #ldet += np.sum(np.log(psr.Nvec))
+        jldet, jxi2 = cython_block_shermor_1D(psr.gibbsresiduals, \
+                psr.Nvec, psr.Jvec, psr.Uinds)
+        xi2 += jxi2
+        ldet += jldet
 
         # Jitter is done per pulsar
         if 'jitter' in likob.gibbsmodel:
@@ -994,7 +992,7 @@ class pulsarJNoiseLL(object):
                 self.Jvec += 10**(2*par) * self.fNvec[ii]
 
         # From the jitter extension module
-        Jldet, xNx = cython_block_shermor_inv(self.residuals, \
+        Jldet, xNx = cython_block_shermor_1D(self.residuals, \
                 self.Nvec, self.Jvec, self.Uinds)
 
         return -0.5 * xNx - 0.5 * Jldet - \
@@ -2658,11 +2656,14 @@ def gibbs_sample_a(likob, a, ml=False):
         npus = likob.npu[ii]
 
         # Make ZNZ and Sigma
-        ZNZ = np.dot(psr.Zmat.T, ((1.0/psr.Nvec) * psr.Zmat.T).T)
+        #ZNZ = np.dot(psr.Zmat.T / psr.Nvec, psr.Zmat)
+        ZNZ = cython_block_shermor_2D(psr.Zmat, psr.Nvec, psr.Jvec, psr.Uinds)
         Sigma = ZNZ.copy()
 
         # ahat is the slice ML value for the coefficients. Need ENx
-        ENx = np.dot(psr.Zmat.T, psr.detresiduals / psr.Nvec)
+        Nx = cython_block_shermor_0D(psr.detresiduals, \
+                psr.Nvec, psr.Jvec, psr.Uinds)
+        ENx = np.dot(psr.Zmat.T, Nx)
 
         # Depending on what signals are in the Gibbs model, we'll have to add
         # prior-covariances to ZNZ
@@ -2785,7 +2786,10 @@ def gibbs_sample_a(likob, a, ml=False):
         psr.gibbssubresiduals = np.dot(psr.Zmat, addcoefficients)
         psr.gibbsresiduals = psr.detresiduals - psr.gibbssubresiduals
 
-        xi2[ii] = np.sum(psr.gibbsresiduals**2 / psr.Nvec)
+        #xi2[ii] = np.sum(psr.gibbsresiduals**2 / psr.Nvec)
+        # ZNZ = python_block_shermor_2d(psr.Zmat, psr.Nvec, psr.Jvec, psr.Uinds)
+        tmp, xi2[ii] = cython_block_shermor_1D(psr.gibbsresiduals, \
+                psr.Nvec, psr.Jvec, psr.Uinds)
 
     return a, b, xi2
 
