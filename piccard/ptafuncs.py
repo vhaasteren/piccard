@@ -177,7 +177,7 @@ def block_diag(*arrs):
 
 
 
-def quantize_fast(times, dt=10.0, calcInverse=False):
+def quantize_fast(times, dt=10.0, calci=False):
     """ Adapted from libstempo: produce the quantisation matrix fast """
     isort = np.argsort(times)
     
@@ -199,7 +199,7 @@ def quantize_fast(times, dt=10.0, calcInverse=False):
     
     rv = (t, U)
 
-    if calcInverse:
+    if calci:
         Ui = ((1.0/np.sum(U, axis=0)) * U).T
         rv = (t, U, Ui)
 
@@ -975,13 +975,15 @@ def quant2ind(U):
 
     return inds
 
-def quantreduce(U, flags):
+def quantreduce(U, eat, flags, calci=False):
     """
     Reduce the quantization matrix by removing the observing epochs that do not
     require any jitter parameters.
 
     @param U:       quantization matrix
+    @param eat:     Epoch-averaged toas
     @param flags:   the flags of the TOAs
+    @param calci:   Calculate pseudo-inverse yes/no
 
     @return     newU, jflags (flags that need jitter)
     """
@@ -998,7 +1000,16 @@ def quantreduce(U, flags):
         if np.any(ecnt > 1):
             jflags.append(flagval)
 
-    return U[:, incepoch], jflags
+    Un = U[:, incepoch]
+    eatn = eat[incepoch]
+
+    if calci:
+        Ui = ((1.0/np.sum(Un, axis=0)) * Un).T
+        rv = (Un, Ui, eatn, jflags)
+    else:
+        rv = (Un, eatn, jflags)
+
+    return rv
 
 
 

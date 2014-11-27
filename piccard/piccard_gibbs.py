@@ -27,7 +27,6 @@ Note: this is the second incarnation of the Gibbs sampler, that uses partially
 overlapping blocks. The overlap is in the quadratic parameters.
 """
 
-
 def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
     """
     Run a blocked Gibbs sampler on the full likelihood, including all quadratic
@@ -972,10 +971,6 @@ class pulsarJNoiseLL(object):
     def setNewData(self, residuals):
         self.residuals = residuals
 
-    ################ CONTINUE HERE ##################
-    ################ CONTINUE HERE ##################
-    ################ CONTINUE HERE ##################
-
     def loglikelihood(self, parameters):
         """
         @param parameters:  the vector with model parameters
@@ -983,23 +978,23 @@ class pulsarJNoiseLL(object):
         self.Nvec[:] = 0.0
         self.Jvec[:] = 0.0
         for ii, par in enumerate(parameters):
-            if self.vsig_id == 'efac':
+            if self.vsig_id[ii] == 'efac':
                 self.Nvec += par**2 * self.vNvec[ii]
-            elif self.vsig_id == 'equad':
+            elif self.vsig_id[ii] == 'equad':
                 self.Nvec += 10**(2*par) * self.vNvec[ii]
-            elif self.vsig_id in ['jitter', 'cequad']:
+            elif self.vsig_id[ii] in ['jitter', 'cequad']:
                 self.Jvec += 10**(2*par) * self.vNvec[ii]
 
         for ii, par in enumerate(self.fval):
-            if self.fsig_id == 'efac':
+            if self.fsig_id[ii] == 'efac':
                 self.Nvec += par**2 * self.fNvec[ii]
-            elif self.fsig_id == 'equad':
+            elif self.fsig_id[ii] == 'equad':
                 self.Nvec += 10**(2*par) * self.fNvec[ii]
-            elif self.fsig_id in ['jitter', 'cequad']:
+            elif self.fsig_id[ii] in ['jitter', 'cequad']:
                 self.Jvec += 10**(2*par) * self.fNvec[ii]
 
         # From the jitter extension module
-        Jldet, xNx = block_shermor_inv(self.residuals, \
+        Jldet, xNx = cython_block_shermor_inv(self.residuals, \
                 self.Nvec, self.Jvec, self.Uinds)
 
         return -0.5 * xNx - 0.5 * Jldet - \
@@ -1945,6 +1940,69 @@ def gibbs_sample_loglik_J(likob, a, curpars, loglik_J, ml=False):
 
     return newpars
 
+def gibbs_prepare_loglik_NJ(likob, curpars):
+    """
+    Prepares the likelihood objects for white noise of all pulsars, where the
+    white noise includes the jitter/correlated equads
+
+    @param likob:   the full likelihood object
+    @param curpars: the current value of all parameters
+    """
+
+    loglik_NJ = []
+    for ii, psr in enumerate(likob.ptapsrs):
+        tempres = np.zeros(len(psr.residuals))
+        loglik_NJ.append(pulsarJNoiseLL(tempres, psr.Uinds, ii))
+        pnl = loglik_NJ[-1]
+
+        # Add the signals
+        for ss, signal in enumerate(likob.ptasignals):
+            pstart = curpars[signal['parindex']]
+            if signal['pulsarind'] == ii and \
+                    signal['stype'] in ['efac', 'equad', 'cequad', 'jitter']:
+                if signal['stype'] in ['cequad', 'jitter']:
+                    nv = signal['Jvec']
+                else:
+                    nv = signal['Nvec']
+
+
+                pnl.addSignal(nv, signal['stype'], signal['pmin'][0], \
+                        signal['pmax'][0], pstart, signal['pwidth'][0], \
+                        signal['parindex'], fixed=(not signal['bvary'][0]))
+
+        temp = pnl.loglikelihood(pnl.pstart)
+        ndim = pnl.dimensions()
+
+        pnl.initSampler(singleChain=ndim*20, fullChain=ndim*8000, \
+                covUpdate=ndim*400)
+
+    return loglik_NJ
+
+def gibbs_sample_loglik_NJ(likob, curpars, loglik_NJ, ml=False):
+    """
+    @param likob:       the full likelihood object
+    @param curpars:     the current value of all non-Gibbs parameters
+    @param loglik_NJ:   List of prepared likelihood/samplers for the noise
+    @param ml:          If True, return ML values (PSO), not a random sample
+    """
+    newpars = curpars.copy()
+
+    # Now do the numerical ones through sampling with an MCMC
+    for pnl in loglik_NJ:
+        # Update the sampler with the new Gibbs residuals
+        psr = likob.ptapsrs[pnl.psrindex]
+        pnl.setNewData(psr.gibbsresiduals)
+
+        if ml:
+            newpars[pnl.pindex] = pnl.runPSO()
+        else:
+            p0 = newpars[pnl.pindex]
+            newpars[pnl.pindex] = pnl.runSampler(p0)
+
+    return newpars
+
+
+
 
 def gibbs_prepare_loglik_Phi(likob, curpars):
     """
@@ -2609,34 +2667,34 @@ def gibbs_sample_a(likob, a, ml=False):
         # Depending on what signals are in the Gibbs model, we'll have to add
         # prior-covariances to ZNZ
         zindex = 0
-        if 'design' in likob.gibbsmodel:
+        if 'design' in likob.gibbsmodel and nms > 0:
             # Do nothing, she'll be 'right
             zindex += nms
 
-        if 'corrim' in likob.gibbsmodel:
+        if 'corrim' in likob.gibbsmodel and nfs > 0:
             (pSinv_vec, pPvec) = gibbs_psr_corrs_im(likob, ii, a)
 
             ind = range(zindex, zindex + nfs)
             Sigma[ind, ind] += pSinv_vec
             ENx[ind] -= pPvec
             zindex += nfs
-        elif 'rednoise' in likob.gibbsmodel:
+        elif 'rednoise' in likob.gibbsmodel and nfs > 0:
             # Don't do this if it is included in corrim
             ind = range(zindex, zindex+nfs)
             Sigma[ind, ind] += 1.0 / likob.Phivec[findex:findex+nfs]
             zindex += nfs
 
-        if 'dm' in likob.gibbsmodel:
+        if 'dm' in likob.gibbsmodel and nfdms > 0:
             ind = range(zindex, zindex+nfdms)
             Sigma[ind, ind] += 1.0 / likob.Thetavec[fdmindex:fdmindex+nfdms]
             zindex += nfdms
 
-        if 'jitter' in likob.gibbsmodel:
+        if 'jitter' in likob.gibbsmodel and npus > 0:
             ind = range(zindex, zindex+npus)
             Sigma[ind, ind] += 1.0 / psr.Jvec
             zindex += npus
 
-        if 'correx' in likob.gibbsmodel and likob.have_gibbs_corr:
+        if 'correx' in likob.gibbsmodel and likob.have_gibbs_corr and nfs > 0:
             (pSinv_vec, pPvec) = gibbs_psr_corrs_ex(likob, ii, a)
 
             ind = range(zindex, zindex + nfs)
@@ -2825,7 +2883,7 @@ def RunGibbs_mark1(likob, steps, chainsdir, noWrite=False):
     1) a, the Fourier coefficients and timing model parameters
     2) N, the white noise parameters
     3) Phi, the red noise PSD coefficients
-    4) Jitter: pulse Jitter. May be included in N later on
+    4) Jitter: pulse Jitter. Can be included in N (default)
     5) Deterministic: all deterministic sources not described elsewhere
 
     Note that this blocked Gibbs sampler has more parameters than the usual
@@ -2871,8 +2929,16 @@ def RunGibbs_mark1(likob, steps, chainsdir, noWrite=False):
 
     # Make a list of all the blocked signal samplers (except for the coefficient
     # samplers)
-    loglik_N = gibbs_prepare_loglik_N(likob, pars)
-    loglik_J = gibbs_prepare_loglik_J(likob, pars)
+    if 'jitter' in likob.gibbsmodel:
+        # Jitter is present explicitly (non-marginalized)
+        loglik_N = gibbs_prepare_loglik_N(likob, pars)
+        loglik_J = gibbs_prepare_loglik_J(likob, pars)
+        loglik_NJ = []
+    else:
+        # Jitter is present only implicitly: use jitter extension module
+        loglik_N = []
+        loglik_J = []
+        loglik_NJ = gibbs_prepare_loglik_NJ(likob, pars)
     loglik_Det = gibbs_prepare_loglik_Det(likob, pars)
 
     if not 'corrim' in likob.gibbsmodel:
@@ -2941,8 +3007,11 @@ def RunGibbs_mark1(likob, steps, chainsdir, noWrite=False):
                 # Just try again
                 #raise
 
-            # Generate new white noise parameters
+            # Generate new white noise parameters (whithout jitter/cequad)
             pars = gibbs_sample_loglik_N(likob, pars, loglik_N)
+
+            # Generate new white noise parameters (whith jitter/cequad)
+            pars = gibbs_sample_loglik_NJ(likob, pars, loglik_NJ)
 
             # Generate new red noise parameters
             pars = gibbs_sample_loglik_Phi(likob, a, pars, loglik_PSD)
@@ -3011,27 +3080,3 @@ def RunGibbs_mark1(likob, steps, chainsdir, noWrite=False):
         sys.stdout.flush()
 
     sys.stdout.write("\n")
-
-def quantize_fast(times,dt=1):
-    """ From libstempo: produce the quantisation matrix fast """
-    N = np
-
-    isort = N.argsort(times)
-    
-    bucket_ref = [times[isort[0]]]
-    bucket_ind = [[isort[0]]]
-    
-    for i in isort[1:]:
-        if times[i] - bucket_ref[-1] < dt:
-            bucket_ind[-1].append(i)
-        else:
-            bucket_ref.append(times[i])
-            bucket_ind.append([i])
-    
-    t = N.array([N.mean(times[l]) for l in bucket_ind],'d')
-    
-    U = N.zeros((len(times),len(bucket_ind)),'d')
-    for i,l in enumerate(bucket_ind):
-        U[l,i] = 1
-    
-    return t, U

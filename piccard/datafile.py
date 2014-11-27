@@ -262,7 +262,7 @@ class DataFile(object):
     @param maxobs:      Maximum number of observations (if None, use standard)
     """
     def addTempoPulsar(self, parfile, timfile, iterations=1, mode='replace',
-            maxobs=None):
+            maxobs=20000):
         # Check whether the two files exist
         if not os.path.isfile(parfile) or not os.path.isfile(timfile):
             raise IOError, "Cannot find parfile (%s) or timfile (%s)!" % (parfile, timfile)
@@ -353,16 +353,6 @@ class DataFile(object):
             raise ValueError("Pulsar position not properly available")
         self.writeData(psrGroup, 'raj', np.float(raj), overwrite=overwrite)
         self.writeData(psrGroup, 'decj', np.float(decj), overwrite=overwrite)
-
-        # Write the unit conversions for the design matrix (to timing model
-        # parameters
-        #unitConversion = t2pulsar.getUnitConversion()
-        #self.writeData(psrGroup, 'unitConversion', unitConversion, overwrite=overwrite)
-
-        # Do not write the (co)G-matrix anymore
-        # U, s, Vh = sl.svd(desmat)
-        # self.writeData(psrGroup, 'Gmatrix', U[:, desmat.shape[1]:], overwrite=overwrite)
-        # self.writeData(psrGroup, 'coGmatrix', U[:, :desmat.shape[1]], overwrite=overwrite)
 
         # Now obtain and write the timing model parameters
         tmpname = ['Offset'] + list(t2pulsar.pars)

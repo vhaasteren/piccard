@@ -3,35 +3,75 @@ cimport numpy as np
 from libc.math cimport log
 
 
-def block_shermor_inv(r, Nvec, Jvec, select):
+def python_block_shermor_inv(r, Nvec, Jvec, Uinds):
     """
     Sherman-Morrison block-inversion for Jitter
 
     @param r:       The timing residuals, array (n)
     @param Nvec:    The white noise amplitude, array (n)
     @param Jvec:    The jitter amplitude, array (k)
-    @param select:  The start/finish indices for the jitter blocks (k x 2)
+    @param Uinds:   The start/finish indices for the jitter blocks (k x 2)
 
     For this version, the residuals need to be sorted properly so that all the
     blocks are continuous in memory. Here, there are n residuals, and k jitter
     parameters.
     """
-    Nir = np.zeros(len(r))
-    nepochs = len(Jvec)
-
     ni = 1.0 / Nvec
-    ji = 1.0 / Jvec
     Jldet = np.einsum('i->', np.log(Nvec))
     xNx = np.dot(r, r * ni)
 
-    for cc in range(nepochs):
-        rblock = r[select[cc,0]:select[cc,1]]
-        niblock = ni[select[cc,0]:select[cc,1]]
+    for cc, jv in enumerate(Jvec):
+        if jv > 0.0:
+            rblock = r[Uinds[cc,0]:Uinds[cc,1]]
+            niblock = ni[Uinds[cc,0]:Uinds[cc,1]]
 
-        beta = 1.0 / (np.einsum('i->', niblock)+ji[cc])
-        xNx -= beta * np.dot(rblock, niblock)**2
-        Jldet += np.log(Jvec[cc]) - np.log(beta)
+            beta = 1.0 / (np.einsum('i->', niblock)+1.0/jv)
+            xNx -= beta * np.dot(rblock, niblock)**2
+            Jldet += np.log(jv) - np.log(beta)
 
+    return Jldet, xNx
+
+def cython_block_shermor_inv( \
+        np.ndarray[np.double_t,ndim=1] r, \
+        np.ndarray[np.double_t,ndim=1] Nvec, \
+        np.ndarray[np.double_t,ndim=1] Jvec, \
+        np.ndarray[np.int_t,ndim=2] Uinds):
+    """
+    Sherman-Morrison block-inversion for Jitter (Cythonized)
+
+    @param r:       The timing residuals, array (n)
+    @param Nvec:    The white noise amplitude, array (n)
+    @param Jvec:    The jitter amplitude, array (k)
+    @param Uinds:   The start/finish indices for the jitter blocks (k x 2)
+
+    For this version, the residuals need to be sorted properly so that all the
+    blocks are continuous in memory. Here, there are n residuals, and k jitter
+    parameters.
+    """
+    cdef unsigned int cc, ii, rows = len(r), cols = len(Jvec)
+    cdef double Jldet=0.0, ji, beta, xNx=0.0, nir, nisum
+    cdef np.ndarray[np.double_t,ndim=1] ni = np.zeros_like(r, 'd')
+
+    ni = 1.0 / Nvec
+
+    for cc in range(rows):
+        Jldet += log(Nvec[cc])
+        xNx += r[cc]*r[cc]*ni[cc]
+
+    for cc in range(cols):
+        if Jvec[cc] > 0.0:
+            ji = 1.0 / Jvec[cc]
+
+            nir = 0.0
+            nisum = 0.0
+            for ii in range(Uinds[cc,0],Uinds[cc,1]):
+                nisum += ni[ii]
+                nir += r[ii]*ni[ii]
+
+            beta = 1.0 / (nisum + ji)
+            Jldet += log(Jvec[cc]) - log(beta)
+            xNx -= beta * nir * nir
+    
     return Jldet, xNx
 
 
@@ -75,25 +115,24 @@ def basic_cython_block_shermor_inv( \
     Basic version of the Sherman-Morrison block-inversion for Jitter
     (Cythonized version)
     """
-    cdef unsigned int lenr = len(r)
-    cdef unsigned int cc, ii, jj
+    cdef unsigned int cc, ii
     cdef np.ndarray[np.double_t,ndim=1] Nblock = np.random.randn(blocksize)
     cdef np.ndarray[np.double_t,ndim=1] rblock = np.random.randn(blocksize)
     cdef np.ndarray[np.double_t,ndim=1] ni = np.zeros(nblocks, 'd')
-    cdef double Jldet=0.0, ji, beta, xNx=0.0, temp
+    cdef double Jldet=0.0, ji, beta, xNx=0.0, xr
 
     for cc in range(nblocks):
         ji = 1.0 / Jvec[cc]
         ni = 1.0 / Nblock
         beta = 1.0 / (np.sum(ni) + ji)
 
-        temp = 0.0
+        xr = 0.0
         for ii in range(blocksize):
             Jldet += log(Nblock[ii])
             xNx += rblock[ii]*rblock[ii]*ni[ii]
-            temp += rblock[ii]*ni[ii]
+            xr += rblock[ii]*ni[ii]
         Jldet += log(Jvec[cc]) - log(beta)
-        xNx += beta * (temp**2)
+        xNx += beta * (xr**2)
 
     return Jldet, xNx
 

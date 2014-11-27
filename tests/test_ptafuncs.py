@@ -94,7 +94,7 @@ def test_quantinfo():
     flags[18] = 'be3'
     flags = np.array(flags)
 
-    t, U = quantize_fast(toas, dt=1.0)
+    t, U, Ui = quantize_fast(toas, dt=1.0, calci=True)
 
     assert checkquant(U, flags) == False
     assert np.all(quant2ind(U) == \
@@ -102,10 +102,11 @@ def test_quantinfo():
 
     toas = np.array([1.1, 1.2, 3.3, 3.0, 15.4, 15.5, 15.5, 15.6, 13.7, \
             13.8, 16.9, 18.1, 18.2, 18.2, 30.3, 30.4, 30.5, 30.6, 30.7])
-    t, U = quantize_fast(toas, dt=1.0)
+    t, U, Ui = quantize_fast(toas, dt=1.0, calci=True)
+    eat = np.dot(Ui, toas)
     assert checkquant(U, flags) == False
 
-    Umat, jflags = quantreduce(U, flags)
+    Umat, eat, jflags = quantreduce(U, eat, flags)
     assert checkquant(Umat, flags, jflags) == True
 
 

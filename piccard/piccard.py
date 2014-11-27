@@ -121,9 +121,10 @@ class ptaPulsar(object):
         self.Homat = None            # The orthogonal-to compression matrix
         self.Hcmat = None            # The co-compression matrix
         self.Hocmat = None           # The orthogonal co-compression matrix
-        self.Umat = None
-        self.Uimat = None
-        self.avetoas = None
+        self.Umat = None            # Quantization matrix
+        self.Uimat = None           # Pseudo-inverse of Umat
+        self.Uinds = None           # Indices replacing Umat (when sorted)
+        self.avetoas = None         # Epoch-averaged TOA epoch
         self.SFdmmat = None         # Fdmmatrix for the dm frequency lines
         #self.Dmat = None
         self.Dvec = None
@@ -831,7 +832,7 @@ class ptaPulsar(object):
                 print "WARNING: this type of compression is only for testing purposes"
 
                 # Calculate Umat and Ui
-                (self.avetoas, self.Umat, Ui) = quantize_fast(self.toas, calcInverse=True)
+                (self.avetoas, self.Umat, Ui) = quantize_fast(self.toas, calci=True)
                 UUi = np.dot(self.Umat, Ui)
                 GF = np.dot(self.Gmat.T, np.dot(UUi, Ftot))
 
@@ -1118,17 +1119,18 @@ class ptaPulsar(object):
     @param noGmatWrite:     Whether or not to save the G-matrix to file
     @param threshold:       Threshold for compression precision
     @param gibbsmodel:      What coefficients to include in the Gibbs model
+    @param trimquant:       Whether to trim the quantization matrix
 
     """
     def createPulsarAuxiliaries(self, h5df, Tmax, nfreqs, ndmfreqs, \
             twoComponent=False, nSingleFreqs=0, nSingleDMFreqs=0, \
             compression='None', likfunc='mark3', write='likfunc', \
             tmsigpars=None, noGmatWrite=False, threshold=1.0, \
-            gibbsmodel=[]):
+            gibbsmodel=[], trimquant=False):
         # For creating the auxiliaries it does not really matter: we are now
         # creating all quantities per default
         # TODO: set this parameter in another place?
-        if twoComponent and likfunc!='mark11' and likfunc[:5]!='gibbs':
+        if twoComponent and likfunc!='mark11' and likfunc!='gibbs':
             self.twoComponentNoise = True
 
         # Before writing anything to file, we need to know right away how many
@@ -1181,9 +1183,13 @@ class ptaPulsar(object):
             self.Dvec = pic_DMk / (self.freqs**2)
             self.DF = np.zeros((len(self.freqs), 0))
 
-        # Create the dailay averaged residuals
+        # Create the daily averaged residuals
         (self.avetoas, self.Umat, self.Uimat) = \
-                quantize_fast(self.toas, calcInverse=True)
+                quantize_fast(self.toas, calci=True)
+        if trimquant:
+            self.Umat, self.Uimat, self.avetoas, jflags = \
+                    quantreduce(self.Umat, self.avetoas, self.flags, calci=True)
+        self.Uinds = quant2ind(self.Umat)
         Wjit = np.sum(self.Umat, axis=0)
         self.Jweight = np.sum(Wjit * self.Umat, axis=1)
 
@@ -1200,6 +1206,7 @@ class ptaPulsar(object):
             h5df.addData(self.name, 'pic_avetoas', self.avetoas)
             h5df.addData(self.name, 'pic_Umat', self.Umat[self.iisort,:])
             h5df.addData(self.name, 'pic_Uimat', self.Uimat[:,self.iisort])
+            h5df.addData(self.name, 'pic_Uinds', self.Uinds)
             h5df.addData(self.name, 'pic_Jweight', self.Jweight[self.iisort])
 
         # Next we'll need the G-matrices, and the compression matrices.
@@ -1839,7 +1846,7 @@ class ptaPulsar(object):
             # No need to write anything just yet?
             pass
 
-        if likfunc[:5] == 'gibbs' or write == 'all':
+        if likfunc == 'gibbs' or write == 'all':
             # Prepare the new design matrix bases
             self.gibbs_set_design(gibbsmodel)
 
@@ -1904,6 +1911,7 @@ class ptaPulsar(object):
     @param compression:     Whether we use compression (None/frequencies/average)
     @param likfunc:         Which likelihood function to do it for (all/markx/..)
     @param memsave:         Whether to save memory
+    @param noGmat:          Whether or not to read in the G-matrix
 
     """
     def readPulsarAuxiliaries(self, h5df, Tmax, nfreqs, ndmfreqs, \
@@ -2252,7 +2260,7 @@ class ptaPulsar(object):
                     isort=mslice))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
 
-        if likfunc[:5] == 'gibbs':
+        if likfunc == 'gibbs':
             self.Zmat = np.array(h5df.getData(self.name, 'pic_Zmat', \
                     isort=mslice))
             self.tmpConv = np.array(h5df.getData(self.name, 'pic_tmpConv'))
@@ -2260,6 +2268,7 @@ class ptaPulsar(object):
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
             self.Umat = np.array(h5df.getData(self.name, 'pic_Umat', \
                     isort=mslice))
+            self.Uinds = np.array(h5df.getData(self.name, 'pic_Uinds'))
             self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat', \
                     isort=mslice))
 
@@ -3063,7 +3072,7 @@ class ptaLikelihood(object):
                 psr.Nwvec = np.zeros(self.npgs[ii])
                 psr.Nwovec = np.zeros(self.npgos[ii])
 
-            if self.likfunc[:5] in ['gibbs']:
+            if self.likfunc in ['gibbs']:
                 self.npm[ii] = psr.Mmat.shape[1]
                 self.npz[ii] = psr.Zmat.shape[1]
                 self.npm_f[ii] = np.sum(psr.Mmask_F)
@@ -3332,6 +3341,7 @@ class ptaLikelihood(object):
 
             if incEquad:
                 if separateEquads:
+                    uflagvals = list(set(m2psr.flags))  # Unique flags
                     for flagval in uflagvals:
                         newsignal = OrderedDict({
                             "stype":"equad",
@@ -3364,12 +3374,39 @@ class ptaLikelihood(object):
                     signals.append(newsignal)
 
             if incCEquad or incJitter:
-                if not 'jitter' in gibbsmodel and \
-                        not (expandJitter or expandCEquad):
+                if not 'jitter' in gibbsmodel and (expandJitter or expandCEquad):
                     # We are expanding the Jitter/CEquad in the Gibbs sampler
                     gibbsmodel.append('jitter')
-                if separateCEquads:
+                if separateCEquads and likfunc != 'gibbs':
+                    uflagvals = list(set(m2psr.flags))  # Unique flags
                     for flagval in uflagvals:
+                        newsignal = OrderedDict({
+                            "stype":"jitter",
+                            "corr":"single",
+                            "pulsarind":ii,
+                            "flagname":"efacequad",
+                            "flagvalue":flagval,
+                            "bvary":[True],
+                            "pmin":[-10.0],
+                            "pmax":[-4.0],
+                            "pwidth":[0.3],
+                            "pstart":[-8.0],
+                            "prior":'flatlog'
+                            })
+                        signals.append(newsignal)
+                elif separateCEquads and likfunc == 'gibbs':
+                    # Need to decide on number of jitter parameters, and
+                    # number of epochs with jitter first for Gibbs sampler
+                    if not checkTOAsort(m2psr.toas, m2psr.flags, \
+                            which='jitterext', dt=10.0):
+                        raise ValueError("TOAs not jitter-sorted")
+                    (m2psr.avetoas, m2psr.Umat, m2psr.Uimat) = \
+                            quantize_fast(m2psr.toas, calci=True)
+                    m2psr.Umat, m2psr.Uimat, m2psr.avetoas, jflags = \
+                            quantreduce(m2psr.Umat, m2psr.avetoas, m2psr.flags, calci=True)
+                    if not checkquant(m2psr.Umat, m2psr.flags, jflags):
+                        raise ValueError("Quantization matrix error!")
+                    for flagval in jflags:
                         newsignal = OrderedDict({
                             "stype":"jitter",
                             "corr":"single",
@@ -3658,6 +3695,7 @@ class ptaLikelihood(object):
                     signals.append(newsignal)
 
                 if incJitter or incCEquad:
+                    # Still part of 'mark11'
                     (avetoas, Umat) = quantize_fast(m2psr.toas)
                     nmodes = len(avetoas)
                     bvary = [True]*nmodes
@@ -4099,7 +4137,7 @@ class ptaLikelihood(object):
         signals = fullmodel['signals']
         if 'gibbsmodel' in fullmodel:
             gibbsmodel = fullmodel['gibbsmodel']
-        elif likfunc[:5] == 'gibbs':
+        elif likfunc == 'gibbs':
             raise ValueError("gibbsmodel not set in model")
 
         if 'Tmax' in fullmodel:
@@ -4163,8 +4201,16 @@ class ptaLikelihood(object):
         else:
             separateEfacs = (numEfacs + numEquads + numJits) > 2
 
+        if self.likfunc == 'gibbs':
+            # For now, only trim the quantization matrix Umat for Gibbs
+            trimquant = True
+        else:
+            # All mark's do not support quantization trimming yet
+            trimquant = False
+
         # When doing Gibbs, we really do not want to separate this stuff
-        if  likfunc in ['gibbs', 'mark11']:
+        # TODO: Why are we always separating efacs for Gibbs?
+        if likfunc in ['gibbs', 'mark11']:
             separateEfacs[:] = True
 
         # Modify design matrices, and create pulsar Auxiliary quantities
@@ -4228,7 +4274,7 @@ class ptaLikelihood(object):
                                 likfunc=likfunc, compression=compression, \
                                 write='likfunc', tmsigpars=tmsigpars, \
                                 noGmatWrite=noGmatWrite, threshold=threshold, \
-                                gibbsmodel=self.gibbsmodel)
+                                gibbsmodel=self.gibbsmodel, trimquant=trimquant)
 
             # When selecting Fourier modes, like in mark7/mark8, the binclude vector
             # indicates whether or not a frequency is included in the likelihood. By
@@ -4402,7 +4448,7 @@ class ptaLikelihood(object):
         # 'secondary' parameters we describe here. Use 'dimensions' as the start
         # index
         index = self.dimensions
-        if self.likfunc[:5] == 'gibbs':
+        if self.likfunc == 'gibbs':
             for pp, psr in enumerate(self.ptapsrs):
                 # First do the timing model parameters
                 if 'design' in self.gibbsmodel:
@@ -8812,7 +8858,7 @@ class ptaLikelihood(object):
                 lp = self.mark9logprior(parameters)
             elif self.likfunc == 'mark10':  # Mark9 ''
                 lp = self.mark9logprior(parameters)
-            elif self.likfunc[:5] == 'gibbs':
+            elif self.likfunc == 'gibbs':
                 lp = self.mark4logprior(parameters)
         else:
             lp = -1e99
