@@ -406,6 +406,9 @@ class DataFile(object):
             pulsarname = map(str, [t2pulsar.name] * nobs)
             self.writeData(flagGroup, "pulsarname", pulsarname, overwrite=overwrite)
 
+        # Delete the libstempo object
+        del t2pulsar
+
         # Close the HDF5 file
         self.h5file.close()
         self.h5file = None

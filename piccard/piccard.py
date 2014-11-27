@@ -235,7 +235,7 @@ class ptaPulsar(object):
         toas = np.array(h5df.getData(psrname, 'TOAs'))
         flags = np.array(map(str, h5df.getData(psrname, 'efacequad', 'Flags')))
 
-        self.isort, self.iisort = argsortTOAs(toas, flags, which=sort, dt=10.0)
+        self.isort, self.iisort = argsortTOAs(toas, flags, which=sort)
 
         self.toas = np.array(h5df.getData(psrname, 'TOAs'))[self.isort]
         self.flags = np.array(map(str, h5df.getData(psrname, 'efacequad', 'Flags')))[self.isort]
@@ -675,6 +675,7 @@ class ptaPulsar(object):
             # in 'createPulsarAuxiliaries'
             if likfunc[:5] != 'mark4':
                 (self.avetoas, self.Umat) = quantize_fast(self.toas)
+                print("WARNING: ignoring per-backend epoch averaging in compression")
                 Wjit = np.sum(self.Umat, axis=0)
                 self.Jweight = np.sum(Wjit * self.Umat, axis=1)
 
@@ -834,6 +835,7 @@ class ptaPulsar(object):
 
                 # Calculate Umat and Ui
                 (self.avetoas, self.Umat, Ui) = quantize_fast(self.toas, calci=True)
+                print("WARNING: ignoring per-backend epoch averaging in compression")
                 UUi = np.dot(self.Umat, Ui)
                 GF = np.dot(self.Gmat.T, np.dot(UUi, Ftot))
 
@@ -1185,11 +1187,15 @@ class ptaPulsar(object):
             self.DF = np.zeros((len(self.freqs), 0))
 
         # Create the daily averaged residuals
-        (self.avetoas, self.Umat, self.Uimat) = \
-                quantize_fast(self.toas, calci=True)
         if trimquant:
+            (self.avetoas, self.Umat, self.Uimat) = \
+                    quantize_split(self.toas, self.flags, calci=True)
             self.Umat, self.Uimat, self.avetoas, jflags = \
                     quantreduce(self.Umat, self.avetoas, self.flags, calci=True)
+        else:
+            (self.avetoas, self.Umat, self.Uimat) = \
+                    quantize_fast(self.toas, calci=True)
+
         self.Uinds = quant2ind(self.Umat)
         Wjit = np.sum(self.Umat, axis=0)
         self.Jweight = np.sum(Wjit * self.Umat, axis=1)
@@ -3399,10 +3405,10 @@ class ptaLikelihood(object):
                     # Need to decide on number of jitter parameters, and
                     # number of epochs with jitter first for Gibbs sampler
                     if not checkTOAsort(m2psr.toas, m2psr.flags, \
-                            which='jitterext', dt=10.0):
+                            which='jitterext'):
                         raise ValueError("TOAs not jitter-sorted")
                     (m2psr.avetoas, m2psr.Umat, m2psr.Uimat) = \
-                            quantize_fast(m2psr.toas, calci=True)
+                            quantize_split(m2psr.toas, m2psr.flags, calci=True)
                     m2psr.Umat, m2psr.Uimat, m2psr.avetoas, jflags = \
                             quantreduce(m2psr.Umat, m2psr.avetoas, m2psr.flags, calci=True)
                     if not checkquant(m2psr.Umat, m2psr.flags, jflags):
@@ -3698,6 +3704,7 @@ class ptaLikelihood(object):
                 if incJitter or incCEquad:
                     # Still part of 'mark11'
                     (avetoas, Umat) = quantize_fast(m2psr.toas)
+                    print("WARNING: per-backend epoch averaging not supported in mark11")
                     nmodes = len(avetoas)
                     bvary = [True]*nmodes
                     pmin = [-1.0e3]*nmodes

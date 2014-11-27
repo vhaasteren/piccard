@@ -176,8 +176,7 @@ def block_diag(*arrs):
 
 
 
-
-def quantize_fast(times, dt=10.0, calci=False):
+def quantize_fast(times, dt=1.0, calci=False):
     """ Adapted from libstempo: produce the quantisation matrix fast """
     isort = np.argsort(times)
     
@@ -189,6 +188,41 @@ def quantize_fast(times, dt=10.0, calci=False):
             bucket_ind[-1].append(i)
         else:
             bucket_ref.append(times[i])
+            bucket_ind.append([i])
+    
+    t = np.array([np.mean(times[l]) for l in bucket_ind],'d')
+    
+    U = np.zeros((len(times),len(bucket_ind)),'d')
+    for i,l in enumerate(bucket_ind):
+        U[l,i] = 1
+    
+    rv = (t, U)
+
+    if calci:
+        Ui = ((1.0/np.sum(U, axis=0)) * U).T
+        rv = (t, U, Ui)
+
+    return rv
+
+
+def quantize_split(times, flags, dt=1.0, calci=False):
+    """
+    As quantize_fast, but now split the blocks per backend. Note: for
+    efficiency, this function assumes that the TOAs have been sorted by
+    argsortTOAs. This is _NOT_ checked.
+    """
+    isort = np.arange(len(times))
+    
+    bucket_ref = [times[isort[0]]]
+    bucket_flag = [flags[isort[0]]]
+    bucket_ind = [[isort[0]]]
+    
+    for i in isort[1:]:
+        if times[i] - bucket_ref[-1] < dt and flags[i] == bucket_flag[-1]:
+            bucket_ind[-1].append(i)
+        else:
+            bucket_ref.append(times[i])
+            bucket_flag.append(flags[i])
             bucket_ind.append([i])
     
     t = np.array([np.mean(times[l]) for l in bucket_ind],'d')
@@ -785,7 +819,7 @@ def bwmsignal_old(parameters, raj, decj, t):
     return ap * (10**parameters[1]) * heaviside(t - parameters[0]) * (t - parameters[0])
 
 
-def argsortTOAs(toas, flags, which=None, dt=10.0):
+def argsortTOAs(toas, flags, which=None, dt=1.0):
     """
     Return the sort, and the inverse sort permutations of the TOAs, for the
     requested type of sorting
@@ -843,7 +877,7 @@ def argsortTOAs(toas, flags, which=None, dt=10.0):
 
     return isort, iisort
 
-def checkTOAsort(toas, flags, which=None, dt=10.0):
+def checkTOAsort(toas, flags, which=None, dt=1.0):
     """
     Check whether the TOAs are indeed sorted as they should be according to the
     definition in argsortTOAs
@@ -933,6 +967,7 @@ def checkquant(U, flags, uflagvals=None):
                 epinds = np.flatnonzero(col)
                 if len(epinds) != epinds[-1] - epinds[0] + 1:
                     rv = False
+                    print("WARNING: checkquant found non-continuous blocks")
                     #raise ValueError("quantization matrix epochs not continuous")
         
 
@@ -940,15 +975,18 @@ def checkquant(U, flags, uflagvals=None):
 
     if np.any(epochflags > 1):
         rv = False
+        print("WARNING: checkquant found multiple backends for an epoch")
         #raise ValueError("Some observing epochs include multiple backends")
 
     if np.any(epochflags < 1):
         rv = False
+        print("WARNING: checkquant found epochs without observations (eflags)")
         #raise ValueError("Some observing epochs include no observations... ???")
 
     obsum = np.sum(U, axis=0)
     if np.any(obsum < 1):
         rv = False
+        print("WARNING: checkquant found epochs without observations (all)")
         #raise ValueError("Some observing epochs include no observations... ???")
 
     return rv
