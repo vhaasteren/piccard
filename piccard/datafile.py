@@ -259,10 +259,11 @@ class DataFile(object):
                         entire pulsar group. Overwrite overwrites all data, but
                         does not delete the auxiliary fields. New requires the
                         pulsar not to exist, and throws an exception otherwise.
+    @param dofit:       Whether or not to do a fit at first (default: False)
     @param maxobs:      Maximum number of observations (if None, use standard)
     """
-    def addTempoPulsar(self, parfile, timfile, iterations=1, mode='replace',
-            maxobs=20000):
+    def addTempoPulsar(self, parfile, timfile, iterations=1, mode='replace', \
+            dofit = False, maxobs=20000):
         # Check whether the two files exist
         if not os.path.isfile(parfile) or not os.path.isfile(timfile):
             raise IOError, "Cannot find parfile (%s) or timfile (%s)!" % (parfile, timfile)
@@ -294,7 +295,7 @@ class DataFile(object):
 
         # Load pulsar data from the libstempo library
         t2pulsar = t2.tempopulsar('./'+relparfile, './'+reltimfile, \
-                maxobs=maxobs)
+                dofit=dofit, maxobs=maxobs)
 
         # Load the entire par-file into memory, so that we can save it in the
         # HDF5 file
