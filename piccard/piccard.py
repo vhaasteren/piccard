@@ -1013,6 +1013,8 @@ class ptaPulsar(object):
         ndmf = self.Fdmmat.shape[1]
         zmask = np.zeros(0, dtype=np.bool)
 
+        # dmask is the mask for the design matrix part (in case we have
+        # non-linear analysis, or Gibbs sampling with specialized conditionals)
         if which == 'F':
             dmask = self.Mmask_F
         elif which == 'D':
@@ -7728,13 +7730,13 @@ class ptaLikelihood(object):
 
         # Make ZNZ and Sigma
         #ZNZ = np.dot(Zmat.T, ((1.0/psr.Nvec) * Zmat.T).T)
-        ZNZ = cython_block_shermor_2D(psr.Zmat, psr.Nvec, psr.Jvec, psr.Uinds)
+        ZNZ = cython_block_shermor_2D(Zmat, psr.Nvec, psr.Jvec, psr.Uinds)
         Sigma = ZNZ.copy()
 
         # ahat is the slice ML value for the coefficients. Need ENx
         Nx = cython_block_shermor_0D(residuals, \
                 psr.Nvec, psr.Jvec, psr.Uinds)
-        ENx = np.dot(psr.Zmat.T, Nx)
+        ENx = np.dot(Zmat.T, Nx)
 
         # Depending on what signals are in the Gibbs model, we'll have to add
         # prior-covariances to ZNZ

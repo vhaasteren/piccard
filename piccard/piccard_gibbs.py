@@ -240,6 +240,9 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
                     i0=step-1, thin=1)
 
                 if not np.all(apars[Dmask] == sampler._chain[step,:]):
+                    # NOTE: RvH 20141129: What is the difference between these
+                    #       two functions?
+                    #
                     # Step accepted
                     #likob.gibbs_current_a, bi, xi2 = \
                     #        likob.gibbs_sample_psr_quadratics(apars[:ndim], \
@@ -311,6 +314,8 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
         # parameters we had not had before...
         # DO WE DO THE FULL MODEL, OR JUST THE COMPLEMENTARY MODEL???????????????????????????????????????
         for ii, psr in enumerate(likob.ptapsrs):
+            # NOTE: RvH 20141129: We definitely do not want to re-calculate all
+            #       these quadratics. We can subtract plenty of 'm. Which ones?
             likob.gibbs_current_a = \
                     likob.gibbs_sample_psr_quadratics(apars[:ndim], \
                     likob.gibbs_current_a, ii, which='all')
