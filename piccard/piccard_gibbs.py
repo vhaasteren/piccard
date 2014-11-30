@@ -53,9 +53,9 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
         chainfile = open(chainfilename, 'w')
         chainfile.close()
 
-        chainfilename_b = chainsdir + '/chain_1-b.txt'
-        chainfile_b = open(chainfilename_b, 'w')
-        chainfile_b.close()
+        #chainfilename_b = chainsdir + '/chain_1-b.txt'
+        #chainfile_b = open(chainfilename_b, 'w')
+        #chainfile_b.close()
 
 
         # Also save the residuals for all pulsars
@@ -69,7 +69,7 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
 
     # The actual (Gibbs) MCMC chain output:
     samples = np.zeros((min(dumpint, steps), ndim+ncoeffs))
-    samples2 = np.zeros((min(dumpint, steps), ncoeffs))
+    #samples2 = np.zeros((min(dumpint, steps), ncoeffs))
     loglik = np.zeros(min(dumpint, steps))
     logpost = np.zeros(min(dumpint, steps))
 
@@ -359,14 +359,14 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
                     chainfile.write('\n')
                 chainfile.close()
 
-                chainfile_b = open(chainfilename_b, 'a+')
-                for jj in range(nwrite):
-                    chainfile_b.write('%.17e\t  %.17e\t  0.0\t' % (logpost[jj], \
-                        loglik[jj]))
-                    chainfile_b.write('\t'.join(["%.17e"%\
-                            (samples2[jj,kk]) for kk in range(ncoeffs)]))
-                    chainfile_b.write('\n')
-                chainfile.close()
+                #chainfile_b = open(chainfilename_b, 'a+')
+                #for jj in range(nwrite):
+                #    chainfile_b.write('%.17e\t  %.17e\t  0.0\t' % (logpost[jj], \
+                #        loglik[jj]))
+                #    chainfile_b.write('\t'.join(["%.17e"%\
+                #            (samples2[jj,kk]) for kk in range(ncoeffs)]))
+                #    chainfile_b.write('\n')
+                #chainfile_b.close()
             stepind = 0
 
         percent = (step * 100.0 / steps)
@@ -2918,13 +2918,14 @@ def RunGibbs_mark1(likob, steps, chainsdir, noWrite=False):
         chainfile = open(chainfilename, 'w')
         chainfile.close()
 
-        chainfilename_b = chainsdir + '/chain_1-b.txt'
-        chainfile_b = open(chainfilename_b, 'w')
-        chainfile_b.close()
+        # Debugging purposes
+        #chainfilename_b = chainsdir + '/chain_1-b.txt'
+        #chainfile_b = open(chainfilename_b, 'w')
+        #chainfile_b.close()
 
-        xi2filename = chainsdir + '/xi2.txt'
-        xi2file = open(xi2filename, 'w')
-        xi2file.close()
+        #xi2filename = chainsdir + '/xi2.txt'
+        #xi2file = open(xi2filename, 'w')
+        #xi2file.close()
 
         # Also save the residuals for all pulsars
         likob.saveResiduals(chainsdir)
@@ -2976,7 +2977,7 @@ def RunGibbs_mark1(likob, steps, chainsdir, noWrite=False):
                 runchain=False)
 
     samples = np.zeros((min(dumpint, steps), ndim+ncoeffs))
-    samples2 = np.zeros((min(dumpint, steps), ncoeffs))
+    #samples2 = np.zeros((min(dumpint, steps), ncoeffs))
 
     loglik = np.zeros(min(dumpint, steps))
     logpost = np.zeros(min(dumpint, steps))
@@ -2999,8 +3000,16 @@ def RunGibbs_mark1(likob, steps, chainsdir, noWrite=False):
                 # Generate new coefficients
                 a, b, xi2 = gibbs_sample_a(likob, a)
 
+                # This is the function from the mark2 Gibbs sampler. However,
+                # that one does not transform the quadratic parameters, and has
+                # the values of b in a.
+                #for pp, psr in enumerate(likob.ptapsrs):
+                #    likob.gibbs_current_a = a
+                #    a = likob.gibbs_sample_psr_quadratics(pars, a, pp, which='all')
+                #b = a
+
                 samples[stepind, ndim:] = np.hstack(a)
-                samples2[stepind, :] = np.hstack(b)
+                #samples2[stepind, :] = np.hstack(b)
 
                 doneIteration = True
 
@@ -3065,24 +3074,24 @@ def RunGibbs_mark1(likob, steps, chainsdir, noWrite=False):
                     chainfile.write('\n')
                 chainfile.close()
 
-                chainfile_b = open(chainfilename_b, 'a+')
-                for jj in range(nwrite):
-                    chainfile_b.write('%.17e\t  %.17e\t  0.0\t' % (logpost[jj], \
-                        loglik[jj]))
-                    chainfile_b.write('\t'.join(["%.17e"%\
-                            (samples2[jj,kk]) for kk in range(ncoeffs)]))
-                    chainfile_b.write('\n')
-                chainfile.close()
+                #chainfile_b = open(chainfilename_b, 'a+')
+                #for jj in range(nwrite):
+                #    chainfile_b.write('%.17e\t  %.17e\t  0.0\t' % (logpost[jj], \
+                #        loglik[jj]))
+                #    chainfile_b.write('\t'.join(["%.17e"%\
+                #            (samples2[jj,kk]) for kk in range(ncoeffs)]))
+                #    chainfile_b.write('\n')
+                #chainfile_b.close()
             stepind = 0
 
-        if not noWrite:
-            xi2file = open(xi2filename, 'a+')
+        #if not noWrite:
+        #    xi2file = open(xi2filename, 'a+')
 
-            xi2file.write('{0}\t'.format(step))
-            xi2file.write('\t'.join(["%.17e"%\
-                    (xi2[kk]) for kk in range(len(xi2))]))
-            xi2file.write('\n')
-            xi2file.close()
+        #    xi2file.write('{0}\t'.format(step))
+        #    xi2file.write('\t'.join(["%.17e"%\
+        #            (xi2[kk]) for kk in range(len(xi2))]))
+        #    xi2file.write('\n')
+        #    xi2file.close()
 
         percent = (step * 100.0 / steps)
         sys.stdout.write("\rGibbs: %d%%" %percent)

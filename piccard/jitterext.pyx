@@ -1,6 +1,6 @@
 import numpy as np
 cimport numpy as np
-from libc.math cimport log
+from libc.math cimport log, sqrt
 
 
 def cython_block_shermor_0D( \

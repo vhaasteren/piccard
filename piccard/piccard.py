@@ -7874,6 +7874,7 @@ class ptaLikelihood(object):
         #psr.gibbscoefficients[:psr.Mmat.shape[1]] = np.dot(psr.tmpConv, \
         #        addcoefficients[:psr.Mmat.shape[1]])
         # That's right. We do _not_ adjust the Gibbs parameters anymore :)
+        # For mark2, we see that as a feature, not a bug
 
         # We save the quadratic parameters separately
         a[pp] = psr.gibbscoefficients
