@@ -1020,7 +1020,7 @@ class ptaPulsar(object):
 
         @param gibbsmodel:  List of which quadratics are available
         @param which:       Which quadratics to vary (not fixed)
-                            Options: all, F, D, U
+                            Options: all, F, D, U, N (N means all but U)
 
         @return:    The partial Z-matrix, and it's mask compared to the full
                     Z-matrix
@@ -1049,8 +1049,9 @@ class ptaPulsar(object):
             #    dmask = np.logical_and(dmask, \
             #            np.logical_not(self.Mmask_U))
             dmask = self.Mmask_M
-                    
-        else:
+        elif which in ['all', 'N']:
+            dmask = np.array([1]*self.Mmat_g.shape[1], dtype=np.bool)
+        else: # Just select all...
             dmask = np.array([1]*self.Mmat_g.shape[1], dtype=np.bool)
 
         if 'design' in gibbsmodel:
@@ -1061,7 +1062,7 @@ class ptaPulsar(object):
         zmask = np.append(zmask, dmask)
 
         if nf > 0 and 'rednoise' in gibbsmodel and \
-                (which == 'all' or which == 'F'):
+                (which in ['all', 'F', 'N']):
             Ft_2 = np.append(Ft_1, self.Fmat, axis=1)
 
             zmask = np.append(zmask, \
@@ -1074,7 +1075,7 @@ class ptaPulsar(object):
                         np.array([0]*self.Fmat.shape[1], dtype=np.bool))
 
         if ndmf > 0 and 'dm' in gibbsmodel and \
-            (which == 'all' or which == 'D'):
+            (which in ['all', 'D', 'N']):
             Ft_3 = np.append(Ft_2, self.DF, axis=1)
 
             zmask = np.append(zmask, \
@@ -1087,7 +1088,7 @@ class ptaPulsar(object):
                         np.array([0]*self.DF.shape[1], dtype=np.bool))
 
         if 'jitter' in gibbsmodel and \
-            (which == 'all' or which == 'U'):
+            (which in ['all', 'U']):
             Ft_4 = np.append(Ft_3, self.Umat, axis=1)
 
             zmask = np.append(zmask, \
@@ -1100,7 +1101,7 @@ class ptaPulsar(object):
                         np.array([0]*self.Umat.shape[1], dtype=np.bool))
 
         if 'correx' in gibbsmodel and \
-            (which == 'all' or which == 'F'):
+            (which in ['all', 'F', 'N']):
             Zmat = np.append(Ft_4, self.Fmat, axis=1)
 
             zmask = np.append(zmask, \
@@ -1881,6 +1882,7 @@ class ptaPulsar(object):
             self.Zmat_F, self.Zmask_F = self.getZmat(gibbsmodel, which='F')
             self.Zmat_D, self.Zmask_D = self.getZmat(gibbsmodel, which='D')
             self.Zmat_U, self.Zmask_U = self.getZmat(gibbsmodel, which='U')
+            self.Zmat_N, self.Zmask_N = self.getZmat(gibbsmodel, which='N')
             self.gibbsresiduals = np.zeros(len(self.toas))
 
 
@@ -7689,20 +7691,21 @@ class ptaLikelihood(object):
         return qarr
 
 
-    def gibbs_sample_psr_quadratics(self, parameters, a, pp, which='all', ml=False):
+    def gibbs_sample_psr_quadratics(self, parameters, b, pp, which='all', \
+            ml=False, joinNJ=True):
         """
         Given the values of the hyper parameters, generate new quadratic
         parameters for pulsar pp.
 
         @param parameters:  The hyper-parameters of the likelihood
-        @param a:           List of all quadratic parameters (overwritten)
+        @param b:           List of all quadratic parameters (transformed & overwritten)
         @param pp:          For which pulsar to generate the quadratics
         @param which:       Which quadratics to generate and which to fix
-                            (all, F, D, U, M)
+                            (all, F, D, U, M, N)
         @param ml:          Whether to provide ML estimates, or to sample
 
-        @return:            a, fulladdcoefficients, xi2
-                            (for now, fulladdcoefficients == a[pp])
+        @return:            a, b, fulladdcoefficients, xi2
+                            (for now, fulladdcoefficients == b[pp])
         """
         npsrs = len(self.ptapsrs)
         xi2 = 0                     # Xi2 for this pulsar
@@ -7722,6 +7725,8 @@ class ptaLikelihood(object):
         npus = self.npu[pp]
 
         #residuals = psr.detresiduals.copy()
+        # TODO: can we do all this here on the fly from getZmat? Seems shorter:
+        #       Zmat, Zmask = psr.getZmat(self.gibbsmodel, which=which)
         if which == 'all':
             Zmat = psr.Zmat
             zmask = np.array([1]*Zmat.shape[1], dtype=np.bool)
@@ -7737,6 +7742,9 @@ class ptaLikelihood(object):
         elif which == 'M':
             Zmat = psr.Zmat_M
             zmask = psr.Zmask_M
+        elif which == 'N':
+            Zmat = psr.Zmat_N
+            zmask = psr.Zmask_N
 
         if np.sum(zmask) == 0:
             # No parameters to fit for
@@ -7746,13 +7754,19 @@ class ptaLikelihood(object):
 
         # Make ZNZ and Sigma
         #ZNZ = np.dot(Zmat.T, ((1.0/psr.Nvec) * Zmat.T).T)
-        ZNZ = cython_block_shermor_2D(Zmat, psr.Nvec, psr.Jvec, psr.Uinds)
-        Sigma = ZNZ.copy()
+        if joinNJ:
+            ZNZ = cython_block_shermor_2D(Zmat, psr.Nvec, psr.Jvec, psr.Uinds)
 
-        # ahat is the slice ML value for the coefficients. Need ENx
-        Nx = cython_block_shermor_0D(residuals, \
-                psr.Nvec, psr.Jvec, psr.Uinds)
-        ENx = np.dot(Zmat.T, Nx)
+            # ahat is the slice ML value for the coefficients. Need ENx
+            Nx = cython_block_shermor_0D(residuals, \
+                    psr.Nvec, psr.Jvec, psr.Uinds)
+            ENx = np.dot(Zmat.T, Nx)
+        else:
+            # We are not including the jitter/ecorr with the white noise
+            ZNZ = np.dot(Zmat.T / psr.Nvec, Zmat)
+            ENx = np.dot(Zmat.T, residuals / psr.Nvec)
+
+        Sigma = ZNZ.copy()
 
         # Depending on what signals are in the Gibbs model, we'll have to add
         # prior-covariances to ZNZ
@@ -7764,7 +7778,7 @@ class ptaLikelihood(object):
         if 'corrim' in self.gibbsmodel:
             if (which == 'F' or which == 'all'):
                 ind = range(zindex, zindex + nfs)
-                (pSinv_vec, pPvec) = self.gibbs_psr_corrs_im(pp, a)
+                (pSinv_vec, pPvec) = self.gibbs_psr_corrs_im(pp, b)
                 Sigma[ind, ind] += pSinv_vec
                 ENx[ind] -= pPvec
 
@@ -7793,7 +7807,7 @@ class ptaLikelihood(object):
 
         if 'correx' in self.gibbsmodel:
             if self.have_gibbs_corr and (which == 'F' or which == 'all'):
-                (pSinv_vec, pPvec) = gibbs_psr_corrs_ex(self, pp, a)
+                (pSinv_vec, pPvec) = gibbs_psr_corrs_ex(self, pp, b)
 
                 ind = range(zindex, zindex + nfs)
                 Sigma[ind, ind] += pSinv_vec
@@ -7880,22 +7894,29 @@ class ptaLikelihood(object):
             np.savetxt('aadd.txt', aadd)
             raise ValueError("Have inf or nan in solution")
 
-        psr.gibbscoefficients = a[pp]
+        b[zmask] = addcoefficients.copy()
+        psr.gibbscoefficients = b
 
-        fulladdcoefficients = psr.gibbscoefficients.copy()
-        fulladdcoefficients[zmask] = addcoefficients
+        a = b.copy()
+        a[:psr.Mmat.shape[1]] = np.dot(psr.tmpConv, b[:psr.Mmat.shape[1]])
 
-        psr.gibbscoefficients[zmask] = addcoefficients.copy()
+        if which == 'N':
+            # When which == 'N', we are doing this as part of the joint N-J
+            # analysis. So we are not subtracting the jitter/ecorr just yet.
+            # So this assumes we will update these values later, right after the
+            # N-J conditional
+            psr.gibbssubresiduals = np.dot(Zmat, addcoefficients)
+            psr.gibbsresiduals = psr.detresiduals - psr.gibbssubresiduals
+        else:
+            psr.gibbssubresiduals = np.dot(psr.Zmat, psr.gibbscoefficients)
+            psr.gibbsresiduals = psr.detresiduals - psr.gibbssubresiduals
 
-        #psr.gibbscoefficients[:psr.Mmat.shape[1]] = np.dot(psr.tmpConv, \
-        #        addcoefficients[:psr.Mmat.shape[1]])
-        # That's right. We do _not_ adjust the Gibbs parameters anymore :)
-        # For mark2, we see that as a feature, not a bug
+        #xi2[ii] = np.sum(psr.gibbsresiduals**2 / psr.Nvec)
+        # ZNZ = python_block_shermor_2d(psr.Zmat, psr.Nvec, psr.Jvec, psr.Uinds)
+        tmp, xi2 = cython_block_shermor_1D(psr.gibbsresiduals, \
+                psr.Nvec, psr.Jvec, psr.Uinds)
 
-        # We save the quadratic parameters separately
-        a[pp] = psr.gibbscoefficients
-
-        return a
+        return a, b, xi2
 
 
 

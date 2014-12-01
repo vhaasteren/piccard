@@ -22,7 +22,7 @@ chain. We still use the PAL/PAL2 version of PTMCMC_generic to do the actual MCMC
 steps, but the steps are performed in parameter blocks.
 """
 
-def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False, joinNJ=True):
+def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
     """
     Run a blocked Gibbs sampler on the full likelihood, including all quadratic
     parameters numerically. The hyper-parameters are proposed using adaptive
@@ -40,7 +40,6 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False, joinNJ=True):
     @param steps:       The number of full-circle Gibbs steps to take
     @param chainsdir:   Where to save the MCMC chain
     @param noWrite:     If True, do not write results to file
-    @param jointNJ:     If True, join the white noise and jitter sampling
     """
     if not likob.likfunc in ['gibbs']:
         raise ValueError("Likelihood not initialised for Gibbs sampling")
@@ -197,9 +196,7 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False, joinNJ=True):
     # generated from all the respective (conditional-) likelihood functions
     #b = []
     for pp, psr in enumerate(likob.ptapsrs):
-        # NOTE: currently whe are not saving 'b' anymore. Can turn it on...
-        #a, bi, xi2 = likob.gibbs_sample_psr_quadratics(apars[:ndim], a, pp)
-        a = likob.gibbs_sample_psr_quadratics(apars[:ndim], a, pp)
+        a, bi, xi2  = likob.gibbs_sample_psr_quadratics(apars[:ndim], a, pp)
     #b.append(bi)
     apars[ndim:] = np.hstack(a)
     likob.gibbs_current_a = a
@@ -298,7 +295,7 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False, joinNJ=True):
 
                 if np.all(apars[Jmask] != sampler._chain[step,:]):
                     # Step accepted
-                    likob.gibbs_current_a = \
+                    likob.gibbs_current_a, bi, xi2 = \
                             likob.gibbs_sample_psr_quadratics(apars[:ndim], \
                             likob.gibbs_current_a, pp, which='U')
 
@@ -342,7 +339,7 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False, joinNJ=True):
         for pp, psr in enumerate(likob.ptapsrs):
             # NOTE: RvH 20141129: We definitely do not want to re-calculate all
             #       these quadratics. We can subtract plenty of 'm. Which ones?
-            likob.gibbs_current_a = \
+            likob.gibbs_current_a, bi, xi2 = \
                     likob.gibbs_sample_psr_quadratics(apars[:ndim], \
                     likob.gibbs_current_a, pp, which='all')
             #likob.gibbs_current_a = likob.gibbs_sample_M_quadratics( \
@@ -2030,7 +2027,37 @@ def gibbs_sample_loglik_NJ(likob, curpars, loglik_NJ, ml=False):
 
     return newpars
 
+def gibbs_update_ecor_NJ(likob, pars, a, b, joinNJ=False):
+    """
+    After the NJ conditional, we need to draw new jitter/ecor quadratic
+    parameters. Once we have those, we can update both gibbsresiduals, and
+    gibbssubresiduals
 
+    @param likob:   The full likelihood object
+    @param pars:    Array of hyper-parameters
+    @param a:       List of the quadratic parameters (design true)
+    @param b:       List of the quadratic parameters (design orthogonalized)
+    @param joinNJ:  Whether or not we actually need to do this
+    """
+    if joinNJ:
+        # Update Jvec
+        likob.setPsrNoise(pars)
+
+        # Have to update both gibbsresiduals, and gibbssubresiduals
+        for pp, psr in enumerate(likob.ptapsrs):
+            Jldet, xNx, eat = cython_shermor_draw_ecor(psr.gibbsresiduals, \
+                    psr.Nvec, psr.Jvec, psr.Uinds)
+
+            psr.gibbssubresiduals, psr.gibbsresiduals = \
+                    cython_update_ea_residuals(psr.gibbsresiduals, \
+                        psr.gibbssubresiduals, eat, psr.Uinds)
+
+            if 'jitter' in likob.gibbsmodel:
+                # We need to update the quadratic parameters
+                a[pp][psr.Zmask_U] = eat
+                b[pp][psr.Zmask_U] = eat
+
+    return a, b
 
 
 def gibbs_prepare_loglik_Phi(likob, curpars):
@@ -2910,7 +2937,7 @@ def RunGibbsMCMC(likob, steps, chainsdir, covfile=None, burnin=10000,
 
 
 
-def RunGibbs_mark1(likob, steps, chainsdir, noWrite=False):
+def RunGibbs_mark1(likob, steps, chainsdir, noWrite=False, joinNJ=True):
     """
     Run a gibbs sampler on a, for now, simplified version of the likelihood.
 
@@ -2931,6 +2958,7 @@ def RunGibbs_mark1(likob, steps, chainsdir, noWrite=False):
     @param steps:       The number of full-circle Gibbs steps to take
     @param chainsdir:   Where to save the MCMC chain
     @param noWrite:     If True, do not write results to file
+    @param joinNJ:      Join sampling from white noise and jitter/ecorr
     """
     if not likob.likfunc in ['gibbs']:
         raise ValueError("Likelihood not initialised for Gibbs sampling")
@@ -2965,16 +2993,18 @@ def RunGibbs_mark1(likob, steps, chainsdir, noWrite=False):
 
     # Make a list of all the blocked signal samplers (except for the coefficient
     # samplers)
-    if 'jitter' in likob.gibbsmodel:
+    #if 'jitter' in likob.gibbsmodel and not joinNJ:
+    if joinNJ:
+        # Jitter might be present, and combined with white noise
+        loglik_N = []
+        loglik_J = []
+        loglik_NJ = gibbs_prepare_loglik_NJ(likob, pars)
+    else:
         # Jitter is present explicitly (non-marginalized)
         loglik_N = gibbs_prepare_loglik_N(likob, pars)
         loglik_J = gibbs_prepare_loglik_J(likob, pars)
         loglik_NJ = []
-    else:
-        # Jitter is present only implicitly: use jitter extension module
-        loglik_N = []
-        loglik_J = []
-        loglik_NJ = gibbs_prepare_loglik_NJ(likob, pars)
+
     loglik_Det = gibbs_prepare_loglik_Det(likob, pars)
 
     if not 'corrim' in likob.gibbsmodel:
@@ -2991,9 +3021,11 @@ def RunGibbs_mark1(likob, steps, chainsdir, noWrite=False):
 
     # The gibbs coefficients are initially set to 5ns random, each
     a = []
+    b = []
     for ii, psr in enumerate(likob.ptapsrs):
         gibbsQuantities(likob, pars)
         a.append(np.random.randn(likob.npz[ii])*5.0e-9)
+        b.append(a[-1].copy())
         psr.gibbsresiduals = psr.detresiduals.copy()
 
     if 'corrim' in likob.gibbsmodel:
@@ -3024,14 +3056,24 @@ def RunGibbs_mark1(likob, steps, chainsdir, noWrite=False):
         while not doneIteration:
             try:
                 # Generate new coefficients
-                a, b, xi2 = gibbs_sample_a(likob, a)
+                # a, b, xi2 = gibbs_sample_a(likob, a)
 
                 # This is the function from the mark2 Gibbs sampler. However,
                 # that one does not transform the quadratic parameters, and has
                 # the values of b in a.
-                #for pp, psr in enumerate(likob.ptapsrs):
-                #    likob.gibbs_current_a = a
-                #    a = likob.gibbs_sample_psr_quadratics(pars, a, pp, which='all')
+                for pp, psr in enumerate(likob.ptapsrs):
+                    likob.gibbs_current_a = b
+                    if joinNJ:
+                        # Jitter/ECORR is mot yet subtracted, so it is present
+                        # in psr.gibbsresiduals!! Make sure that NJ is the first
+                        # next conditional.
+                        # This conditional also sets gibbssubresiduals, which is
+                        # used in pulsarDetLL
+                        a[pp], b[pp], xi2 = likob.gibbs_sample_psr_quadratics(pars, b[pp], pp, \
+                                which='N', joinNJ=True)
+                    else:
+                        a[pp], b[pp], xi2 = likob.gibbs_sample_psr_quadratics(pars, b[pp], pp, \
+                                which='all', joinNJ=False)
                 #b = a
 
                 samples[stepind, ndim:] = np.hstack(a)
@@ -3051,11 +3093,16 @@ def RunGibbs_mark1(likob, steps, chainsdir, noWrite=False):
                 # Just try again
                 #raise
 
-            # Generate new white noise parameters (whithout jitter/cequad)
-            pars = gibbs_sample_loglik_N(likob, pars, loglik_N)
-
+            # If joinNJ=True, we still have the jitter included in
+            # psr.gibbsresiduals and gibbssubresiduals. Therefore, this
+            # conditional is FIRST!!
+            # -----
             # Generate new white noise parameters (whith jitter/cequad)
             pars = gibbs_sample_loglik_NJ(likob, pars, loglik_NJ)
+            a, b = gibbs_update_ecor_NJ(likob, pars, a, b, joinNJ=joinNJ)
+
+            # Generate new white noise parameters (whithout jitter/cequad)
+            pars = gibbs_sample_loglik_N(likob, pars, loglik_N)
 
             # Generate new red noise parameters (or DM variations)
             pars = gibbs_sample_loglik_Phi(likob, a, pars, loglik_PSD)

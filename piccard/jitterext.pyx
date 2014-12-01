@@ -317,3 +317,30 @@ def cython_shermor_draw_ecor( \
 
     return Jldet, xNx, rv
 
+
+def cython_update_ea_residuals( \
+        np.ndarray[np.double_t,ndim=1] gibbsresiduals, \
+        np.ndarray[np.double_t,ndim=1] gibbssubresiduals, \
+        np.ndarray[np.double_t,ndim=1] eat, \
+        np.ndarray[np.int_t,ndim=2] Uinds):
+    """
+    Given epoch-averaged residuals, update the residuals, and the subtracted
+    residuals, so that these can be further processed by the other conditional
+    probability density functions.
+
+    @param gibbsresiduals:      The timing residuals, array (n)
+    @param gibbssubresiduals:   The white noise amplitude, array (n)
+    @param eat:                 epoch averaged residuals (k)
+    @param Uinds:               The start/finish indices for the jitter blocks
+                                (k x 2)
+
+    """
+    cdef unsigned int k = Uinds.shape[0], ii, cc
+
+    for cc in range(Uinds.shape[0]):
+        for ii in range(Uinds[cc,0],Uinds[cc,1]):
+            gibbssubresiduals[ii] += eat[cc]
+            gibbsresiduals[ii] -= eat[cc]
+
+    return gibbsresiduals, gibbssubresiduals
+
