@@ -908,10 +908,26 @@ class ptaPulsar(object):
             raise IOError, "Invalid compression argument"
 
     def gibbs_set_design(self, gibbsmodel):
+        """
+        We construct the orthogonalized versions of the design matrix here. Two
+        things are done:
+        1) The design matrix is split up into 'conditional subsections'.
+        Basically, for every conditional probability in the collapsed Gibbs
+        sampler, we include a sub-set of design matrix parameters to
+        analytically marginalize over. These parameters are different for every
+        conditional probability (and the sub-blocks are non-overlapping)
+        2) Every sub-block is orthogonalized with an SVD; this is the reason why
+        they are not allowed to overlap. The orthogonalization is necessary for
+        the numerical stability of the linear algebra.
+
+        @param gibbsmodel:  For which conditional we are constructing the
+                            matricees
+        """
         # The parameters that need to be included in the various conditionals
         F_list = ['Offset', 'F0', 'F1', 'F2', 'F3', 'F4', 'F5']
         D_list = ['DM', 'DM1', 'DM2', 'DM3', 'DM4']
-        U_list = []
+        U_list = []     # U_list needs to stay empty, otherwise 'joinNJ' in
+                        # Gibbs mark2 will not work anymore -- RvH
 
         #isolated_list = ['Offset', 'F0', 'F1', 'RAJ', 'DECJ', 'PMRA', 'PMDEC', \
         #            'PX', 'DM', 'DM1', 'DM2']
@@ -7637,8 +7653,8 @@ class ptaLikelihood(object):
         @return:    Returns the single-pulsar vector of pre-subtracted residuals
         """
         psr = self.ptapsrs[pp]
-        zoffset = np.sum(self.npz[:pp])
-        ndim = self.dimensions
+        #zoffset = np.sum(self.npz[:pp])
+        #ndim = self.dimensions
         #qpars = allparameters[ndim+zoffset:ndim+zoffset+self.npz[pp]]
         qpars = self.gibbs_current_a[pp]
 
@@ -8369,7 +8385,8 @@ class ptaLikelihood(object):
 
 
 
-    def gibbs_psr_noise_loglikelihood_mar(self, parameters, pp, mask, allpars):
+    def gibbs_psr_noise_loglikelihood_mar(self, parameters, pp, mask, allpars, \
+            joinNJ=True):
         """
         The conditional loglikelihood for the subset of white noise parameters
         (EFAC and EQUAD, and possibly jitter later on). Marginalised over the
@@ -8379,6 +8396,7 @@ class ptaLikelihood(object):
         @param pp:              Index of the pulsar we are treating
         @param mask:            The mask to use for the full set of parameters
         @param allpars:         The vector of all hyper paramertes parmaeters
+        @param joinNJ:          If True, don't subtract jitter from residuals
         """
         psr = self.ptapsrs[pp]
 
@@ -8387,8 +8405,12 @@ class ptaLikelihood(object):
         apars[mask] = parameters
         self.setSinglePsrNoise(apars, pp=pp)
 
-        residuals = self.gibbs_get_custom_subresiduals(pp, \
-                np.array([1]*psr.Zmat.shape[1], dtype=np.bool))
+        if joinNJ:
+            # gibbs_current_a is used in gibbs_get_custom_subresiduals
+            pass
+        else:
+            residuals = self.gibbs_get_custom_subresiduals(pp, \
+                    np.array([1]*psr.Zmat.shape[1], dtype=np.bool))
 
         # Calculate the block-inverse in the Cython jitter extension module
         jldet, jxi2 = cython_block_shermor_1D(residuals, \
@@ -8471,6 +8493,9 @@ class ptaLikelihood(object):
               unnecessary. Jitter should not be correlated at all with the timing
               model. Just use fully subtracted residuals, and no auxiliaries
               will be necessary
+
+        Note:   This function is not working right now. All this will be
+                deprecated by including the Jitter directly with the white noise
         """
         psr = self.ptapsrs[pp]
 
