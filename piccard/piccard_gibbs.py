@@ -559,15 +559,16 @@ def gibbs_loglikelihood(likob, aparameters):
         # The quadratic form of the residuals
         #xi2 += np.sum(psr.gibbsresiduals ** 2 / psr.Nvec)
         #ldet += np.sum(np.log(psr.Nvec))
-        jldet, jxi2 = cython_block_shermor_1D(psr.gibbsresiduals, \
-                psr.Nvec, psr.Jvec, psr.Uinds)
-        xi2 += jxi2
-        ldet += jldet
-
-        # Jitter is done per pulsar
         if 'jitter' in likob.gibbsmodel:
+            xi2 += np.sum(psr.gibbsresiduals ** 2 / psr.Nvec)
+            ldet += np.sum(np.log(psr.Nvec))
             xi2 += np.sum(j[ii] ** 2 / psr.Jvec)
             ldet += np.sum(np.log(psr.Jvec))
+        else:
+            jldet, jxi2 = cython_block_shermor_1D(psr.gibbsresiduals, \
+                    psr.Nvec, psr.Jvec, psr.Uinds)
+            xi2 += jxi2
+            ldet += jldet
 
     # Quadratic form of red noise, done for full array
     if 'rednoise' in likob.gibbsmodel:
@@ -2057,6 +2058,7 @@ def gibbs_update_ecor_NJ(likob, pars, a, b, joinNJ=False):
                 a[pp][psr.Zmask_U] = eat
                 b[pp][psr.Zmask_U] = eat
 
+    likob.gibbs_current_a = b
     return a, b
 
 
