@@ -7776,7 +7776,7 @@ class ptaLikelihood(object):
             zindex += nms
 
         if 'corrim' in self.gibbsmodel:
-            if (which == 'F' or which == 'all'):
+            if which in ['all', 'F', 'N']:
                 ind = range(zindex, zindex + nfs)
                 (pSinv_vec, pPvec) = self.gibbs_psr_corrs_im(pp, b)
                 Sigma[ind, ind] += pSinv_vec
@@ -7784,7 +7784,7 @@ class ptaLikelihood(object):
 
                 zindex += nfs
         elif 'rednoise' in self.gibbsmodel:
-            if (which == 'F' or which == 'all'):
+            if which in ['all', 'F', 'N']:
                 # Don't do this if it is included in corrim
                 ind = range(zindex, zindex+nfs)
                 Sigma[ind, ind] += 1.0 / self.Phivec[findex:findex+nfs]
@@ -7792,21 +7792,21 @@ class ptaLikelihood(object):
                 zindex += nfs
 
         if 'dm' in self.gibbsmodel:
-            if (which == 'D' or which == 'all'):
+            if which in ['all', 'D', 'N']:
                 ind = range(zindex, zindex+nfdms)
                 Sigma[ind, ind] += 1.0 / self.Thetavec[fdmindex:fdmindex+nfdms]
 
                 zindex += nfdms
 
         if 'jitter' in self.gibbsmodel:
-            if (which == 'U' or which == 'all'):
+            if which in ['all', 'U']:
                 ind = range(zindex, zindex+npus)
                 Sigma[ind, ind] += 1.0 / psr.Jvec
 
                 zindex += npus
 
         if 'correx' in self.gibbsmodel:
-            if self.have_gibbs_corr and (which == 'F' or which == 'all'):
+            if self.have_gibbs_corr and which in ['all', 'F', 'N']:
                 (pSinv_vec, pPvec) = gibbs_psr_corrs_ex(self, pp, b)
 
                 ind = range(zindex, zindex + nfs)

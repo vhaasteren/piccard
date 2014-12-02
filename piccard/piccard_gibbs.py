@@ -3058,7 +3058,7 @@ def RunGibbs_mark1(likob, steps, chainsdir, noWrite=False, joinNJ=True):
         while not doneIteration:
             try:
                 # Generate new coefficients
-                # a, b, xi2 = gibbs_sample_a(likob, a)
+                #a, b, xi2 = gibbs_sample_a(likob, a)
 
                 # This is the function from the mark2 Gibbs sampler. However,
                 # that one does not transform the quadratic parameters, and has
@@ -3076,7 +3076,6 @@ def RunGibbs_mark1(likob, steps, chainsdir, noWrite=False, joinNJ=True):
                     else:
                         a[pp], b[pp], xi2 = likob.gibbs_sample_psr_quadratics(pars, b[pp], pp, \
                                 which='all', joinNJ=False)
-                #b = a
 
                 samples[stepind, ndim:] = np.hstack(a)
                 #samples2[stepind, :] = np.hstack(b)
