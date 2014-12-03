@@ -84,16 +84,11 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
     sampler_N = []          # White noise (per pulsar)
     sampler_F = None        # Red noise (full array, b/c correlations)
     sampler_D = []          # DM variations (per pulsar)
-    sampler_J = []          # ECORR/Jitter (per pulsar)
     for ii, psr in enumerate(likob.ptapsrs):
         # Start with the noise search for pulsar ii
-        if 'jitter' in likob.gibbsmodel:
-            # Parameter mask for the white noise signals
-            Nmask = likob.gibbs_get_signal_mask(ii, ['efac', 'equad'], ncoeffs)
-        else:
-            # Parameter mask for the white noise + ecorr/jitter signals
-            Nmask = likob.gibbs_get_signal_mask(ii, \
-                    ['efac', 'equad', 'jitter', 'cequad'], ncoeffs)
+        # Parameter mask for the white noise + ecorr/jitter signals
+        Nmask = likob.gibbs_get_signal_mask(ii, \
+                ['efac', 'equad', 'jitter', 'cequad'], ncoeffs)
 
         if np.sum(Nmask) > 0:
             # If number of signals > 0, initialize the sub-sampler
@@ -132,24 +127,6 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
             else:
                 sampler_D.append(None)
 
-        if 'jitter' in likob.gibbsmodel:
-            # Pulse 'jitter'/ecorr, in case we did not include it together with
-            # the white noise parameters above
-            Jmask = likob.gibbs_get_signal_mask(ii, ['jitter'], ncoeffs)
-            if np.sum(Jmask) > 0:
-                psrJpars = apars[Dmask]
-                psrJcov = np.diag(awidth[Jmask]**2)
-                Jdim = np.sum(Jmask)
-                sampler_J.append(ptmcmc.PTSampler(Jdim, \
-                    likob.gibbs_psr_J_loglikelihood_mar, \
-                    likob.gibbs_psr_J_logprior, \
-                    cov=psrJcov, outDir='./gibbs-chains/', \
-                    verbose=False, nowrite=True, \
-                    loglargs=[ii, Dmask, apars], \
-                    logpargs=[ii, Dmask, apars]))
-            else:
-                sampler_J.append(None)
-
     if 'rednoise' in likob.gibbsmodel:
         # For the full array (hence the -2 below), get the signal mask for the
         # red noise, and initialize the sub-sampler
@@ -172,7 +149,8 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
     # The gibbs coefficients are initially set to 2ns random each for numerical
     # stability (less for DM variations)
     # We keep track of this in both 'a', and 'likob.gibbs_current_a'.
-    # TODO: use only gibbs_current_a.
+    # TODO: use only gibbs_current_a. The 'a' here, is actually the 'b' in the
+    #       mark1 sampler
     a = []
     for ii, psr in enumerate(likob.ptapsrs):
         a.append(likob.gibbs_get_initial_quadratics(ii))
@@ -196,7 +174,7 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
     # generated from all the respective (conditional-) likelihood functions
     #b = []
     for pp, psr in enumerate(likob.ptapsrs):
-        a, bi, xi2  = likob.gibbs_sample_psr_quadratics(apars[:ndim], a, pp)
+        bi, a[pp], xi2  = likob.gibbs_sample_psr_quadratics(apars[:ndim], a[pp], pp)
     #b.append(bi)
     apars[ndim:] = np.hstack(a)
     likob.gibbs_current_a = a
@@ -215,20 +193,12 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
     samples[stepind, :] = apars
     for step in range(1, steps):
         for pp, psr in enumerate(likob.ptapsrs):
-            # Jump in the white noise parameters
             sampler = sampler_N[pp]
             if sampler is not None:
-                if 'jitter' in likob.gibbsmodel:
-                    # If jitter explicitly in gibbsmodel, then we don't look for
-                    # it here. Instead, we look for efac/equad in the
-                    # subresiduals that have everything else subtracted
-                    # Subtraction is done in gibbs_psr_noise_mar.
-                    # RvH: We can generate jitter here, too!
-                    Nmask = likob.gibbs_get_signal_mask(pp, ['efac', 'equad'])
-                else:
-                    # RvH: where is the subtraction done
-                    Nmask = likob.gibbs_get_signal_mask(pp, \
-                            ['efac', 'equad', 'jitter', 'cequad'])
+                # Conditional probability jump in the white noise
+                # hyper-parameters (including jitter/ecorr)
+                Nmask = likob.gibbs_get_signal_mask(pp, \
+                        ['efac', 'equad', 'jitter', 'cequad'])
                 psrNpars = apars[Nmask]
 
                 # Arguments for the log-likelihood function (so we can do
@@ -237,13 +207,13 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
                 sampler.logp.args = [pp, Nmask, apars]
                 
                 # The sampler always calculates the previous step as well, as it
-                # should here
+                # should here (other parameters have changed in the meantime)
                 sampler.sample(psrNpars, step+1, covUpdate=500, burn=2, maxIter=2*steps,
                     i0=step-1, thin=1)
 
                 apars[Nmask] = sampler._chain[step,:]
 
-                # RvH: does this set the Jvec as well?
+                # This sets the Jvec as well
                 likob.setSinglePsrNoise(apars[:ndim], pp=pp)
 
             ##################################################################
@@ -252,6 +222,9 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
             ##################################################################
 
             if 'dm' in likob.gibbsmodel and sampler_D[pp] is not None:
+                # Conditional probability jump in the DM variation
+                # hyper-parameters. Marginalize over the DM quadratic
+                # parameters, including DM, DM1, DM2.
                 sampler = sampler_D[pp]
                 Dmask = likob.gibbs_get_signal_mask(pp, ['dmpowerlaw', 'dmspectrum'])
                 psrDpars = apars[Dmask]
@@ -281,32 +254,23 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
 
                 apars[Dmask] = sampler._chain[step,:]
 
-
-            if 'jitter' in likob.gibbsmodel and sampler_J[pp] is not None:
-                sampler = sampler_J[pp]
-                Jmask = likob.gibbs_get_signal_mask(pp, ['jitter'])
-                psrJpars = apars[Dmask]
-
-                sampler.logl.args = [pp, Jmask, apars]
-                sampler.logp.args = [pp, Jmask, apars]
-
-                sampler.sample(psrJpars, step+1, covUpdate=500, burn=2, maxIter=2*steps,
-                    i0=step-1, thin=1)
-
-                if np.all(apars[Jmask] != sampler._chain[step,:]):
-                    # Step accepted
-                    likob.gibbs_current_a, bi, xi2 = \
-                            likob.gibbs_sample_psr_quadratics(apars[:ndim], \
-                            likob.gibbs_current_a, pp, which='U')
-
-                    apars[ndim:] = np.hstack(likob.gibbs_current_a)
-                else:
-                    likob.setPsrNoise(apars[:ndim])
-
-                apars[Jmask] = sampler._chain[step,:]
-
+            if 'jitter' in likob.gibbsmodel:
+                # Conditional probability jump in the jitter/ecorr quadratic
+                # parameters (fixed hyper parameters). The sampling is done
+                # analytically Gibbs-style.
+                # This directly also sets gibbs_current_a again (bad habit to do
+                # there, sorry!)
+                psr.gibbsresiduals = likob.gibbs_get_custom_subresiduals(ii, psr.Zmask_N)
+                psr.gibbssubresiduals = psr.detresiduals - psr.gibbsresiduals
+                aa, a = gibbs_update_ecor_NJ(likob, apars[:ndim],  \
+                        likob.gibbs_current_a, likob.gibbs_current_a, \
+                        joinNJ=True)
 
         if 'rednoise' in likob.gibbsmodel and sampler_F is not None:
+            # Conditional probability jump in the red noise/signal
+            # hyper-parameters, all pulsars combined. Marginalize over the red
+            # noise quadratic parameters, including F0, F1, etc. See
+            # gibbs_set_design for the full list.
             sampler = sampler_F
             Fmask = likob.gibbs_get_signal_mask(-2, \
                     ['powerlaw', 'spectralModel', 'spectrum'])
@@ -333,15 +297,16 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
 
             apars[Fmask] = sampler._chain[step,:]
 
+
         # Also do a timing-model re-sample, so we also get the parameters we had
         # not had before...
         # DO WE DO THE FULL MODEL, OR JUST THE COMPLEMENTARY MODEL????????????
         for pp, psr in enumerate(likob.ptapsrs):
             # NOTE: RvH 20141129: We definitely do not want to re-calculate all
             #       these quadratics. We can subtract plenty of 'm. Which ones?
-            likob.gibbs_current_a, bi, xi2 = \
+            likob.gibbs_current_a[pp], bi, xi2 = \
                     likob.gibbs_sample_psr_quadratics(apars[:ndim], \
-                    likob.gibbs_current_a, pp, which='all')
+                    likob.gibbs_current_a[pp], pp, which='all')
             #likob.gibbs_current_a = likob.gibbs_sample_M_quadratics( \
             #        likob.gibbs_current_a, pp)
 
@@ -486,6 +451,10 @@ def gibbs_loglikelihood(likob, aparameters):
             not Mmat. This for numerical stability (really doesn't work
             otherwise). CONTINUE MAKING THIS!!!
 
+    NOTE:   This function analytically marginalizes over the jitter quadratic
+            parameters. This because these are always sampled analytically, they
+            are not subtracted, and they are not always even included.
+
     @param likob:       The full likelihood object
     @param aparameters: All the model parameters, including the quadratic pars
     @param coeffs:      List of all the Gibbs coefficients per pulsar
@@ -546,9 +515,11 @@ def gibbs_loglikelihood(likob, aparameters):
             nqind += npus
 
         # Calculate the quadratic parameter subtracted residuals
-        gibbscoefficients = allparameters[quadparind:quadparind+ntot]
-        psr.gibbssubresiduals = np.dot(psr.Zmat, gibbscoefficients)
-        psr.gibbsresiduals = psr.detresiduals - psr.gibbssubresiduals
+        psr.gibbsresiduals = likob.gibbs_get_custom_subresiduals(ii, psr.Zmask_N)
+        psr.gibbssubresiduals = psr.detresiduals - psr.gibbsresiduals
+        #gibbscoefficients = allparameters[quadparind:quadparind+ntot]
+        #psr.gibbssubresiduals = np.dot(psr.Zmat, gibbscoefficients)
+        #psr.gibbsresiduals = psr.detresiduals - psr.gibbssubresiduals
 
         quadparind += ntot
 
@@ -559,16 +530,10 @@ def gibbs_loglikelihood(likob, aparameters):
         # The quadratic form of the residuals
         #xi2 += np.sum(psr.gibbsresiduals ** 2 / psr.Nvec)
         #ldet += np.sum(np.log(psr.Nvec))
-        if 'jitter' in likob.gibbsmodel:
-            xi2 += np.sum(psr.gibbsresiduals ** 2 / psr.Nvec)
-            ldet += np.sum(np.log(psr.Nvec))
-            xi2 += np.sum(j[ii] ** 2 / psr.Jvec)
-            ldet += np.sum(np.log(psr.Jvec))
-        else:
-            jldet, jxi2 = cython_block_shermor_1D(psr.gibbsresiduals, \
-                    psr.Nvec, psr.Jvec, psr.Uinds)
-            xi2 += jxi2
-            ldet += jldet
+        jldet, jxi2 = cython_block_shermor_1D(psr.gibbsresiduals, \
+                psr.Nvec, psr.Jvec, psr.Uinds)
+        xi2 += jxi2
+        ldet += jldet
 
     # Quadratic form of red noise, done for full array
     if 'rednoise' in likob.gibbsmodel:
@@ -2722,7 +2687,7 @@ def gibbs_sample_a(likob, a, ml=False):
 
         # Make ZNZ and Sigma
         #ZNZ = np.dot(psr.Zmat.T / psr.Nvec, psr.Zmat)
-        ZNZ = cython_block_shermor_2D(psr.Zmat, psr.Nvec, psr.Jvec, psr.Uinds)
+        Jldet, ZNZ = cython_block_shermor_2D(psr.Zmat, psr.Nvec, psr.Jvec, psr.Uinds)
         Sigma = ZNZ.copy()
 
         # ahat is the slice ML value for the coefficients. Need ENx

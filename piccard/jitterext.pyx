@@ -132,9 +132,10 @@ def python_block_shermor_2D(Z, Nvec, Jvec, Uinds):
     parameters.
     
     N = D + U*J*U.T
-    calculate: Z.T * N^-1 * Z
+    calculate: log(det(N)), Z.T * N^-1 * Z
     """
     ni = 1.0 / Nvec
+    Jldet = np.einsum('i->', np.log(Nvec))
     zNz = np.dot(Z.T*ni, Z)
 
     for cc, jv in enumerate(Jvec):
@@ -145,8 +146,9 @@ def python_block_shermor_2D(Z, Nvec, Jvec, Uinds):
             beta = 1.0 / (np.einsum('i->', niblock)+1.0/jv)
             zn = np.dot(niblock, Zblock)
             zNz -= beta * np.outer(zn.T, zn)
+            Jldet += np.log(jv) - np.log(beta)
 
-    return zNz
+    return Jldet, zNz
 
 def cython_block_shermor_2D( \
         np.ndarray[np.double_t,ndim=2] Z, \
@@ -166,15 +168,18 @@ def cython_block_shermor_2D( \
     parameters.
 
     N = D + U*J*U.T
-    calculate: Z.T * N^-1 * Z
+    calculate: log(det(N)), Z.T * N^-1 * Z
     """
-    cdef unsigned int cc, ii, cols = len(Jvec)
-    cdef double ji, beta, nir, nisum
+    cdef unsigned int cc, ii, rows = len(Nvec), cols = len(Jvec)
+    cdef double Jldet=0.0, ji, beta, nir, nisum
     cdef np.ndarray[np.double_t,ndim=1] ni = np.empty(len(Nvec), 'd')
     cdef np.ndarray[np.double_t,ndim=2] zNz
 
     ni = 1.0 / Nvec
     zNz = np.dot(Z.T*ni, Z)
+
+    for cc in range(rows):
+        Jldet += log(Nvec[cc])
 
     for cc in range(cols):
         if Jvec[cc] > 0.0:
@@ -186,10 +191,11 @@ def cython_block_shermor_2D( \
                 nisum += niblock[ii]
 
             beta = 1.0 / (nisum+1.0/Jvec[cc])
+            Jldet += log(Jvec[cc]) - log(beta)
             zn = np.dot(niblock, Zblock)
             zNz -= beta * np.outer(zn.T, zn)
 
-    return zNz
+    return Jldet, zNz
 
 def python_draw_ecor(r, Nvec, Jvec, Uinds):
     """

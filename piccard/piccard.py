@@ -7755,12 +7755,13 @@ class ptaLikelihood(object):
         if joinNJ:
             submask = np.logical_and(submask, np.logical_not(psr.Zmask_U))
 
+        # Form the sub-residuals (only the which-selected ones)
         residuals = self.gibbs_get_custom_subresiduals(pp, submask)
 
         # Make ZNZ and Sigma
         #ZNZ = np.dot(Zmat.T, ((1.0/psr.Nvec) * Zmat.T).T)
         if joinNJ:
-            ZNZ = cython_block_shermor_2D(Zmat, psr.Nvec, psr.Jvec, psr.Uinds)
+            Jldet, ZNZ = cython_block_shermor_2D(Zmat, psr.Nvec, psr.Jvec, psr.Uinds)
 
             # ahat is the slice ML value for the coefficients. Need ENx
             Nx = cython_block_shermor_0D(residuals, \
@@ -7906,6 +7907,14 @@ class ptaLikelihood(object):
         if 'design' in self.gibbsmodel:
             a[:psr.Mmat.shape[1]] = np.dot(psr.tmpConv, b[:psr.Mmat.shape[1]])
 
+        # This is mostly for the mark1 Gibbs sampler. RvH: can we get rid of
+        # this, by just using:
+        # > psr.gibbsresiduals = self.gibbs_get_custom_subresiduals(ii, psr.Zmask_N)
+        # > psr.gibbssubresiduals = psr.detresiduals - psr.gibbsresiduals
+        # in the mark1 Gibbs sampler, instead of insisting that the 'jitter
+        # block' is directly after the quadratic sample block? Note that all the
+        # individual samplers also set their data though gibbsresiduals, so it
+        # is not straightforward.
         if which == 'N':
             # When which == 'N', we are doing this as part of the joint N-J
             # analysis. So we are not subtracting the jitter/ecorr just yet.
@@ -7960,12 +7969,21 @@ class ptaLikelihood(object):
 
                 zindex = np.sum(self.npz_f[:ii])
                 npz = int(self.npz_f[ii])
-                self.FNF[zindex:zindex+npz, zindex:zindex+npz] = \
-                        np.dot(psr.Zmat_F.T, ((1.0/psr.Nvec) * psr.Zmat_F.T).T)
 
-                self.rGZ_F[zindex:zindex+npz] = np.dot(residuals / psr.Nvec, psr.Zmat_F)
-                self.GNGldet[ii] = np.sum(np.log(psr.Nvec))
-                self.rGr[ii] = np.sum(residuals ** 2 / psr.Nvec)
+                Jldet, self.FNF[zindex:zindex+npz, zindex:zindex+npz] = \
+                        cython_block_shermor_2D(psr.Zmat_F, psr.Nvec, psr.Jvec, psr.Uinds)
+                #self.FNF[zindex:zindex+npz, zindex:zindex+npz] = \
+                #        np.dot(psr.Zmat_F.T, ((1.0/psr.Nvec) * psr.Zmat_F.T).T)
+
+                Nx = cython_block_shermor_0D(residuals, \
+                        psr.Nvec, psr.Jvec, psr.Uinds)
+                self.rGZ_F[zindex:zindex+npz] = np.dot(Nx, psr.Zmat_F)
+                #self.rGZ_F[zindex:zindex+npz] = np.dot(residuals / psr.Nvec, psr.Zmat_F)
+
+                self.GNGldet[ii], self.rGr[ii] = cython_block_shermor_1D(\
+                        residuals, psr.Nvec, psr.Jvec, psr.Uinds)
+                #self.GNGldet[ii] = np.sum(np.log(psr.Nvec))
+                #self.rGr[ii] = np.sum(residuals ** 2 / psr.Nvec)
 
             # Using that, build Sigma
             if len(self.ptapsrs) == 1:
@@ -7978,7 +7996,9 @@ class ptaLikelihood(object):
 
                 PhiLD = np.sum(np.log(self.Phivec + self.Svec))
 
-                Sigma = np.dot(Zmat.T * (1.0 / psr.Nvec), Zmat)
+                #Sigma = np.dot(Zmat.T * (1.0 / psr.Nvec), Zmat)
+                Sigma = self.FNF.copy()
+
                 inds = range(Zmat.shape[1] - psr.Fmat.shape[1], \
                         Zmat.shape[1])
                 Sigma[inds, inds] += Phiinv
@@ -8140,6 +8160,8 @@ class ptaLikelihood(object):
 
     def gibbs_sample_Theta_quadratics(self, a, pp, ml=False):
         """
+        RvH:    why do we not just use the regular sampler for this? I recall
+                only using this one for debugging purposes.
         """
 
         psr = self.ptapsrs[pp]
@@ -8155,11 +8177,18 @@ class ptaLikelihood(object):
 
         residuals = self.gibbs_get_custom_subresiduals(pp, np.logical_not(zmask))
 
-        ZNZ = np.dot(Zmat.T, np.dot(np.diag(1.0/psr.Nvec), Zmat))
+        Jldet, ZNZ = cython_block_shermor_2D(Zmat, \
+                psr.Nvec, psr.Jvec, psr.Uinds)
+        #ZNZ = np.dot(Zmat.T, np.dot(np.diag(1.0/psr.Nvec), Zmat))
+
         inds = range(np.sum(dmask), Zmat.shape[1])
         ZNZ[inds,inds] += 1.0 / self.Thetavec
 
-        rGZ_F = np.dot(psr.detresiduals / psr.Nvec, Zmat)
+        # RvH: Why was 'residuals' actuall detresiduals????
+        Nx = cython_block_shermor_0D(residuals, psr.Nvec, \
+                psr.Jvec, psr.Uinds)
+        rGZ_F = np.dot(Nx, Zmat)
+        #rGZ_F = np.dot(psr.detresiduals / psr.Nvec, Zmat)
 
         try:
             cf = (sl.cholesky(ZNZ), False)
@@ -8181,6 +8210,8 @@ class ptaLikelihood(object):
 
     def gibbs_sample_M_quadratics(self, a, pp, ml=False):
         """
+        RvH:    why do we not just use the regular sampler for this? I recall
+                only using this one for debugging purposes.
         """
 
         psr = self.ptapsrs[pp]
@@ -8189,9 +8220,15 @@ class ptaLikelihood(object):
 
         residuals = self.gibbs_get_custom_subresiduals(pp, np.logical_not(zmask))
 
-        ZNZ = np.dot(Zmat.T, np.dot(np.diag(1.0/psr.Nvec), Zmat))
+        Jldet, ZNZ = cython_block_shermor_2D(Zmat, \
+                psr.Nvec, psr.Jvec, psr.Uinds)
+        #ZNZ = np.dot(Zmat.T, np.dot(np.diag(1.0/psr.Nvec), Zmat))
 
-        rGZ_F = np.dot(psr.detresiduals / psr.Nvec, Zmat)
+        # RvH: Why was 'residuals' actuall detresiduals????
+        Nx = cython_block_shermor_0D(residuals, psr.Nvec, \
+                psr.Jvec, psr.Uinds)
+        rGZ_F = np.dot(Nx, Zmat)
+        #rGZ_F = np.dot(psr.detresiduals / psr.Nvec, Zmat)
 
         try:
             cf = (sl.cholesky(ZNZ), False)
@@ -8333,11 +8370,17 @@ class ptaLikelihood(object):
         ldet = 0
         for ii, psr in enumerate(self.ptapsrs):
             # The quadratic form of the residuals
-            nx2 = np.sum(psr.gibbsresiduals ** 2 / psr.Nvec)
-            nld = np.sum(np.log(psr.Nvec))
-            self.gibbs_ll_N[ii] = 0.5*(nx2 + nld)
-            xi2 += nx2
-            ldet += nld
+            jldet, jxi2 = cython_block_shermor_1D(psr.gibbsresiduals, \
+                    psr.Nvec, psr.Jvec, psr.Uinds)
+            xi2 += jxi2
+            ldet += jldet
+            self.gibbs_ll_N[ii] = 0.5*(jxi2 + jldet)
+
+            #nx2 = np.sum(psr.gibbsresiduals ** 2 / psr.Nvec)
+            #nld = np.sum(np.log(psr.Nvec))
+            #self.gibbs_ll_N[ii] = 0.5*(nx2 + nld)
+            #xi2 += nx2
+            #ldet += nld
 
             # Jitter is done per pulsar
             if 'jitter' in self.gibbsmodel:
@@ -8472,24 +8515,32 @@ class ptaLikelihood(object):
         apars[mask] = parameters
         self.setTheta(apars, pp=pp)
 
-        residuals = self.gibbs_get_custom_subresiduals(pp, \
-                np.logical_not(psr.Zmask_D))
+        # Do not subtract ecorr/jitter, since it's included in the jitter
+        # extension
+        submask = np.logical_not(psr.Zmask_D)
+        submask = np.logical_and(submask, np.logical_not(psr.Zmask_U))
 
+        # Form the sub-residuals (only DM variation residuals)
+        residuals = self.gibbs_get_custom_subresiduals(pp, submask)
 
-        # Set the DND matrix
-        DND = np.dot(psr.Zmat_D.T, ((1.0/psr.Nvec) * psr.Zmat_D.T).T)
+        # Set the DND matrix (Likelihood)
+        Jldet, DND = cython_block_shermor_2D(psr.Zmat_D, psr.Nvec, psr.Jvec, psr.Uinds)
 
-        rGZ_D = np.dot(residuals / psr.Nvec, psr.Zmat_D)
-        GNGldet = np.sum(np.log(psr.Nvec))
-        rGr = np.sum(residuals ** 2 / psr.Nvec)
+        Nx = cython_block_shermor_0D(residuals, \
+                psr.Nvec, psr.Jvec, psr.Uinds)
+        rGZ_D = np.dot(Nx, psr.Zmat_D)
 
+        Jldet, rGr = cython_block_shermor_1D(residuals, psr.Nvec, \
+                psr.Jvec, psr.Uinds)
+
+        # Set the Sigma matrix (prior)
         indss = range(psr.Zmat_D.shape[1] - psr.DF.shape[1], \
                 psr.Zmat_D.shape[1])
-
         ThetaLD = np.sum(np.log(self.Thetavec[inds:inde]))
         Sigma = DND.copy()
         Sigma[indss, indss] += 1.0 / self.Thetavec[inds:inde]
 
+        # Decompose Sigma for Woodbury, and return the likelihood
         try:
             cf = sl.cho_factor(Sigma)
             SigmaLD = 2*np.sum(np.log(np.diag(cf[0])))
@@ -8502,67 +8553,8 @@ class ptaLikelihood(object):
             rGSigmaGr = np.dot(rGZ_D, np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, rGZ_D))))
 
         # Return the conditional marginalised log-likelihood
-        return -0.5*rGr - 0.5*GNGldet \
+        return -0.5*rGr - 0.5*Jldet \
                 + 0.5*rGSigmaGr - 0.5*SigmaLD - 0.5*ThetaLD
-
-    def gibbs_psr_J_loglikelihood_mar(self, parameters, pp, mask, allpars):
-        """
-        The conditional loglikelihood for the subset of jitter hyper-parameters. It
-        assumes the red noise/DM and quadratic parameters are kept fixed. The
-        jitter/correlated-equad coefficients and the timing model parameters are
-        analytically marginalised over. The rest of the coefficients are
-        subtracted from the residuals already.
-
-        @param parameters:      The hyper-parameter array
-        @param pp:              Index of the pulsar we are treating
-        @param mask:            The mask to use for the full set of parameters
-        @param allpars:         The vector of all hyper parameters parmaeters
-
-        Note: right now this marginalises over some timing model. This seems
-              unnecessary. Jitter should not be correlated at all with the timing
-              model. Just use fully subtracted residuals, and no auxiliaries
-              will be necessary
-
-        Note:   This function is not working right now. All this will be
-                deprecated by including the Jitter directly with the white noise
-        """
-        psr = self.ptapsrs[pp]
-
-        # Obtain the Thetavec indices we need
-        inds = np.sum(self.npfdm[:pp])
-        inde = inds + self.npfdm[pp]
-
-        # Set the parameters
-        apars = allpars.copy()
-        apars[mask] = parameters
-        self.setSinglePsrNoise(apars, pp=pp)
-
-        # Required auxiliaries from the noise-construction:
-        # UGGNGGU   (per-pulsar, G adjusted for Jitter)
-        # rGU       (per-pulsar, G adjusted for Jitter)
-        #    --- perhaps we need to save NiU, in order to allow r to vary
-        # rGr_U     (per-pulsar, G adjusted for Jitter)
-        #    --- don't know how to do that one...
-        # GNGldet_U   (per-pulsar, G adjusted for Jitter)
-
-        JLD = np.sum(np.log(psr.Jvec))
-
-        Sigma = self.UGGNGGU[pp] + np.diag(1.0 / psr.Jvec)
-
-        try:
-            cf = sl.cho_factor(Sigma)
-            SigmaLD = 2*np.sum(np.log(np.diag(cf[0])))
-            rGSigmaGr = np.dot(self.rGU[pp], sl.cho_solve(cf, self.rGU[pp]))
-        except np.linalg.LinAlgError:
-            U, s, Vh = sl.svd(Sigma)
-            if not np.all(s > 0):
-                raise ValueError("ERROR: Sigma singular according to SVD")
-            SigmaLD = np.sum(np.log(s))
-            rGSigmaGr = np.dot(self.rGU[pp], np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, self.rGU[pp]))))
-
-        # Return the conditional marginalised log-likelihood
-        return -0.5*np.sum(self.rGr_U[pp]) - 0.5*self.GNGldet[pp] \
-                + 0.5*rGSigmaGr - 0.5*SigmaLD - 0.5*JLD
 
 
     def gibbs_Phi_loglikelihood_mar(self, parameters, mask, allpars):
@@ -8591,17 +8583,30 @@ class ptaLikelihood(object):
 
         # Set the FNF matrix
         for ii, psr in enumerate(self.ptapsrs):
-            residuals = self.gibbs_get_custom_subresiduals(ii, \
-                    np.logical_not(psr.Zmask_F))
+            # Do not subtract ecorr/jitter, since it's included in the jitter
+            # extension
+            submask = np.logical_not(psr.Zmask_F)
+            submask = np.logical_and(submask, np.logical_not(psr.Zmask_U))
+
+            # Form the sub-residuals (only red-noise/signal residuals)
+            residuals = self.gibbs_get_custom_subresiduals(ii, submask)
 
             zindex = np.sum(self.npz_f[:ii])
             npz = int(self.npz_f[ii])
-            self.FNF[zindex:zindex+npz, zindex:zindex+npz] = \
-                    np.dot(psr.Zmat_F.T, ((1.0/psr.Nvec) * psr.Zmat_F.T).T)
+            self.GNGldet[ii], self.FNF[zindex:zindex+npz, zindex:zindex+npz] = \
+                    cython_block_shermor_2D(psr.Zmat_F, \
+                    psr.Nvec, psr.Jvec, psr.Uinds)
+            #self.FNF[zindex:zindex+npz, zindex:zindex+npz] = \
+            #        np.dot(psr.Zmat_F.T, ((1.0/psr.Nvec) * psr.Zmat_F.T).T)
+            Nx = cython_block_shermor_0D(residuals, psr.Nvec, \
+                    psr.Jvec, psr.Uinds)
+            self.rGZ_F[zindex:zindex+npz] = np.dot(Nx, psr.Zmat_F)
+            # self.rGZ_F[zindex:zindex+npz] = np.dot(residuals / psr.Nvec, psr.Zmat_F)
 
-            self.rGZ_F[zindex:zindex+npz] = np.dot(residuals / psr.Nvec, psr.Zmat_F)
-            self.GNGldet[ii] = np.sum(np.log(psr.Nvec))
-            self.rGr[ii] = np.sum(residuals ** 2 / psr.Nvec)
+            self.GNGldet[ii], self.rGr[ii] = cython_block_shermor_1D(\
+                    residuals, psr.Nvec, psr.Jvec, psr.Uinds)
+            #self.GNGldet[ii] = np.sum(np.log(psr.Nvec))
+            #self.rGr[ii] = np.sum(residuals ** 2 / psr.Nvec)
             
 
         if len(self.ptapsrs) == 1:
