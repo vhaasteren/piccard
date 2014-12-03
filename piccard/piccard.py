@@ -2321,6 +2321,7 @@ class ptaPulsar(object):
             self.Zmat_F, self.Zmask_F = self.getZmat(gibbsmodel, which='F')
             self.Zmat_D, self.Zmask_D = self.getZmat(gibbsmodel, which='D')
             self.Zmat_U, self.Zmask_U = self.getZmat(gibbsmodel, which='U')
+            self.Zmat_N, self.Zmask_N = self.getZmat(gibbsmodel, which='N')
             self.gibbsresiduals = np.zeros(len(self.toas))
 
             self.gibbscoefficients = np.zeros(self.Zmat.shape[1])
