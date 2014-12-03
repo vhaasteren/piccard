@@ -7750,7 +7750,12 @@ class ptaLikelihood(object):
             # No parameters to fit for
             return self.gibbs_current_a
 
-        residuals = self.gibbs_get_custom_subresiduals(pp, np.logical_not(zmask))
+        # If we do joinNJ, then we should not subtract the jitter/ecorr
+        submask = np.logical_not(zmask)
+        if joinNJ:
+            submask = np.logical_and(submask, np.logical_not(psr.Zmask_U))
+
+        residuals = self.gibbs_get_custom_subresiduals(pp, submask)
 
         # Make ZNZ and Sigma
         #ZNZ = np.dot(Zmat.T, ((1.0/psr.Nvec) * Zmat.T).T)
@@ -7898,7 +7903,8 @@ class ptaLikelihood(object):
         psr.gibbscoefficients = b
 
         a = b.copy()
-        a[:psr.Mmat.shape[1]] = np.dot(psr.tmpConv, b[:psr.Mmat.shape[1]])
+        if 'design' in self.gibbsmodel:
+            a[:psr.Mmat.shape[1]] = np.dot(psr.tmpConv, b[:psr.Mmat.shape[1]])
 
         if which == 'N':
             # When which == 'N', we are doing this as part of the joint N-J
@@ -8426,16 +8432,18 @@ class ptaLikelihood(object):
         apars[mask] = parameters
         self.setSinglePsrNoise(apars, pp=pp)
 
+        # Decide which signals to subtract from the 'detresiduals'
         if joinNJ:
-            # gibbs_current_a is used in gibbs_get_custom_subresiduals
-            pass
+            zmask = np.logical_not(psr.Zmask_U)
         else:
-            residuals = self.gibbs_get_custom_subresiduals(pp, \
-                    np.array([1]*psr.Zmat.shape[1], dtype=np.bool))
+            zmask = np.array([1]*Zmat.shape[1], dtype=np.bool)
+
+        # Subtract the signals from the residuals
+        residuals = self.gibbs_get_custom_subresiduals(pp, zmask)
 
         # Calculate the block-inverse in the Cython jitter extension module
         jldet, jxi2 = cython_block_shermor_1D(residuals, \
-                psr.Nvec, psr.Jvec, psr.Uinds)
+                psr.Nvec, psr.Jvec * np.float(joinNJ), psr.Uinds)
 
         return -0.5 * jxi2 - 0.5 * jldet
 

@@ -33,7 +33,7 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
     1) a, the Fourier coefficients and timing model parameters
     2) N, the white noise parameters
     3) Phi, the red noise PSD coefficients
-    4) Jitter: pulse Jitter. May be included in N later on
+    4) Jitter: pulse jitter/ecorr. Unlike in mark1, always included in 'N'
     5) Deterministic: all deterministic sources not described elsewhere
 
     @param likob:       The likelihood object, containing everything
@@ -2048,6 +2048,8 @@ def gibbs_update_ecor_NJ(likob, pars, a, b, joinNJ=False):
         for pp, psr in enumerate(likob.ptapsrs):
             Jldet, xNx, eat = cython_shermor_draw_ecor(psr.gibbsresiduals, \
                     psr.Nvec, psr.Jvec, psr.Uinds)
+            eat = python_draw_ecor(psr.gibbsresiduals, \
+                    psr.Nvec, psr.Jvec, psr.Uinds)
 
             psr.gibbssubresiduals, psr.gibbsresiduals = \
                     cython_update_ea_residuals(psr.gibbsresiduals, \
@@ -2057,6 +2059,9 @@ def gibbs_update_ecor_NJ(likob, pars, a, b, joinNJ=False):
                 # We need to update the quadratic parameters
                 a[pp][psr.Zmask_U] = eat
                 b[pp][psr.Zmask_U] = eat
+    else:
+        # We don't sample the ecorr parameters here
+        pass
 
     likob.gibbs_current_a = b
     return a, b
@@ -3002,10 +3007,16 @@ def RunGibbs_mark1(likob, steps, chainsdir, noWrite=False, joinNJ=True):
         loglik_J = []
         loglik_NJ = gibbs_prepare_loglik_NJ(likob, pars)
     else:
-        # Jitter is present explicitly (non-marginalized)
+        # Jitter might be present explicitly (non-marginalized)
         loglik_N = gibbs_prepare_loglik_N(likob, pars)
         loglik_J = gibbs_prepare_loglik_J(likob, pars)
         loglik_NJ = []
+
+        # Not joining NJ is unwise. Give a warning
+        if 'jitter' in likob.gibbsmodel:
+            print("WARNING: not joining NJ increases chain acor-length.")
+        else:
+            print("WARNING: not joining NJ. Ecorr in model will lead to error.")
 
     loglik_Det = gibbs_prepare_loglik_Det(likob, pars)
 
@@ -3090,9 +3101,6 @@ def RunGibbs_mark1(likob, steps, chainsdir, noWrite=False, joinNJ=True):
                 if iter > 100:
                     print "WARNING: numpy.linalg problems"
                     raise
-
-                # Just try again
-                #raise
 
             # If joinNJ=True, we still have the jitter included in
             # psr.gibbsresiduals and gibbssubresiduals. Therefore, this
