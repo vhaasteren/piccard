@@ -7761,7 +7761,8 @@ class ptaLikelihood(object):
         # Make ZNZ and Sigma
         #ZNZ = np.dot(Zmat.T, ((1.0/psr.Nvec) * Zmat.T).T)
         if joinNJ:
-            Jldet, ZNZ = cython_block_shermor_2D(Zmat, psr.Nvec, psr.Jvec, psr.Uinds)
+            Jldet, ZNZ = cython_block_shermor_2D(Zmat, psr.Nvec, \
+                    psr.Jvec, psr.Uinds)
 
             # ahat is the slice ML value for the coefficients. Need ENx
             Nx = cython_block_shermor_0D(residuals, \
@@ -8207,7 +8208,6 @@ class ptaLikelihood(object):
         return a
 
 
-
     def gibbs_sample_M_quadratics(self, a, pp, ml=False):
         """
         RvH:    why do we not just use the regular sampler for this? I recall
@@ -8220,8 +8220,8 @@ class ptaLikelihood(object):
 
         residuals = self.gibbs_get_custom_subresiduals(pp, np.logical_not(zmask))
 
-        Jldet, ZNZ = cython_block_shermor_2D(Zmat, \
-                psr.Nvec, psr.Jvec, psr.Uinds)
+        Jldet, ZNZ = cython_block_shermor_2D(Zmat, psr.Nvec, \
+                psr.Jvec, psr.Uinds)
         #ZNZ = np.dot(Zmat.T, np.dot(np.diag(1.0/psr.Nvec), Zmat))
 
         # RvH: Why was 'residuals' actuall detresiduals????

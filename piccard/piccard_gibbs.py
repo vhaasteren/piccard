@@ -174,7 +174,8 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
     # generated from all the respective (conditional-) likelihood functions
     #b = []
     for pp, psr in enumerate(likob.ptapsrs):
-        bi, a[pp], xi2  = likob.gibbs_sample_psr_quadratics(apars[:ndim], a[pp], pp)
+        bi, a[pp], xi2  = likob.gibbs_sample_psr_quadratics(apars[:ndim], \
+                a[pp], pp, joinNJ=True)
     #b.append(bi)
     apars[ndim:] = np.hstack(a)
     likob.gibbs_current_a = a
@@ -240,7 +241,7 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
                     #       two functions?
                     #
                     # Step accepted
-                    #likob.gibbs_current_a, bi, xi2 = \
+                    #bi, likob.gibbs_current_a, xi2 = \
                     #        likob.gibbs_sample_psr_quadratics(apars[:ndim], \
                     #        likob.gibbs_current_a, pp, which='D')
                     likob.gibbs_current_a = likob.gibbs_sample_Theta_quadratics(\
@@ -249,7 +250,8 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
 
                     apars[ndim:] = np.hstack(likob.gibbs_current_a)
                 else:
-                    # Not accepted. Put covariance back in place
+                    # Not accepted. Put covariance back in place (from
+                    # hyper-parameters)
                     likob.setTheta(apars[:ndim], pp=pp)
 
                 apars[Dmask] = sampler._chain[step,:]
@@ -300,13 +302,17 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
 
         # Also do a timing-model re-sample, so we also get the parameters we had
         # not had before...
-        # DO WE DO THE FULL MODEL, OR JUST THE COMPLEMENTARY MODEL????????????
+        # NOTE: Somehow, it is necessary here to sample more than just the
+        # remaining timing model parameters. At the moment it is not clear which
+        # quadratic parameters need to be re-sampled, so we just do a whole
+        # bunch. (No jitter though!)
         for pp, psr in enumerate(likob.ptapsrs):
             # NOTE: RvH 20141129: We definitely do not want to re-calculate all
             #       these quadratics. We can subtract plenty of 'm. Which ones?
-            likob.gibbs_current_a[pp], bi, xi2 = \
+            bi, likob.gibbs_current_a[pp], xi2 = \
                     likob.gibbs_sample_psr_quadratics(apars[:ndim], \
-                    likob.gibbs_current_a[pp], pp, which='all')
+                    likob.gibbs_current_a[pp], pp, which='N')
+
             #likob.gibbs_current_a = likob.gibbs_sample_M_quadratics( \
             #        likob.gibbs_current_a, pp)
 
