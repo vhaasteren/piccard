@@ -82,8 +82,13 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
     # Allocate all the sub-samplers we need (the samplers for the conditional
     # probabilities
     sampler_N = []          # White noise (per pulsar)
+    sampler_N_info = []     # Dict with info on samplers
     sampler_F = None        # Red noise (full array, b/c correlations)
+    sampler_F_info = \
+            dict({"singleChain":0, "fullChain":0, \
+                    "curStep":1, "covUpdate":0})      # Dict with info
     sampler_D = []          # DM variations (per pulsar)
+    sampler_D_info = []     # Dict with info on samplers
     for ii, psr in enumerate(likob.ptapsrs):
         # Start with the noise search for pulsar ii
         # Parameter mask for the white noise + ecorr/jitter signals
@@ -102,6 +107,8 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
                 verbose=False, nowrite=True, \
                 loglargs=[ii, Nmask, apars], \
                 logpargs=[ii, Nmask, apars]))
+            sampler_N_info.append(dict({"singleChain":20*Ndim, \
+                    "fullChain":Ndim*8000, "curStep":1, "covUpdate":400*Ndim}))
         else:
             sampler_N.append(None)
 
@@ -124,6 +131,9 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
                     verbose=False, nowrite=True, \
                     loglargs=[ii, Dmask, apars], \
                     logpargs=[ii, Dmask, apars]))
+                sampler_D_info.append(dict({"singleChain":20*Ddim, \
+                        "fullChain":Ddim*8000, "curStep":1, \
+                        "covUpdate":400*Ddim}))
             else:
                 sampler_D.append(None)
 
@@ -143,6 +153,9 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
                     verbose=False, nowrite=True, \
                     loglargs=[Fmask, apars], \
                     logpargs=[Fmask, apars])
+            sampler_F_info = dict({"singleChain":20*Fdim, \
+                    "fullChain":Fdim*8000, "curStep":1, \
+                    "covUpdate":400*Fdim})
         else:
             sampler_F = None
 
@@ -209,10 +222,10 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
                 
                 # The sampler always calculates the previous step as well, as it
                 # should here (other parameters have changed in the meantime)
-                sampler.sample(psrNpars, step+1, covUpdate=500, burn=2, maxIter=2*steps,
-                    i0=step-1, thin=1)
-
-                apars[Nmask] = sampler._chain[step,:]
+                # sampler.sample(psrNpars, step+1, covUpdate=500, burn=2, maxIter=2*steps,
+                #    i0=step-1, thin=1)
+                # apars[Nmask] = sampler._chain[step,:]
+                apars[Nmask] = gibbs_runSampler(psrNpars, sampler, sampler_N_info[pp])
 
                 # This sets the Jvec as well
                 likob.setSinglePsrNoise(apars[:ndim], pp=pp)
@@ -233,6 +246,12 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
                 sampler.logl.args = [pp, Dmask, apars]
                 sampler.logp.args = [pp, Dmask, apars]
 
+                apars[Dmask] = gibbs_runSampler(psrDpars, sampler, \
+                        sampler_D_info[pp])
+                likob.gibbs_sample_Theta_quadratics(likob.gibbs_current_a, pp)
+                apars[ndim:] = np.hstack(likob.gibbs_current_a)
+
+                """
                 sampler.sample(psrDpars, step+1, covUpdate=500, burn=2, maxIter=2*steps,
                     i0=step-1, thin=1)
 
@@ -255,6 +274,7 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
                     likob.setTheta(apars[:ndim], pp=pp)
 
                 apars[Dmask] = sampler._chain[step,:]
+                """
 
             if 'jitter' in likob.gibbsmodel:
                 # Conditional probability jump in the jitter/ecorr quadratic
@@ -281,6 +301,12 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
             sampler.logl.args = [Fmask, apars]
             sampler.logp.args = [Fmask, apars]
 
+            apars[Fmask] = gibbs_runSampler(psrFpars, sampler, sampler_F_info)
+            likob.gibbs_current_a = likob.gibbs_sample_Phi_quadratics(\
+                    likob.gibbs_current_a, sigma_precalc=True)
+            apars[ndim:] = np.hstack(likob.gibbs_current_a)
+
+            """
             sampler.sample(psrFpars, step+1, covUpdate=500, burn=2, maxIter=2*steps,
                 i0=step-1, thin=1)
 
@@ -298,6 +324,7 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
                 likob.gibbs_construct_all_freqcov()
 
             apars[Fmask] = sampler._chain[step,:]
+            """
 
 
         # Also do a timing-model re-sample, so we also get the parameters we had
@@ -323,17 +350,13 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
         ll_cur = likob.gibbs_full_loglikelihood(apars)
         lp_cur = ll_cur + likob.mark4logprior(apars[:ndim])
 
-
-
         samples[stepind, :] = apars
         logpost[stepind] = lp_cur
         loglik[stepind] = ll_cur
 
-
-
         # All the blocks done for this step. Update the track records
-
         stepind += 1
+
         # Write to file if necessary
         if (stepind % dumpint == 0 or step == steps-1):
             nwrite = dumpint
@@ -369,6 +392,60 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
 
 
     sys.stdout.write("\n")
+
+
+def gibbs_runSampler(p0, sampler, sampler_dict):
+        """
+        Run the MCMC sampler as used in the mark2 Gibbs sampler. Starting from
+        position p0, for singleChain steps. Note: the covariance update
+        length is also used as a length for the differential evolution burn-in.
+        There is no chain-thinning
+
+        @param p0:              Current value in parameter space
+        @param sampler:         The PTMCMC sampler object
+        @param sampler_dict:    Dictionary with chain-sizes and info
+
+        @return:    New/latest value in parameter space
+        """
+        singleChain = sampler_dict["singleChain"]
+        fullChain = sampler_dict["fullChain"]
+        curStep = sampler_dict["curStep"]
+        covUpdate = sampler_dict["covUpdate"]
+
+        # Run the sampler for a small minichain
+        sampler.sample(p0, curStep+singleChain, \
+                maxIter=fullChain, covUpdate=covUpdate, \
+                burn=covUpdate, i0=curStep-1, thin=1)
+
+        curStep += singleChain
+        retPos = sampler._chain[curStep-1, :].copy()
+
+        # Subtract the mean off of the just-created samples. And because
+        # covUpdate is supposed to be a multiple of singleChain, this will not
+        # mess up the Adaptive Metropolis shizzle
+        sampler._chain[curStep-singleChain:curStep, :] = \
+                sampler._chain[curStep-singleChain:curStep, :] - \
+                np.mean(sampler._chain[curStep-singleChain:curStep, :])
+
+        # Check whether we're almost at the end of the chain
+        if fullChain - curStep <= covUpdate:
+            midStep = int(fullChain / 2)
+
+            # Copy the end half of the chain to the beginning
+            sampler._lnprob[:curStep-midStep] = \
+                    sampler._lnprob[midStep:curStep]
+            sampler._lnlike[:curStep-midStep] = \
+                    sampler._lnlike[midStep:curStep]
+            sampler._chain[:curStep-midStep, :] = \
+                    sampler._chain[midStep:curStep, :]
+            sampler._AMbuffer[:curStep-midStep, :] = \
+                    sampler._AMbuffer[midStep:curStep, :]
+            sampler._DEbuffer = sampler._AMbuffer[0:covUpdate]
+
+            # We are now at half the chain-length again
+            sampler_dict["curStep"] = curStep - midStep
+
+        return retPos
 
 
 
@@ -910,7 +987,6 @@ class pulsarJNoiseLL(object):
 
         @return:    New/latest value in parameter space
         """
-
         # Run the sampler for a small minichain
         self.sampler.sample(p0, self.curStep+self.singleChain, \
                 maxIter=self.fullChain, covUpdate=self.covUpdate, \

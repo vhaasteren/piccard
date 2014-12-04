@@ -824,6 +824,8 @@ def argsortTOAs(toas, flags, which=None, dt=1.0):
     Return the sort, and the inverse sort permutations of the TOAs, for the
     requested type of sorting
 
+    NOTE: This one is _not_ optimized for efficiency yet (but is done only once)
+
     @param toas:    The toas that are to be sorted
     @param flags:   The flags that belong to each TOA (indicates sys/backend)
     @param which:   Which type of sorting we will use (None, 'jitterext', 'time')
