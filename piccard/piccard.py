@@ -629,7 +629,7 @@ class ptaPulsar(object):
                 # This parameter stays in the compression matrix (so is
                 # marginalised over
                 tmparkeep += [tmpar]
-            elif tmpar == 'Offset':
+            elif tmpar == 'Offset' and keep:
                 print "WARNING: Offset needs to be included in the design matrix. Including it anyway..."
                 tmparkeep += [tmpar]
             else:
@@ -3089,12 +3089,7 @@ class ptaLikelihood(object):
 
             self.npobs[ii] = len(psr.toas)
 
-
-            #if self.likfunc in ['mark1', 'mark3', 'mark4', 'mark4ln', 'mark11']:
             self.npu[ii] = len(psr.avetoas)
-
-            # Not working here:w
-
 
             if self.likfunc in ['mark1', 'mark4', 'mark4ln', 'mark6', \
                     'mark6fa', 'mark8', 'mark10', 'gibbs']:
@@ -3104,19 +3099,16 @@ class ptaLikelihood(object):
             if self.likfunc in ['mark10']:
                 self.npffdm[ii] += len(psr.SFdmfreqs)
 
-
-            # This is where they were originally
-
             if self.likfunc in ['mark1', 'mark2', 'mark3', 'mark3fa', 'mark4', \
                     'mark4ln', 'mark6', 'mark6fa', 'mark7', 'mark8', 'mark9', \
                     'mark10']:
                 self.npgs[ii] = len(psr.Gr)
-                self.npgos[ii] = len(psr.toas) - self.npgs[ii] - psr.Mmat.shape[1]
+                self.npgos[ii] = len(psr.toas) - self.npgs[ii] #- psr.Mmat.shape[1]
                 psr.Nwvec = np.zeros(self.npgs[ii])
                 psr.Nwovec = np.zeros(self.npgos[ii])
             elif self.likfunc in ['gibbs']:
                 self.npgs[ii] = len(psr.toas) - psr.Mmat.shape[1]
-                self.npgos[ii] = len(psr.toas) - self.npgs[ii] - psr.Mmat.shape[1]
+                self.npgos[ii] = len(psr.toas) - self.npgs[ii] #- psr.Mmat.shape[1]
                 psr.Nwvec = np.zeros(self.npgs[ii])
                 psr.Nwovec = np.zeros(self.npgos[ii])
 
@@ -3298,6 +3290,7 @@ class ptaLikelihood(object):
             incPixelGWB=False, pixelgwbModel='powerlaw', npixels=4, \
             incBWM=False, \
             incTimingModel=False, nonLinear=False, \
+            keepTimingModelPars = None, \
             varyEfac=True, incEquad=False, \
             separateCEquads=False, separateEquads=False, \
             separateEfacs=False, \
@@ -3628,26 +3621,32 @@ class ptaLikelihood(object):
                     #tmperrs = m2psr.ptmparerrs
                     tmpest = m2psr.ptmpars
 
-                # Figure out which parameters we'll keep in the design matrix
-                jumps = []
-                for tmpar in m2psr.ptmdescription:
-                    if tmpar[:4] == 'JUMP':
-                        jumps += [tmpar]
+                if keepTimingModelPars is None and not likfunc == 'mark11':
+                    # Figure out which parameters we'll keep in the design matrix
+                    jumps = []
+                    for tmpar in m2psr.ptmdescription:
+                        if tmpar[:4] == 'JUMP':
+                            jumps += [tmpar]
 
-                #newptmdescription = m2psr.getNewTimingModelParameterList(keep=True, \
-                #        tmpars=['Offset', 'F0', 'F1', 'RAJ', 'DECJ', 'PMRA', \
-                #        'PMDEC', 'PX', 'DM', 'DM1', 'DM2'] + jumps)
-                newptmdescription = m2psr.getNewTimingModelParameterList(keep=True, \
-                        tmpars=['Offset', 'F0', 'F1', 'DM1', 'DM2'] + jumps)
-                # Create a modified design matrix (one that we will analytically
-                # marginalise over).
-                #(newM, newG, newGc, newptmpars, newptmdescription) = \
-                #        m2psr.getModifiedDesignMatrix(removeAll=True)
-
-                # Actually, if we are in likfunc == 'mark11', we need _all_
-                # TM parameters in the model
-                if likfunc == 'mark11':
+                    #newptmdescription = m2psr.getNewTimingModelParameterList(keep=True, \
+                    #        tmpars=['Offset', 'F0', 'F1', 'RAJ', 'DECJ', 'PMRA', \
+                    #        'PMDEC', 'PX', 'DM', 'DM1', 'DM2'] + jumps)
+                    newptmdescription = m2psr.getNewTimingModelParameterList(keep=True, \
+                            tmpars=['Offset', 'F0', 'F1', 'DM1', 'DM2'] + jumps)
+                    # Create a modified design matrix (one that we will analytically
+                    # marginalise over).
+                    #(newM, newG, newGc, newptmpars, newptmdescription) = \
+                    #        m2psr.getModifiedDesignMatrix(removeAll=True)
+                elif likfunc != 'mark11':
+                    newptmdescription = m2psr.getNewTimingModelParameterList( \
+                            keep=False, tmpars=keepTimingModelPars)
+                else:
+                    # Actually, if we are in likfunc == 'mark11', we need _all_
+                    # TM parameters in the model
                     newptmdescription = []
+
+                    if keepTimingModelPars is not None:
+                        print("WARNING: cannot analytically treat timing model -- ignoring")
 
                 # Select the numerical parameters. These are the ones not
                 # present in the quantities that getModifiedDesignMatrix
@@ -3671,7 +3670,6 @@ class ptaLikelihood(object):
                             pmax += [1.0]
                             pwidth += [0.1]
                         else:
-                            # tmpest[jj] = 0.0        # DELETE THISS!!!!!
                             pmin += [-500.0 * tmperrs[jj] + tmpest[jj]]
                             pmax += [500.0 * tmperrs[jj] + tmpest[jj]]
                             pwidth += [(pmax[-1]-pmin[-1])/50.0]

@@ -833,7 +833,7 @@ def makeResidualsPlot(ax, toas, residuals, toaerrs, flags, \
 
 def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
         parametersfile=None, sampler='auto', make1dplots=True, \
-        maxpages=-1, skipTMP=False, triplot_hm=False):
+        maxpages=-1, skipTMP=True, triplot_hm=False):
     """
     Given an MCMC chain file, and an output directory, make all the results
     plots
