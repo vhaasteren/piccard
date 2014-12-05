@@ -430,10 +430,10 @@ def bwmsignal(parameters, raj, decj, t):
     returns the waveform as induced timing residuals (seconds)
 
     """
-    gwphi = np.array([raj])
-    gwtheta = np.array([0.5*np.pi-decj])
-    psrpos_phi = np.array([parameters[2]])
-    psrpos_theta = np.array([parameters[3]])
+    psrpos_phi = np.array([raj])
+    psrpos_theta = np.array([0.5*np.pi-decj])
+    gwphi = np.array([parameters[2]])
+    gwtheta = np.array([parameters[3]])
 
     # Get the signal response matrix, which contains the Fplus and Fcross
     Fr = signalResponse_fast(psrpos_theta, psrpos_phi, gwphi, gwtheta)
