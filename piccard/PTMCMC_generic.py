@@ -30,15 +30,28 @@ class PTSampler(object):
     @param logl: log-likelihood function
     @param logp: log prior function (must be normalized for evidence evaluation)
     @param cov: Initial covariance matrix of model parameters for jump proposals
+    @param covinds: Indices of parameters for which to perform adaptive jumps
+    @param loglargs: any additional arguments (apart from the parameter vector) for 
+    log likelihood
+    @param loglkwargs: any additional keyword arguments (apart from the parameter vector) 
+    for log likelihood
+    @param logpargs: any additional arguments (apart from the parameter vector) for 
+    log like prior
+    @param logpkwargs: any additional keyword arguments (apart from the parameter vector) 
+    for log prior
     @param outDir: Full path to output directory for chain files (default = ./chains)
     @param verbose: Update current run-status to the screen (default=True)
+    @param resume:  Resume a previous MCMC run
+    @param nowrite: Do not write the MCMC chain to file
+    @param newFileOrder: When False, use the old file order: (lp, ll, ar, pars)
+                         When True, use (pars, lp, ll, ar, rr) [Default]
 
     """
 
-    def __init__(self, ndim, logl, logp, cov, comm=MPI.COMM_WORLD, \
-                 outDir='./chains', verbose=True, nowrite=False, \
-                 loglargs=[], loglkwargs={}, \
-                 logpargs=[], logpkwargs={}):
+    def __init__(self, ndim, logl, logp, cov, covinds=None, loglargs=[], loglkwargs={}, \
+                 logpargs=[], logpkwargs={}, comm=MPI.COMM_WORLD, \
+                 outDir='./chains', verbose=True, resume=False, nowrite=False,
+                 newFileOrder=True):
 
         # MPI initialization
         self.comm = comm
@@ -50,6 +63,7 @@ class PTSampler(object):
         self.logp = _function_wrapper(logp, logpargs, logpkwargs)
         self.outDir = outDir
         self.verbose = verbose
+        self.resume = resume
         self.nowrite = nowrite
 
         # setup output file
@@ -59,17 +73,28 @@ class PTSampler(object):
             except OSError:
                 pass
 
+        # find indices for which to perform adaptive jumps
+        if covinds is None:
+            covinds = np.arange(0, self.ndim)
+        self.covinds = np.array(covinds)
+
         # set up covariance matrix
-        self.cov = cov
+        ndim = len(self.covinds)
+        self.cov = cov[self.covinds.min():self.covinds.max()+1, \
+                       self.covinds.min():self.covinds.max()+1]
         self.U, self.S, v = np.linalg.svd(self.cov)
-        self.M2 = np.zeros((self.ndim, self.ndim))
-        self.mu = np.zeros(self.ndim)
+        # RvH: when are we using self.ndim, and when just ndim???
+        self.M2 = np.zeros((ndim, ndim))
+        self.mu = np.zeros(ndim)
 
         # initialize proposal cycle
         self.propCycle = []
 
         # indicator for auxilary jumps
         self.aux = None
+
+        # What order to use in the output files
+        self.newFileOrder = newFileOrder
         
 
     def sample(self, p0, Niter, ladder=None, Tmin=1, Tmax=10, Tskip=100, \
@@ -91,10 +116,14 @@ class PTSampler(object):
         @param SCAMweight: Weight of SCAM jumps in overall jump cycle (default=20)
         @param AMweight: Weight of AM jumps in overall jump cycle (default=20)
         @param DEweight: Weight of DE jumps in overall jump cycle (default=20)
-        @param burn: Burn in time (DE jumps added after this iteration) (default=5000)
-        @param maxIter: Maximum number of iterations for high temperature chains (default=2*Niter)
+        @param KDEweight: Weight of KDE jumps in overall jump cycle (default=100)
+        @param burn: Burn in time (DE jumps added after this iteration) (default=10000)
+        @param maxIter: Maximum number of iterations for high temperature chains 
+                        (default=2*self.Niter)
         @param thin: Save every thin MCMC samples
         @param i0: Iteration to start MCMC (if i0 !=0, do not re-initialize)
+
+        RvH: KDEweight is not a parameter!!
 
         """
 
@@ -148,17 +177,23 @@ class PTSampler(object):
             self.temp = self.ladder[self.MPIrank]
 
             # set up output file
-            self.fname = self.outDir + '/chain_{0}.txt'.format(self.temp)
+            fname = self.outDir + '/chain_{0}.txt'.format(self.temp)
             if not self.nowrite:
-                self._chainfile = open(self.fname, 'w')
+                self._chainfile = open(fname, 'w')
                 self._chainfile.close()
 
 
         ### compute lnprob for initial point in chain ###
         self._chain[i0,:] = p0
 
-        # compute prior
-        lp = self.logp(p0)
+        # RvH: not the last point in the chain??
+        # if resuming, just start with first point in chain
+        if self.resume and self.resumeLength > 0:
+            p0, lnlike0, lnprob0  = self.resumechain[0,:-4], \
+                    self.resumechain[0,-3], self.resumechain[0,-4]
+        else:
+            # compute prior
+            lp = self.logp(p0)
 
         if lp == float(-np.inf):
 
@@ -204,7 +239,7 @@ class PTSampler(object):
             # write to file
             if iter % isave == 0:
                 if not self.nowrite:
-                    self._writeToFile(self.fname, iter, isave, thin)
+                    self._writeToFile(fname, iter, isave, thin)
                 if self.MPIrank == 0 and self.verbose:
                     sys.stdout.write('\r')
                     sys.stdout.write('Finished %2.2f percent in %f s Acceptance rate = %g'\
@@ -285,11 +320,28 @@ class PTSampler(object):
 
         # after burn in, add DE jumps
         if (iter-1) == self.burn and self.MPIrank == 0:
+            if self.verbose:
+                print 'Adding DE jump with weight {0}'.format(self.DEweight)
             self.addProposalToCycle(self.DEJump, self.DEweight)
             
             # randomize cycle
             self.randomizeProposalCycle()
         
+        ### jump proposal ###
+
+        # if resuming, just use previous chain points
+        if self.resume and self.resumeLength > 0 and iter < self.resumeLength:
+            p0, lnlike0, lnprob0 = self.resumechain[iter,:-4], \
+                    self.resumechain[iter,-3], self.resumechain[iter,-4]
+
+            # update acceptance counter
+            self.naccepted = iter*self.resumechain[iter,-2]
+            accepted = 1
+        else:
+            y, qxy = self._jump(p0, iter)
+
+            # compute prior and likelihood
+            lp = self.logp(y)
         
         # jump proposal
         y, qxy = self._jump(p0, iter)
@@ -433,10 +485,22 @@ class PTSampler(object):
         self._chainfile = open(fname, 'a+')
         for jj in range((iter-isave), iter, thin):
             ind = int(jj/thin)
-            self._chainfile.write('%.17e\t %.17e\t %e\t'%(self._lnprob[ind], self._lnlike[ind],\
-                                                  self.naccepted/iter))
-            self._chainfile.write('\t'.join(["%.17e"%(self._chain[ind,kk]) \
-                                            for kk in range(self.ndim)]))
+            pt_acc = 1
+            if self.MPIrank < self.nchain-1 and self.swapProposed != 0:
+                pt_acc = self.nswap_accepted/self.swapProposed
+
+            # RvH: the order has changed here :(
+            if self.newFileOrder:
+                self._chainfile.write('\t'.join(['%22.22f'%(self._chain[ind,kk]) \
+                                                for kk in range(self.ndim)]))
+                self._chainfile.write('\t%f\t %f\t %f\t %f\t'%(self._lnprob[ind], 
+                                                        self._lnlike[ind],\
+                                                        self.naccepted/iter, pt_acc))
+            else:
+                self._chainfile.write('%.17e\t %.17e\t %e\t'%(self._lnprob[ind], self._lnlike[ind],\
+                                                      self.naccepted/iter))
+                self._chainfile.write('\t'.join(["%.17e"%(self._chain[ind,kk]) \
+                                                for kk in range(self.ndim)]))
             self._chainfile.write('\n')
         self._chainfile.close()
 
@@ -453,20 +517,21 @@ class PTSampler(object):
         """
 
         it = iter - mem
+        ndim = len(self.covinds)
 
         if it == 0:
-            self.M2 = np.zeros((self.ndim, self.ndim))
-            self.mu = np.zeros(self.ndim)
+            self.M2 = np.zeros((ndim, ndim))
+            self.mu = np.zeros(ndim)
 
         for ii in range(mem):
-            diff = np.zeros(self.ndim)
+            diff = np.zeros(ndim)
             it += 1
-            for jj in range(self.ndim):
+            for jj, ind in enumerate(self.covinds):
                 
-                diff[jj] = self._AMbuffer[iter-mem+ii,jj] - self.mu[jj]
+                diff[jj] = self._AMbuffer[iter-mem+ii, ind] - self.mu[jj]
                 self.mu[jj] += diff[jj]/it
 
-            self.M2 += np.outer(diff, (self._AMbuffer[iter-mem+ii,:]-self.mu))
+            self.M2 += np.outer(diff, (self._AMbuffer[iter-mem+ii,self.covinds]-self.mu))
 
         self.cov = self.M2/(it-1)  
 
@@ -506,20 +571,8 @@ class PTSampler(object):
 
         q = x.copy()
         qxy = 0
-
-        # number of parameters to update at once 
-        prob = np.random.rand()
-        if prob > (1 - 1/self.ndim):
-            block = self.ndim
-
-        elif prob > (1 - 2/self.ndim):
-            block = np.ceil(self.ndim/2)
-
-        elif prob > 0.8:
-            block = 5
-
-        else:
-            block = 1
+        ndim = len(self.covinds)
+        # RvH: are we no longer doing blocks of parameters in SCAM?
 
         # adjust step size
         prob = np.random.rand()
@@ -545,15 +598,18 @@ class PTSampler(object):
             scale *= np.sqrt(self.temp)
 
         # get parmeters in new diagonalized basis
-        y = np.dot(self.U.T, x)
+        #y = np.dot(self.U.T, x)
 
         # make correlated componentwise adaptive jump
-        ind = np.unique(np.random.randint(0, self.ndim, block))
+        # ind = np.unique(np.random.randint(0, self.ndim, block))
+        ind = np.unique(np.random.randint(0, ndim, 1))
         neff = len(ind)
         cd = 2.4  / np.sqrt(2*neff) * scale 
 
-        y[ind] = y[ind] + np.random.randn(neff) * cd * np.sqrt(self.S[ind])
-        q = np.dot(self.U, y)
+        #y[ind] = y[ind] + np.random.randn(neff) * cd * np.sqrt(self.S[ind])
+        #q[self.covinds] = np.dot(self.U, y)
+        q[self.covinds] += np.random.randn() * cd * np.sqrt(self.S[ind]) * \
+                self.U[:,ind].flatten()
 
         return q, qxy
     
@@ -575,6 +631,7 @@ class PTSampler(object):
 
         q = x.copy()
         qxy = 0
+        ndim = len(self.covinds)
 
         # adjust step size
         prob = np.random.rand()
@@ -598,9 +655,20 @@ class PTSampler(object):
         # adjust scale based on temperature
         if self.temp <= 100:
             scale *= np.sqrt(self.temp)
+        
+        # get parmeters in new diagonalized basis
+        y = np.dot(self.U.T, x[self.covinds])
 
-        cd = 2.4/np.sqrt(2*self.ndim) * np.sqrt(scale)
-        q = np.random.multivariate_normal(x, cd**2*self.cov)
+        # make correlated componentwise adaptive jump
+        ind = np.arange(len(self.covinds))
+        neff = len(ind)
+        cd = 2.4  / np.sqrt(2*neff) * scale 
+
+        y[ind] = y[ind] + np.random.randn(neff) * cd * np.sqrt(self.S[ind])
+        q[self.covinds] = np.dot(self.U, y)
+
+        #cd = 2.4/np.sqrt(2*self.ndim) * np.sqrt(scale)
+        #q = np.random.multivariate_normal(x, cd**2*self.cov)
 
         return q, qxy
 
