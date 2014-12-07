@@ -1152,7 +1152,7 @@ class ptaPulsar(object):
         # For creating the auxiliaries it does not really matter: we are now
         # creating all quantities per default
         # TODO: set this parameter in another place?
-        if twoComponent and likfunc!='mark11' and likfunc!='gibbs':
+        if twoComponent and not likfunc in ['mark11', 'mark12', 'gibbs']:
             self.twoComponentNoise = True
 
         # Before writing anything to file, we need to know right away how many
@@ -1872,7 +1872,7 @@ class ptaPulsar(object):
             # No need to write anything just yet?
             pass
 
-        if likfunc == 'gibbs' or write == 'all':
+        if likfunc in ['mark12', 'gibbs'] or write == 'all':
             # Prepare the new design matrix bases
             self.gibbs_set_design(gibbsmodel)
 
@@ -1977,7 +1977,7 @@ class ptaPulsar(object):
         # G/H compression matrices
         vslice = self.isort
         mslice = (self.isort, slice(None, None, None))
-        if likfunc != 'gibbs':
+        if not likfunc in ['mark12', 'gibbs']:
             self.Gmat = np.array(h5df.getData(self.name, 'pic_Gmat', \
                     dontread=memsave, isort=mslice))
             self.Gcmat = np.array(h5df.getData(self.name, 'pic_Gcmat', \
@@ -2015,7 +2015,7 @@ class ptaPulsar(object):
 
         # If compression is not done, but Hmat represents a compression matrix,
         # we need to re-evaluate the lot. Raise an error
-        if not noGmat and likfunc != 'gibbs':
+        if not noGmat and not likfunc in ['mark12', 'gibbs']:
             if compression == 'dont':
                 pass
             elif (compression == 'None' or compression is None) and \
@@ -2291,7 +2291,7 @@ class ptaPulsar(object):
                     isort=mslice))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
 
-        if likfunc == 'gibbs':
+        if likfunc in ['mark12', 'gibbs']:
             self.Zmat = np.array(h5df.getData(self.name, 'pic_Zmat', \
                     isort=mslice))
             self.tmpConv = np.array(h5df.getData(self.name, 'pic_tmpConv'))
@@ -3092,7 +3092,7 @@ class ptaLikelihood(object):
             self.npu[ii] = len(psr.avetoas)
 
             if self.likfunc in ['mark1', 'mark4', 'mark4ln', 'mark6', \
-                    'mark6fa', 'mark8', 'mark10', 'gibbs']:
+                    'mark6fa', 'mark8', 'mark10', 'mark12', 'gibbs']:
                 self.npfdm[ii] = len(psr.Fdmfreqs)
                 self.npffdm[ii] = len(psr.Fdmfreqs)
 
@@ -3106,13 +3106,13 @@ class ptaLikelihood(object):
                 self.npgos[ii] = len(psr.toas) - self.npgs[ii] #- psr.Mmat.shape[1]
                 psr.Nwvec = np.zeros(self.npgs[ii])
                 psr.Nwovec = np.zeros(self.npgos[ii])
-            elif self.likfunc in ['gibbs']:
+            elif self.likfunc in ['mark12', 'gibbs']:
                 self.npgs[ii] = len(psr.toas) - psr.Mmat.shape[1]
                 self.npgos[ii] = len(psr.toas) - self.npgs[ii] #- psr.Mmat.shape[1]
                 psr.Nwvec = np.zeros(self.npgs[ii])
                 psr.Nwovec = np.zeros(self.npgos[ii])
 
-            if self.likfunc in ['gibbs']:
+            if self.likfunc in ['mark12', 'gibbs']:
                 self.npm[ii] = psr.Mmat.shape[1]
                 self.npz[ii] = psr.Zmat.shape[1]
                 self.npm_f[ii] = np.sum(psr.Mmask_F)
@@ -3193,7 +3193,7 @@ class ptaLikelihood(object):
         elif self.likfunc == 'mark11':
             self.GNGldet = np.zeros(npsrs)
             self.rGr = np.zeros(npsrs)
-        elif self.likfunc == 'gibbs':
+        elif self.likfunc in ['mark12', 'gibbs']:
             zlen_f = np.sum(self.npz_f)
             zlen_d = np.sum(self.npz_d)
             zlen_u = np.sum(self.npz_u)
@@ -3319,7 +3319,7 @@ class ptaLikelihood(object):
         gibbsmodel = ['design']
 
         # If we have Gibbs sampling, do not do any compression:
-        if likfunc == 'gibbs' and compression == "None":
+        if likfunc in ['mark12', 'gibbs'] and compression == "None":
             compression = 'dont'
 
         # Figure out what the frequencies per pulsar are
@@ -3418,7 +3418,7 @@ class ptaLikelihood(object):
                 if not 'jitter' in gibbsmodel and (expandJitter and expandCEquad):
                     # We are expanding the Jitter/CEquad in the Gibbs sampler
                     gibbsmodel.append('jitter')
-                if separateCEquads and likfunc != 'gibbs':
+                if separateCEquads and not likfunc in ['mark12', 'gibbs']:
                     uflagvals = list(set(m2psr.flags))  # Unique flags
                     for flagval in uflagvals:
                         newsignal = OrderedDict({
@@ -3435,7 +3435,7 @@ class ptaLikelihood(object):
                             "prior":'flatlog'
                             })
                         signals.append(newsignal)
-                elif separateCEquads and likfunc == 'gibbs':
+                elif separateCEquads and likfunc in ['mark12', 'gibbs']:
                     # Need to decide on number of jitter parameters, and
                     # number of epochs with jitter first for Gibbs sampler
                     if not checkTOAsort(m2psr.toas, m2psr.flags, \
@@ -4248,8 +4248,8 @@ class ptaLikelihood(object):
         else:
             separateEfacs = (numEfacs + numEquads + numJits) > 2
 
-        if self.likfunc == 'gibbs':
-            # For now, only trim the quantization matrix Umat for Gibbs
+        if self.likfunc in ['mark12', 'gibbs']:
+            # For now, only trim the quantization matrix Umat for Gibbs/mark12
             trimquant = True
         else:
             # All mark's do not support quantization trimming yet
@@ -4257,7 +4257,7 @@ class ptaLikelihood(object):
 
         # When doing Gibbs, we really do not want to separate this stuff
         # TODO: Why are we always separating efacs for Gibbs?
-        if likfunc in ['gibbs', 'mark11']:
+        if likfunc in ['gibbs', 'mark11', 'mark12']:
             separateEfacs[:] = True
 
         # Modify design matrices, and create pulsar Auxiliary quantities
@@ -7481,6 +7481,149 @@ class ptaLikelihood(object):
         return -0.5*np.sum(self.npobs)*np.log(2*np.pi) \
                 -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet)
 
+
+    def mark12loglikelihood(self, parameters):
+        """
+        mark12 loglikelihood of the pta model/likelihood implementation
+
+        This likelihood uses the T-matrix/Z-matrix definitions, while
+        marginalizing over the ecorr/jitter using the Cython jitter extension.
+        So... we need the sorted TOAs, obviously
+
+        # For the model, the 'gibbsmodel' description is used
+        """
+        npsrs = len(self.ptapsrs)
+
+        # The red signals (don't form matrices (slow); use the Gibbs expansion)
+        # Is this faster: ?
+        #self.setPhi(parameters, gibbs_expansion=True) 
+        #self.setTheta(parameters, pp=pp)
+        self.constructPhiAndTheta(parameters, make_matrix=False, \
+                gibbs_expansion=True)
+        self.gibbs_construct_all_freqcov()
+
+        # The white noise
+        self.setPsrNoise(parameters)
+
+        if self.haveDetSources:
+            self.updateDetSources(parameters)
+
+        # Size of the full matrix is:
+        nt = np.sum(self.npz) - np.sum(self.npu)# Size full T-matrix
+        nf = np.sum(self.npf)                   # Size full F-matrix
+        Sigma = np.zeros((nt, nt))              # Full Sigma matrix
+        FPhi = np.zeros((nf, nf))               # RN full Phi matrix
+        Finds = np.zeros(nf, dtype=np.int)      # T<->F translation indices
+        ZNZ = np.zeros((nt, nt))                # Full ZNZ matrix
+        Zx = np.zeros(nt)
+        Jldet = np.zeros(npsrs)                 # All log(det(N)) values
+        ThetaLD = 0.0
+        PhiLD = 0.0
+        rGr = np.zeros(npsrs)                   # All rNr values
+        sind = 0                                # Sigma-index
+
+        for ii, psr in enumerate(self.ptapsrs):
+            # The T-matrix is just the Z-matrix, minus the ecorr/jitter
+            tsize = psr.Zmat.shape[1] - np.sum(psr.Zmask_U)
+            Zmat = psr.Zmat[:,:tsize]
+
+            # Use jitter extension for ZNZ
+            Jldet[ii], ZNZp = cython_block_shermor_2D(Zmat, psr.Nvec, \
+                    psr.Jvec, psr.Uinds)
+            Nx = cython_block_shermor_0D(psr.detresiduals, \
+                    psr.Nvec, psr.Jvec, psr.Uinds)
+            Zx[sind:sind+tsize] = np.dot(Zmat.T, Nx)
+
+            Jldet[ii], rGr[ii] = cython_block_shermor_1D(\
+                    psr.detresiduals, psr.Nvec, psr.Jvec, psr.Uinds)
+
+            ZNZ[sind:sind+tsize, sind:sind+tsize] = ZNZp
+
+            # Create the prior (Sigma = ZNZ + Phi)
+            nms = self.npm[ii]
+            nfs = self.npf[ii]
+            nfdms = self.npfdm[ii]
+            findex = np.sum(self.npf[:ii])
+            fdmindex = np.sum(self.npfdm[:ii])
+            phind = 0
+            if 'design' in self.gibbsmodel:
+                phind += nms         
+            if 'rednoise' in self.gibbsmodel:
+                # Red noise, excluding GWS
+
+                if npsrs == 1:
+                    inds = slice(sind+phind, sind+phind+nfs)
+                    di = np.diag_indices(nfs)
+                    Sigma[inds, inds][di] += 1.0 / self.Phivec[findex:findex+nfs]
+                    PhiLD += np.sum(np.log(self.Phivec[findex:findex+nfs]))
+                    phind += nfs
+                elif npsrs > 1:
+                    # We need to do the full array at once. Do that below
+                    # Here, we construct the indexing matrices
+                    Finds[findex:findex+nfs] = np.arange(phind, phind+nfs)
+            if 'dm' in self.gibbsmodel:
+                inds = slice(sind+phind, sind+phind+nfdms)
+                di = np.diag_indices(nfdms)
+                Sigma[inds, inds][di] += 1.0 / self.Thetavec[fdmindex:fdmindex+nfdms]
+                ThetaLD += np.sum(np.log(self.Thetavec[fdmindex:fdmindex+nfdms]))
+                phind += nfdms
+
+            sind += tsize
+
+        if npsrs > 1:
+            msk_ind = np.zeros(self.freqmask.shape, dtype=np.int)
+            msk_ind[self.freqmask] = np.arange(np.sum(self.freqmask))
+            msk_zind = np.arange(np.sum(self.npf))
+            for mode in range(0, self.freqmask.shape[1], 2):
+                freq = int(mode/2)          # Which frequency
+
+                # We had pre-calculated the Cholesky factor and the inverse
+                # (in gibbs_construct_all_freqcov)
+                rncov_inv = self.Scor_im_inv[freq]
+                cf = self.Scor_im_cf[freq]
+                PhiLD += 4 * np.sum(np.log(np.diag(cf[0])))
+
+                # Ok, we have the inverse for the individual modes. Now add them
+                # to the full sigma matrix
+
+                # Firstly the Cosine mode
+                newmsk = np.zeros(self.freqmask.shape, dtype=np.bool)
+                newmsk[:, mode] = self.freqmask[:, mode]
+                mode_ind = msk_ind[newmsk]
+                z_ind = msk_zind[mode_ind]
+                FPhi[np.array([z_ind]).T, z_ind] += rncov_inv
+
+                # Secondly the Sine mode
+                newmsk[:] = False
+                newmsk[:, mode+1] = self.freqmask[:, mode+1]
+                mode_ind = msk_ind[newmsk]
+                z_ind = msk_zind[mode_ind]
+                FPhi[np.array([z_ind]).T, z_ind] += rncov_inv
+
+            Sigma[np.array([Finds]).T, Finds] += FPhi
+
+        Sigma += ZNZ
+
+        # With Sigma constructed, we can invert it
+        try:
+            cf = sl.cho_factor(Sigma)
+            SigmaLD = 2*np.sum(np.log(np.diag(cf[0])))
+            rSr = np.dot(Zx, sl.cho_solve(cf, Zx))
+        except np.linalg.LinAlgError:
+            print "Using SVD... return -inf"
+            return -np.inf
+
+            U, s, Vh = sl.svd(Sigma)
+            if not np.all(s > 0):
+                raise ValueError("ERROR: Sigma singular according to SVD")
+            SigmaLD = np.sum(np.log(s))
+            rSr = np.dot(Nx, np.dot(Vh.T / s, np.dot(U.T, Nx)))
+
+        return -0.5*np.sum(self.npobs)*np.log(2*np.pi) \
+                -0.5*np.sum(Jldet) - 0.5*np.sum(rGr) \
+                +0.5*rSr - 0.5*SigmaLD - 0.5*PhiLD - 0.5*ThetaLD
+
+
     # Now we will define the Gibbs likelihood functions, all preceded with
     # gibbs_.... First a few extra auxiliary functions to make that possible
 
@@ -8653,7 +8796,7 @@ class ptaLikelihood(object):
                 
             else:
                 # Perform the inversion of Phi per frequency. Is much much faster
-                PhiLD = 0
+                PhiLD = 0.0
                 for mode in range(0, self.freqmask.shape[1], 2):
                     freq = int(mode/2)
 
@@ -8772,6 +8915,8 @@ class ptaLikelihood(object):
                 ll = self.mark10loglikelihood(parameters)
             elif self.likfunc == 'mark11':
                 ll = self.mark11loglikelihood(parameters)
+            elif self.likfunc == 'mark12':
+                ll = self.mark12loglikelihood(parameters)
 
             if self.evallikcomp:
                 self.skipUpdateToggle = True
@@ -8948,6 +9093,8 @@ class ptaLikelihood(object):
                 lp = self.mark9logprior(parameters)
             elif self.likfunc == 'mark10':  # Mark9 ''
                 lp = self.mark9logprior(parameters)
+            elif self.likfunc == 'mark12':
+                lp = self.mark4logprior(parameters)
             elif self.likfunc == 'gibbs':
                 lp = self.mark4logprior(parameters)
         else:
