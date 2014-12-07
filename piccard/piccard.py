@@ -7521,6 +7521,7 @@ class ptaLikelihood(object):
         PhiLD = 0.0
         rGr = np.zeros(npsrs)                   # All rNr values
         sind = 0                                # Sigma-index
+        phind = 0                               # Z/T-index
 
         for ii, psr in enumerate(self.ptapsrs):
             # The T-matrix is just the Z-matrix, minus the ecorr/jitter
@@ -7545,7 +7546,6 @@ class ptaLikelihood(object):
             nfdms = self.npfdm[ii]
             findex = np.sum(self.npf[:ii])
             fdmindex = np.sum(self.npfdm[:ii])
-            phind = 0
             if 'design' in self.gibbsmodel:
                 phind += nms         
             if 'rednoise' in self.gibbsmodel:
@@ -7554,13 +7554,17 @@ class ptaLikelihood(object):
                 if npsrs == 1:
                     inds = slice(sind+phind, sind+phind+nfs)
                     di = np.diag_indices(nfs)
-                    Sigma[inds, inds][di] += 1.0 / self.Phivec[findex:findex+nfs]
-                    PhiLD += np.sum(np.log(self.Phivec[findex:findex+nfs]))
+                    Sigma[inds, inds][di] += 1.0 / ( \
+                            self.Phivec[findex:findex+nfs] + \
+                            self.Svec[findex:findex+nfs])
+                    PhiLD += np.sum(np.log(self.Phivec[findex:findex+nfs] + \
+                            self.Svec[findex:findex+nfs]))
                     phind += nfs
                 elif npsrs > 1:
                     # We need to do the full array at once. Do that below
                     # Here, we construct the indexing matrices
                     Finds[findex:findex+nfs] = np.arange(phind, phind+nfs)
+                    phind += nfs
             if 'dm' in self.gibbsmodel:
                 inds = slice(sind+phind, sind+phind+nfdms)
                 di = np.diag_indices(nfdms)
@@ -7570,7 +7574,7 @@ class ptaLikelihood(object):
 
             sind += tsize
 
-        if npsrs > 1:
+        if npsrs > 1 and 'rednoise' in self.gibbsmodel:
             msk_ind = np.zeros(self.freqmask.shape, dtype=np.int)
             msk_ind[self.freqmask] = np.arange(np.sum(self.freqmask))
             msk_zind = np.arange(np.sum(self.npf))
@@ -7583,8 +7587,8 @@ class ptaLikelihood(object):
                 cf = self.Scor_im_cf[freq]
                 PhiLD += 4 * np.sum(np.log(np.diag(cf[0])))
 
-                # Ok, we have the inverse for the individual modes. Now add them
-                # to the full sigma matrix
+                # We have the inverse for the individual modes now. Add them to
+                # the full prior covariance matrix
 
                 # Firstly the Cosine mode
                 newmsk = np.zeros(self.freqmask.shape, dtype=np.bool)
@@ -7602,24 +7606,31 @@ class ptaLikelihood(object):
 
             Sigma[np.array([Finds]).T, Finds] += FPhi
 
-        Sigma += ZNZ
+        # If we have a non-trivial prior matrix, invert that stuff
+        if 'rednoise' in self.gibbsmodel or 'dm' in self.gibbsmodel:
+            Sigma += ZNZ
 
-        # With Sigma constructed, we can invert it
-        try:
-            cf = sl.cho_factor(Sigma)
-            SigmaLD = 2*np.sum(np.log(np.diag(cf[0])))
-            rSr = np.dot(Zx, sl.cho_solve(cf, Zx))
-        except np.linalg.LinAlgError:
-            print "Using SVD... return -inf"
-            return -np.inf
+            # With Sigma constructed, we can invert it
+            try:
+                cf = sl.cho_factor(Sigma)
+                SigmaLD = 2*np.sum(np.log(np.diag(cf[0])))
+                rSr = np.dot(Zx, sl.cho_solve(cf, Zx))
+            except np.linalg.LinAlgError:
+                print "Using SVD... return -inf"
+                return -np.inf
 
-            U, s, Vh = sl.svd(Sigma)
-            if not np.all(s > 0):
-                raise ValueError("ERROR: Sigma singular according to SVD")
-            SigmaLD = np.sum(np.log(s))
-            rSr = np.dot(Nx, np.dot(Vh.T / s, np.dot(U.T, Nx)))
+                U, s, Vh = sl.svd(Sigma)
+                if not np.all(s > 0):
+                    raise ValueError("ERROR: Sigma singular according to SVD")
+                SigmaLD = np.sum(np.log(s))
+                rSr = np.dot(Nx, np.dot(Vh.T / s, np.dot(U.T, Nx)))
+        else:
+            SigmaLD = 0.0
+            ThetaLD = 0.0
+            PhiLD = 0.0
+            rSr = 0.0
 
-        return -0.5*np.sum(self.npobs)*np.log(2*np.pi) \
+        return -0.5*np.sum(self.npobs-self.npm)*np.log(2*np.pi) \
                 -0.5*np.sum(Jldet) - 0.5*np.sum(rGr) \
                 +0.5*rSr - 0.5*SigmaLD - 0.5*PhiLD - 0.5*ThetaLD
 
