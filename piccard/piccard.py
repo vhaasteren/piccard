@@ -370,7 +370,6 @@ class ptaPulsar(object):
             newM = np.append(oldMmat, addM, axis=1)
             newptmdescription = np.append(oldptmdescription, adddes)
             newptmpars = np.append(oldptmpars, addparvals)
-            #newunitconversion = np.append(oldunitconversion, addunitvals)
 
             # Construct the G-matrices
             U, s, Vh = sl.svd(newM)
@@ -379,7 +378,6 @@ class ptaPulsar(object):
         else:
             newM = oldMmat.copy()
             newptmdescription = np.array(oldptmdescription)
-            #newunitconversion = np.array(oldunitconversion)
             newptmpars = oldptmpars.copy()
 
             if oldGmat is not None:
@@ -439,7 +437,6 @@ class ptaPulsar(object):
             # We have actually deleted some parameters
             newM = oldMmat[:, indkeep]
             newptmdescription = np.array(oldptmdescription)[indkeep]
-            #newunitconversion = np.array(oldunitconversion)[indkeep]
             newptmpars = oldptmpars[indkeep]
 
             # Construct the G-matrices
@@ -449,7 +446,6 @@ class ptaPulsar(object):
         else:
             newM = oldMmat.copy()
             newptmdescription = np.array(oldptmdescription)
-            #newunitconversion = oldunitconversion.copy()
             newptmpars = oldptmpars.copy()
             newG = oldGmat.copy()
             newGc = oldGcmat.copy()
@@ -3985,7 +3981,7 @@ class ptaLikelihood(object):
 
         # The list of signals
         modeldict = OrderedDict({
-            "file version":2014.07,
+            "file version":2014.12,
             "author":"piccard-makeModel",
             "numpulsars":len(self.ptapsrs),
             "pulsarnames":[self.ptapsrs[ii].name for ii in range(len(self.ptapsrs))],
@@ -4037,7 +4033,7 @@ class ptaLikelihood(object):
             signals[-1]['pwidth'] = map(float, signals[-1]['pwidth'])
 
         modeldict = OrderedDict({
-            "file version":2014.03,
+            "file version":2014.12,
             "author":"piccard-makeModel",
             "numpulsars":len(self.ptapsrs),
             "pulsarnames":[self.ptapsrs[ii].name for ii in range(len(self.ptapsrs))],

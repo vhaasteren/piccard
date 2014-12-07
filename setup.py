@@ -20,7 +20,7 @@ if sys.argv[-1] == "publish":
 
 setup(
     name="piccard",
-    version='2014.11',
+    version='2014.12',
     author="Rutger van Haasteren",
     author_email="vhaasteren@gmail.com",
     packages=["piccard"],
