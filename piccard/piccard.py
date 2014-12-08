@@ -91,8 +91,10 @@ class ptaPulsar(object):
         self.prefitresiduals = None
         self.residuals = None
         self.detresiduals = None        # Residuals after subtraction of deterministic sources
-        self.gibbsresiduals = None      # Residuals used in Gibbs sampling  (QUESTION: why no parameter?)
-        self.gibbscoefficients = None   # Coefficients used in Gibbs sampling  (QUESTION: why no parameter?)
+        self.gibbsresiduals = None      # Residuals used in Gibbs sampling
+                                        # NOTE: Replace with more specific pars
+        self.gibbscoefficients = None   # Coefficients used in Gibbs sampling
+                                        # NOTE: Replace with more specific pars
         self.freqs = None
         self.Gmat = None
         self.Gcmat = None
@@ -112,6 +114,12 @@ class ptaPulsar(object):
         self.Mmask_F = None
         self.Mmask_D = None
         self.Mmask_U = None
+
+        # Temporary quantities for various Gibbs quantities
+        self.gibbs_N_iter = 0
+        self.gibbs_N_residuals = None
+        self.gibbs_N_sinds = []
+        self.gibbs_NJ_sinds = []
 
         # The auxiliary quantities
         self.Fmat = None
@@ -4335,6 +4343,7 @@ class ptaLikelihood(object):
             index += self.ptasignals[-1]['npars']
 
         self.allocateLikAuxiliaries()
+        self.setPsrNoise_inds()
 
         self.registerModel()
         self.pardes = self.getModelParameterList()
@@ -5222,6 +5231,92 @@ class ptaLikelihood(object):
                         pequadsqr = 10**(2*m2signal['pstart'][0])
 
                     psr.Jvec += m2signal['Jvec'] * pequadsqr
+
+
+    def setSinglePsrNoise_fast(self, parameters, pp=0, joinNJ=True):
+        """
+        Same as setPsrNoise, but now for a single pulsar
+        
+        @param parameters:  the full array of parameters
+        @param pp:          index of pulsar to do
+        @param joinNJ:      Include jitter/ecorr
+        """
+
+        psr = self.ptapsrs[pp]
+
+        if joinNJ:
+            inds = psr.gibbs_NJ_sinds
+        else:
+            inds = psr.gibbs_N_sinds
+
+        # Re-set all the pulsar noise vectors
+        if psr.twoComponentNoise:
+            psr.Nwvec[:] = 0
+            psr.Nwovec[:] = 0
+
+        psr.Nvec[:] = 0
+        psr.Jvec[:] = 0
+
+        for ss in inds:
+            m2signal = self.ptasignals[ss]
+            if m2signal['pulsarind'] == pp:
+                if m2signal['stype'] == 'efac':
+                    if m2signal['npars'] == 1:
+                        pefac = parameters[m2signal['parindex']]
+                    else:
+                        pefac = m2signal['pstart'][0]
+
+                    if psr.twoComponentNoise:
+                        psr.Nwvec += psr.Wvec * pefac**2
+
+                        if len(psr.Wovec) > 0:
+                            psr.Nwovec += psr.Wovec * pefac**2
+
+                    psr.Nvec += m2signal['Nvec'] * pefac**2
+                elif m2signal['stype'] == 'equad':
+                    if m2signal['npars'] == 1:
+                        pequadsqr = 10**(2*parameters[m2signal['parindex']])
+                    else:
+                        pequadsqr = 10**(2*m2signal['pstart'][0])
+
+                    if psr.twoComponentNoise:
+                        psr.Nwvec += pequadsqr
+                        psr.Nwovec += pequadsqr
+
+                    psr.Nvec += m2signal['Nvec'] * pequadsqr
+                elif m2signal['stype'] == 'jitter':
+                    if m2signal['npars'] == 1:
+                        pequadsqr = 10**(2*parameters[m2signal['parindex']])
+                    else:
+                        pequadsqr = 10**(2*m2signal['pstart'][0])
+
+                    psr.Jvec += m2signal['Jvec'] * pequadsqr
+
+    def setPsrNoise_inds(self):
+        """
+        Set the noise signal indices: gibbs_N_sinds. Used so that we don't have
+        to loop over all the signals everytime.
+        """
+        for pp, psr in enumerate(self.ptapsrs):
+            psr.gibbs_N_sinds = []
+            psr.gibbs_NJ_sinds = []
+
+        slistNJ = ['efac', 'equad', 'jitter', 'cequad']
+        slistN = ['efac', 'equad']
+
+        # Loop over all white noise signals, and fill the pulsar Nvec
+        for ss, m2signal in enumerate(self.ptasignals):
+            pp = m2signal['pulsarind']
+            psr = self.ptapsrs[pp]
+            if m2signal['stype'] in slistNJ:
+                psr.gibbs_NJ_sinds.append(ss)
+            if m2signal['stype'] in slistN:
+                psr.gibbs_N_sinds.append(ss)
+
+        psr.gibbs_N_sinds = np.array(psr.gibbs_N_sinds)
+        psr.gibbs_NJ_sinds = np.array(psr.gibbs_NJ_sinds)
+
+
 
     def setTheta(self, parameters, selection=None, pp=0):
         """
@@ -8604,34 +8699,41 @@ class ptaLikelihood(object):
 
 
 
-    def gibbs_psr_noise_loglikelihood_mar(self, parameters, pp, mask, allpars, \
-            joinNJ=True):
+    def gibbs_psr_noise_loglikelihood(self, parameters, pp, mask, allpars, \
+            joinNJ=True, gibbs_iter=-1):
         """
         The conditional loglikelihood for the subset of white noise parameters
-        (EFAC and EQUAD, and possibly jitter later on). Marginalised over the
-        quadratics
+        (EFAC and EQUAD, and possibly jitter later on).
 
         @param parameters:      The hyper-parameter array
         @param pp:              Index of the pulsar we are treating
         @param mask:            The mask to use for the full set of parameters
         @param allpars:         The vector of all hyper paramertes parmaeters
         @param joinNJ:          If True, don't subtract jitter from residuals
+        @param gibbs_iter:      Which iteration in Gibbs (so we don't have to
+                                re-calculate the resiudals every time)
         """
         psr = self.ptapsrs[pp]
 
         # Set the parameters
         apars = allpars.copy()
         apars[mask] = parameters
-        self.setSinglePsrNoise(apars, pp=pp)
+        #self.setSinglePsrNoise(apars, pp=pp)
+        self.setSinglePsrNoise_fast(apars, pp=pp, joinNJ=joinNJ)
 
-        # Decide which signals to subtract from the 'detresiduals'
-        if joinNJ:
-            zmask = np.logical_not(psr.Zmask_U)
+        if psr.gibbs_N_iter != gibbs_iter:
+            # Decide which signals to subtract from the 'detresiduals'
+            if joinNJ:
+                zmask = np.logical_not(psr.Zmask_U)
+            else:
+                zmask = np.array([1]*Zmat.shape[1], dtype=np.bool)
+
+            # Subtract the signals from the residuals
+            residuals = self.gibbs_get_custom_subresiduals(pp, zmask)
+            psr.gibbs_N_residuals = residuals
+            psr.gibbs_N_iter = gibbs_iter
         else:
-            zmask = np.array([1]*Zmat.shape[1], dtype=np.bool)
-
-        # Subtract the signals from the residuals
-        residuals = self.gibbs_get_custom_subresiduals(pp, zmask)
+            residuals = psr.gibbs_N_residuals
 
         # Calculate the block-inverse in the Cython jitter extension module
         jldet, jxi2 = cython_block_shermor_1D(residuals, \
@@ -8869,7 +8971,7 @@ class ptaLikelihood(object):
 
 
 
-    def gibbs_psr_noise_logprior(self, parameters, pp, mask, allpars):
+    def gibbs_psr_noise_logprior(self, parameters, pp, mask, allpars, gibbs_iter=-1):
         apars = allpars.copy()
         apars[mask] = parameters
         return self.logprior(apars[:self.dimensions])
