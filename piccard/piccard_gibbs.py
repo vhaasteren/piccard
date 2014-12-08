@@ -103,7 +103,7 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
             sampler_N.append(ptmcmc.PTSampler(Ndim, \
                 likob.gibbs_psr_noise_loglikelihood_mar, \
                 likob.gibbs_psr_noise_logprior, \
-                cov=psrNcov, outDir='./gibbs-chains/', \
+                cov=psrNcov, outDir='./gibbs-chains-N/', \
                 verbose=False, nowrite=True, \
                 loglargs=[ii, Nmask, apars], \
                 logpargs=[ii, Nmask, apars]))
@@ -127,7 +127,7 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
                 sampler_D.append(ptmcmc.PTSampler(Ddim, \
                     likob.gibbs_psr_DM_loglikelihood_mar, \
                     likob.gibbs_psr_DM_logprior, \
-                    cov=psrDcov, outDir='./gibbs-chains/', \
+                    cov=psrDcov, outDir='./gibbs-chains-D/', \
                     verbose=False, nowrite=True, \
                     loglargs=[ii, Dmask, apars], \
                     logpargs=[ii, Dmask, apars]))
@@ -149,11 +149,12 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
             sampler_F = ptmcmc.PTSampler(Fdim, \
                     likob.gibbs_Phi_loglikelihood_mar, \
                     likob.gibbs_Phi_logprior, \
-                    cov=Fcov, outDir='./gibbs-chains/', \
+                    cov=Fcov, outDir='./gibbs-chains-F/', \
                     verbose=False, nowrite=True, \
                     loglargs=[Fmask, apars], \
                     logpargs=[Fmask, apars])
-            sampler_F_info = dict({"singleChain":20*Fdim, \
+            #sampler_F_info = dict({"singleChain":20*Fdim, \
+            sampler_F_info = dict({"singleChain":2, \
                     "fullChain":Fdim*8000, "curStep":1, \
                     "covUpdate":400*Fdim})
         else:
@@ -187,8 +188,8 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
     # generated from all the respective (conditional-) likelihood functions
     #b = []
     for pp, psr in enumerate(likob.ptapsrs):
-        bi, a[pp], xi2  = likob.gibbs_sample_psr_quadratics(apars[:ndim], \
-                a[pp], pp, joinNJ=True)
+        bi, a, xi2  = likob.gibbs_sample_psr_quadratics(apars[:ndim], \
+                a, pp, joinNJ=True)
     #b.append(bi)
     apars[ndim:] = np.hstack(a)
     likob.gibbs_current_a = a
@@ -336,9 +337,9 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
         for pp, psr in enumerate(likob.ptapsrs):
             # NOTE: RvH 20141129: We definitely do not want to re-calculate all
             #       these quadratics. We can subtract plenty of 'm. Which ones?
-            bi, likob.gibbs_current_a[pp], xi2 = \
+            bi, likob.gibbs_current_a, xi2 = \
                     likob.gibbs_sample_psr_quadratics(apars[:ndim], \
-                    likob.gibbs_current_a[pp], pp, which='N')
+                    likob.gibbs_current_a, pp, which='N')
 
             #likob.gibbs_current_a = likob.gibbs_sample_M_quadratics( \
             #        likob.gibbs_current_a, pp)
@@ -2670,7 +2671,7 @@ def gibbs_psr_corrs_ex(likob, psrindex, a):
     return (pSinv_vec, pPvec)
 
 
-def gibbs_psr_corrs_im(likob, psrindex, a):
+def gibbs_psr_corrs_im_old(likob, psrindex, a):
     """
     Get the Gibbs coefficient quadratic offsets for the correlated signals, for
     a specific pulsar, when the correlated signal is not modelled explicitly
@@ -3129,10 +3130,10 @@ def RunGibbs_mark1(likob, steps, chainsdir, noWrite=False, joinNJ=True):
                         # next conditional.
                         # This conditional also sets gibbssubresiduals, which is
                         # used in pulsarDetLL
-                        a[pp], b[pp], xi2 = likob.gibbs_sample_psr_quadratics(pars, b[pp], pp, \
+                        a[pp], b, xi2 = likob.gibbs_sample_psr_quadratics(pars, b, pp, \
                                 which='N', joinNJ=True)
                     else:
-                        a[pp], b[pp], xi2 = likob.gibbs_sample_psr_quadratics(pars, b[pp], pp, \
+                        a[pp], b, xi2 = likob.gibbs_sample_psr_quadratics(pars, b, pp, \
                                 which='all', joinNJ=False)
 
                 samples[stepind, ndim:] = np.hstack(a)

@@ -7754,7 +7754,7 @@ class ptaLikelihood(object):
             for ii in range(minfreqs):
                 mode_ind = int(ii * 0.5)
 
-                #print pPvec[ii]
+                #print("pVec[ii]: ", pPvec[ii])
                 #print self.Scor_im_inv[mode_ind]
                 #print self.Scor_im_inv[mode_ind][psrindex, jj]
                 #print a[jj][inda+ii]
@@ -8050,12 +8050,12 @@ class ptaLikelihood(object):
             np.savetxt('aadd.txt', aadd)
             raise ValueError("Have inf or nan in solution")
 
-        b[zmask] = addcoefficients.copy()
-        psr.gibbscoefficients = b
+        b[pp][zmask] = addcoefficients.copy()
+        psr.gibbscoefficients = b[pp]
 
-        a = b.copy()
+        a = b[pp].copy()
         if 'design' in self.gibbsmodel:
-            a[:psr.Mmat.shape[1]] = np.dot(psr.tmpConv, b[:psr.Mmat.shape[1]])
+            a[:psr.Mmat.shape[1]] = np.dot(psr.tmpConv, b[pp][:psr.Mmat.shape[1]])
 
         # This is mostly for the mark1 Gibbs sampler. RvH: can we get rid of
         # this, by just using:
