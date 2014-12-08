@@ -329,7 +329,7 @@ class DataFile(object):
         self.writeData(psrGroup, 'prefitRes', np.double(t2pulsar.prefit.residuals), overwrite=overwrite)  # Seconds
         self.writeData(psrGroup, 'postfitRes', np.double(t2pulsar.residuals()), overwrite=overwrite)  # Seconds
         self.writeData(psrGroup, 'toaErr', np.double(1e-6*t2pulsar.toaerrs), overwrite=overwrite)    # Seconds
-        self.writeData(psrGroup, 'freq', np.double(t2pulsar.freqs), overwrite=overwrite)    # MHz
+        self.writeData(psrGroup, 'freq', np.double(t2pulsar.ssbfreqs), overwrite=overwrite)    # MHz
 
         # TODO: writing the design matrix should be done irrespective of the fitting flag
         desmat = t2pulsar.designmatrix(fixunits=True)
