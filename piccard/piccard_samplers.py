@@ -2327,6 +2327,7 @@ Run a generic PTMCMC algorithm.
 def RunPTMCMC(likob, steps, chainsdir, covfile=None, burnin=10000):
     # Save the parameters to file
     likob.saveModelParameters(chainsdir + '/ptparameters.txt')
+    likob.saveResiduals(chainsdir)
 
     ndim = likob.dimensions
     pwidth = likob.pwidth.copy()
