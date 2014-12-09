@@ -110,8 +110,8 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False, \
                 likob.gibbs_psr_noise_logprior, \
                 cov=psrNcov, outDir='./gibbs-chains-N/', \
                 verbose=False, nowrite=True, \
-                loglargs=[pp, Nmask, apars, 0], \
-                logpargs=[pp, Nmask, apars, 0]))
+                loglargs=[pp, Nmask, apars, True, 0], \
+                logpargs=[pp, Nmask, apars, True, 0]))
             sampler_N_info.append(dict({"singleChain":Nmult*Ndim, \
                     "fullChain":Ndim*Nmult*2000, "curStep":1, \
                     "covUpdate":200*Ndim*Nmult}))
@@ -223,8 +223,8 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False, \
 
                 # Arguments for the log-likelihood function (so we can do
                 # subtraction)
-                sampler.logl.args = [pp, Nmask, apars, step]
-                sampler.logp.args = [pp, Nmask, apars, step]
+                sampler.logl.args = [pp, Nmask, apars, True, step]
+                sampler.logp.args = [pp, Nmask, apars, True, step]
                 
                 # The sampler always calculates the previous step as well, as it
                 # should here (other parameters have changed in the meantime)
@@ -235,11 +235,6 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False, \
 
                 # This sets the Jvec as well
                 likob.setSinglePsrNoise(apars[:ndim], pp=pp)
-
-            ##################################################################
-            # We should not be saving the whole chain here. Can we checkpoint
-            # the MCMC chains here? RvH -- 20141130
-            ##################################################################
 
             if 'dm' in likob.gibbsmodel and sampler_D[pp] is not None:
                 # Conditional probability jump in the DM variation

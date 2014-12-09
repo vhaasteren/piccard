@@ -8718,7 +8718,6 @@ class ptaLikelihood(object):
         # Set the parameters
         apars = allpars.copy()
         apars[mask] = parameters
-        #self.setSinglePsrNoise(apars, pp=pp)
         self.setSinglePsrNoise_fast(apars, pp=pp, joinNJ=joinNJ)
 
         if psr.gibbs_N_iter != gibbs_iter:
@@ -8971,7 +8970,8 @@ class ptaLikelihood(object):
 
 
 
-    def gibbs_psr_noise_logprior(self, parameters, pp, mask, allpars, gibbs_iter=-1):
+    def gibbs_psr_noise_logprior(self, parameters, pp, mask, allpars, \
+            joinNJ=True, gibbs_iter=-1):
         apars = allpars.copy()
         apars[mask] = parameters
         return self.logprior(apars[:self.dimensions])
