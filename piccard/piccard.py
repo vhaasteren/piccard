@@ -3312,7 +3312,7 @@ class ptaLikelihood(object):
             compression = 'None', \
             evalCompressionComplement = False, \
             explicitGWBcomponents = False, \
-            likfunc='gibbs'):
+            likfunc='mark12'):
         # We have to determine the number of frequencies we'll need
         numNoiseFreqs = np.zeros(len(self.ptapsrs), dtype=np.int)
         numDMFreqs = np.zeros(len(self.ptapsrs), dtype=np.int)
@@ -8932,7 +8932,6 @@ class ptaLikelihood(object):
 
         # With Sigma constructed, we can invert it
         try:
-            #self.Sigma_F_cf = sl.cho_factor(self.Sigma_F)
             self.Sigma_F_cf = (sl.cholesky(self.Sigma_F), False)
             SigmaLD = 2*np.sum(np.log(np.diag(self.Sigma_F_cf[0])))
             rGSigmaGr = np.dot(self.rGZ_F, sl.cho_solve(self.Sigma_F_cf, self.rGZ_F))

@@ -49,11 +49,11 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False, \
     if not likob.likfunc in ['gibbs']:
         raise ValueError("Likelihood not initialised for Gibbs sampling")
 
-    # Save the description of all the parameters
-    likob.saveModelParameters(chainsdir + '/ptparameters.txt')
-
     # Clear the file for writing
     if not noWrite:
+        # Save the description of all the parameters
+        likob.saveModelParameters(chainsdir + '/ptparameters.txt')
+
         chainfilename = chainsdir + '/chain_1.txt'
         chainfile = open(chainfilename, 'w')
         chainfile.close()
@@ -2945,11 +2945,11 @@ def RunGibbsMCMC(likob, steps, chainsdir, covfile=None, burnin=10000,
     if not likob.likfunc in ['gibbs']:
         raise ValueError("Likelihood not initialised for Gibbs sampling")
 
-    # Save the description of all the parameters
-    likob.saveModelParameters(chainsdir + '/ptparameters.txt')
-
     # Clear the file for writing
     if not noWrite:
+        # Save the description of all the parameters
+        likob.saveModelParameters(chainsdir + '/ptparameters.txt')
+
         chainfilename = chainsdir + '/chain_1.txt'
         chainfile = open(chainfilename, 'w')
         chainfile.close()
@@ -3018,11 +3018,11 @@ def RunGibbs_mark1(likob, steps, chainsdir, noWrite=False, joinNJ=True):
     if not likob.likfunc in ['gibbs']:
         raise ValueError("Likelihood not initialised for Gibbs sampling")
 
-    # Save the description of all the parameters
-    likob.saveModelParameters(chainsdir + '/ptparameters.txt')
-
     # Clear the file for writing
     if not noWrite:
+        # Save the description of all the parameters
+        likob.saveModelParameters(chainsdir + '/ptparameters.txt')
+
         chainfilename = chainsdir + '/chain_1.txt'
         chainfile = open(chainfilename, 'w')
         chainfile.close()
