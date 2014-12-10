@@ -5284,7 +5284,7 @@ class ptaLikelihood(object):
                         psr.Nwovec += pequadsqr
 
                     psr.Nvec += m2signal['Nvec'] * pequadsqr
-                elif m2signal['stype'] == 'jitter':
+                elif m2signal['stype'] in ['jitter', 'cequad']:
                     if m2signal['npars'] == 1:
                         pequadsqr = 10**(2*parameters[m2signal['parindex']])
                     else:
