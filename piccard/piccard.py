@@ -4343,17 +4343,14 @@ class ptaLikelihood(object):
             index += self.ptasignals[-1]['npars']
 
         self.allocateLikAuxiliaries()
-        self.setPsrNoise_inds()
-
         self.registerModel()
-        self.pardes = self.getModelParameterList()
-        self.pardesgibbs = self.getGibbsModelParameterList()
 
     def registerModel(self):
         """
         After changing the model, we re-set the number of dimensions, the prior,
         and all the model dictionaries.
         """
+        self.setPsrNoise_inds()
         self.setDimensions()
         self.initPrior()
         self.pardes = self.getModelParameterList()
