@@ -695,7 +695,7 @@ def makeEfacPage(fig, samples, labels, mlchain, mlpso, txtfilename, \
 
     plt.subplots_adjust(left=0.115, right=0.95, top=0.9, bottom=0.25)
 
-    resp = ax.errorbar(x, yval, yerr=yerr, fmt=None, c='blue')
+    resp = ax.errorbar(x, yval, yerr=yerr, fmt="none", c='blue')
     if mlpso is not None:
         try:
             ress = ax.scatter(x, mlpso, s=50, c='r', marker='*')

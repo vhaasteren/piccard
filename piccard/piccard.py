@@ -4103,7 +4103,7 @@ class ptaLikelihood(object):
         # If the combined number of pulsars in the dictionaries does not match
         # the internal number of pulsars: generate an error
         if ndictpsrs != len(self.ptapsrs):
-            raise IOError, "Number of pulsars does not match sum of dictionary models"
+            raise IOError, "Number of pulsars does not match sum of dictionary models: {0}, {1}".format(ndictpsrs, len(self.ptapsrs))
 
         # Check that all pulsars are present
         haveDictPulsar = np.array([0]*ndictpsrs, dtype=np.bool)
@@ -4608,15 +4608,16 @@ class ptaLikelihood(object):
                     self.pardes[ii]['pulsarname']))
 
         # Do the same for the Gibbs parameter descriptions, if we have 'm
-        for pdg in self.pardesgibbs:
-            fil.write("{0:d} \t{1:d} \t{2:s} \t{3:s} \t{4:s} \t{5:s} \t{6:s}\n".format(\
-                    pdg['index'],
-                    pdg['pulsar'],
-                    pdg['sigtype'],
-                    pdg['correlation'],
-                    pdg['name'],
-                    pdg['id'],
-                    pdg['pulsarname']))
+        if self.likfunc == 'gibbs':
+            for pdg in self.pardesgibbs:
+                fil.write("{0:d} \t{1:d} \t{2:s} \t{3:s} \t{4:s} \t{5:s} \t{6:s}\n".format(\
+                        pdg['index'],
+                        pdg['pulsar'],
+                        pdg['sigtype'],
+                        pdg['correlation'],
+                        pdg['name'],
+                        pdg['id'],
+                        pdg['pulsarname']))
 
         fil.close()
 
