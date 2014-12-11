@@ -2698,7 +2698,7 @@ class ptaLikelihood(object):
             signal['npsrfreqindex'] = psrSingleFreqs[signal['pulsarind']]
             self.addSignalFrequencyLine(signal)
             self.haveStochSources = True
-        elif signal['stype'] == 'bwm':
+        elif signal['stype'] in ['bwm', 'psr-bwm']:
             # A burst with memory
             self.addSignalBWM(signal)
             self.haveDetSources = True
@@ -3292,7 +3292,7 @@ class ptaLikelihood(object):
             incDipole=False, dipoleModel='powerlaw', \
             incAniGWB=False, anigwbModel='powerlaw', lAniGWB=1, \
             incPixelGWB=False, pixelgwbModel='powerlaw', npixels=4, \
-            incBWM=False, \
+            incBWM=False, incPsrBWM=False, \
             incTimingModel=False, nonLinear=False, \
             keepTimingModelPars = None, \
             varyEfac=True, incEquad=False, \
@@ -3772,6 +3772,26 @@ class ptaLikelihood(object):
 
                     del avetoas
                     del Umat
+            if incPsrBWM:
+                toamax = self.ptapsrs[0].toas[0]
+                toamin = self.ptapsrs[0].toas[0]
+                for psr in self.ptapsrs:
+                    if toamax < np.max(psr.toas):
+                        toamax = np.max(psr.toas)
+                    if toamin > np.min(psr.toas):
+                        toamin = np.min(psr.toas)
+                newsignal = OrderedDict({
+                    "stype":'psr-bwm',
+                    "corr":"single",
+                    "pulsarind":ii,
+                    "bvary":[True, True],
+                    "pmin":[toamin, -20],
+                    "pmax":[toamax, 20],
+                    "pwidth":[30*24*3600.0, 1.0],
+                    "pstart":[0.5*(toamax+toamin), 0.0],
+                    "prior":'flatlog'
+                    })
+                signals.append(newsignal)
 
         if incGWB:
             if not 'rednoise' in gibbsmodel:
@@ -3986,6 +4006,7 @@ class ptaLikelihood(object):
                 "prior":'flatlog'
                 })
             signals.append(newsignal)
+
 
         # The list of signals
         modeldict = OrderedDict({
@@ -4449,6 +4470,9 @@ class ptaLikelihood(object):
                 elif sig['stype'] == 'bwm':
                     flagname = 'BurstWithMemory'
                     flagvalue = ['burst-arrival', 'amplitude', 'raj', 'decj', 'polarisation'][jj]
+                elif sig['stype'] == 'psr-bwm':
+                    flagname = 'Psr-BurstWithMemory'
+                    flagvalue = ['burst-arrival', 'amplitude'][jj]
                 elif sig['stype'] == 'lineartimingmodel' or \
                         sig['stype'] == 'nonlineartimingmodel':
                     flagname = sig['stype']
@@ -5154,13 +5178,23 @@ class ptaLikelihood(object):
                                     self.ptapsrs[pp].toas)
 
                             self.ptapsrs[pp].detresiduals -= bwmsig
+                elif m2signal['stype'] == 'psr-bwm':
+                    for pp in range(len(self.ptapsrs)):
+                        if m2signal['pulsarind'] == pp or m2signal['pulsarind'] == -1:
+                            bwmsig = bwmsignal_single(sparameters, \
+                                    self.ptapsrs[pp].toas)
+
+                            self.ptapsrs[pp].detresiduals -= bwmsig
                 elif m2signal['stype'] == 'fouriermode':
+                    pp = m2signal['pulsarind']
                     self.ptapsrs[pp].detresiduals -= \
                             np.dot(self.ptapsrs[pp].Fmat, sparameters)
                 elif m2signal['stype'] == 'dmfouriermode':
+                    pp = m2signal['pulsarind']
                     self.ptapsrs[pp].detresiduals -= \
                             np.dot(self.ptapsrs[pp].DF, sparameters)
                 elif m2signal['stype'] == 'jitterfouriermode':
+                    pp = m2signal['pulsarind']
                     self.ptapsrs[pp].detresiduals -= \
                             np.dot(self.ptapsrs[pp].Umat, sparameters)
 

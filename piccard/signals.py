@@ -449,3 +449,35 @@ def bwmsignal(parameters, raj, decj, t):
     return pol * (10**parameters[1]) * heaviside(t - parameters[0]) * (t - parameters[0])
 
 
+def bwmsignal_single(parameters, t):
+    """
+    Function that calculates the pulsar-term gravitational-wave burst-with-memory
+    signal, as described in:
+    Seto et al, van haasteren and Levin, phsirkov et al, Cordes and Jenet.
+    Directional information is not taken into account: this is for a single
+    pulsar
+
+
+    parameter[0] = TOA time (sec) the burst hits the earth
+    parameter[1] = amplitude of the burst (strain h)
+
+    raj = Right Ascension of the pulsar (rad)
+    decj = Declination of the pulsar (rad)
+    t = timestamps where the waveform should be returned
+
+    returns the waveform as induced timing residuals (seconds)
+
+    """
+
+    # Define the heaviside function
+    heaviside = lambda x: 0.5 * (np.sign(x) + 1)
+
+    # Return the time-series for teh pulsar
+    if parameters[1] < 0:
+        amp = -10**(parameters[1])
+    else:
+        amp = 10**(-parameters[1])
+    return parameters[1] * heaviside(t - parameters[0]) * (t - parameters[0])
+
+
+
