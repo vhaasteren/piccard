@@ -1024,7 +1024,7 @@ class ptaPulsar(object):
 
         @param gibbsmodel:  List of which quadratics are available
         @param which:       Which quadratics to vary (not fixed)
-                            Options: all, F, D, U, N (N means all but U)
+                            Options: all, F, B, D, U, N (N means all but U)
 
         @return:    The partial Z-matrix, and it's mask compared to the full
                     Z-matrix
@@ -1035,7 +1035,7 @@ class ptaPulsar(object):
 
         # dmask is the mask for the design matrix part (in case we have
         # non-linear analysis, or Gibbs sampling with specialized conditionals)
-        if which == 'F':
+        if which in ['F', 'B']:
             dmask = self.Mmask_F
         elif which == 'D':
             dmask = self.Mmask_D
@@ -1077,6 +1077,17 @@ class ptaPulsar(object):
             if nf > 0 and 'rednoise' in gibbsmodel:
                 zmask = np.append(zmask, \
                         np.array([0]*self.Fmat.shape[1], dtype=np.bool))
+
+        if nf > 0 and 'freqrednoise' in gibbsmodel and \
+                (which in ['all', 'B', 'N']):
+            for FBmat in self.FBmats:
+                Ft_2 = np.append(Ft_2, FBmat, axis=1)
+                zmask = np.append(zmask, \
+                        np.array([1]*FBmat.shape[1], dtype=np.bool))
+        elif nf > 0 and 'freqrednoise' in gibbsmodel:
+            for FBmat in self.FBmats:
+                zmask = np.append(zmask, \
+                        np.array([0]*FBmat.shape[1], dtype=np.bool))
 
         if ndmf > 0 and 'dm' in gibbsmodel and \
             (which in ['all', 'D', 'N']):
@@ -1146,13 +1157,14 @@ class ptaPulsar(object):
     @param threshold:       Threshold for compression precision
     @param gibbsmodel:      What coefficients to include in the Gibbs model
     @param trimquant:       Whether to trim the quantization matrix
+    @param bandRedNoise:    Frequency bands for band-limited red noise
 
     """
     def createPulsarAuxiliaries(self, h5df, Tmax, nfreqs, ndmfreqs, \
             twoComponent=False, nSingleFreqs=0, nSingleDMFreqs=0, \
             compression='None', likfunc='mark3', write='likfunc', \
             tmsigpars=None, noGmatWrite=False, threshold=1.0, \
-            gibbsmodel=[], trimquant=False):
+            gibbsmodel=[], trimquant=False, bandRedNoise=[]):
         # For creating the auxiliaries it does not really matter: we are now
         # creating all quantities per default
         # TODO: set this parameter in another place?
@@ -1877,6 +1889,22 @@ class ptaPulsar(object):
             pass
 
         if likfunc in ['mark12', 'gibbs'] or write == 'all':
+            # Set the band-limited F-matrices
+            self.FBmats = []
+            self.Fbands = []
+            for bb, band in enumerate(bandRedNoise):
+                # Band-limited noise has zero response outside frequency band,
+                # but is the same as Red Noise elsewhere
+                FBmat = self.Fmat.copy()
+                mask = np.logical_or(self.freqs < band[0], \
+                        self.freqs > band[1])
+                FBmat[mask, :] = 0.0
+                self.FBmats.append(FBmat)
+                self.Fbands.append(Fbands)
+
+            self.FBmats = np.array(self.FBmats)
+            self.Fbands = bandRedNoise
+
             # Prepare the new design matrix bases
             self.gibbs_set_design(gibbsmodel)
 
@@ -1884,6 +1912,7 @@ class ptaPulsar(object):
             #self.Zmask_M[self.Mmat_g.shape[1]:] = False
             self.Zmat_M, self.Zmask_M = self.getZmat(gibbsmodel, which='M')
             self.Zmat_F, self.Zmask_F = self.getZmat(gibbsmodel, which='F')
+            self.Zmat_B, self.Zmask_B = self.getZmat(gibbsmodel, which='B')
             self.Zmat_D, self.Zmask_D = self.getZmat(gibbsmodel, which='D')
             self.Zmat_U, self.Zmask_U = self.getZmat(gibbsmodel, which='U')
             self.Zmat_N, self.Zmask_N = self.getZmat(gibbsmodel, which='N')
@@ -1944,13 +1973,14 @@ class ptaPulsar(object):
     @param memsave:         Whether to save memory
     @param noGmat:          Whether or not to read in the G-matrix
     @param gibbsmodel:      What coefficients to include in the Gibbs model
+    @param bandRedNoise:    Frequency bands for band-limited red noise
 
     """
     def readPulsarAuxiliaries(self, h5df, Tmax, nfreqs, ndmfreqs, \
             twoComponent=False, nSingleFreqs=0, nSingleDMFreqs=0, \
             compression='None', likfunc='mark3', \
             evalCompressionComplement=True, memsave=True, noGmat=False, \
-            gibbsmodel=[]):
+            gibbsmodel=[], bandRedNoise=[]):
         # TODO: set this parameter in another place?
         if twoComponent:
             self.twoComponentNoise = True
@@ -2306,6 +2336,20 @@ class ptaPulsar(object):
             self.Uinds = np.array(h5df.getData(self.name, 'pic_Uinds'))
             self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat', \
                     isort=mslice))
+            self.FBmats = []
+            self.Fbands = []
+            for bb, band in enumerate(bandRedNoise):
+                # Band-limited noise has zero response outside frequency band,
+                # but is the same as Red Noise elsewhere
+                FBmat = self.Fmat.copy()
+                mask = np.logical_or(self.freqs < band[0], \
+                        self.freqs > band[1])
+                FBmat[mask, :] = 0.0
+                self.FBmats.append(FBmat)
+                self.Fbands.append(Fbands)
+
+            self.FBmats = np.array(self.FBmats)
+            self.Fbands = bandRedNoise
 
             if len(self.Fdmfreqs) > 0:
                 self.DF = np.array(h5df.getData(self.name, 'pic_DF', \
@@ -2319,10 +2363,13 @@ class ptaPulsar(object):
             # Prepare the new design matrix bases
             self.gibbs_set_design(gibbsmodel)
 
-            # Yeah, we've already got Zmat from file... But we've got to do this
+            # Yeah, we've already got Zmat from file... But we've got to do
+            # this, partially because we might have more now with the
+            # band-limited stuff
             self.Zmat, self.Zmask = self.getZmat(gibbsmodel, which='all')
             self.Zmat_M, self.Zmask_M = self.getZmat(gibbsmodel, which='M')
             self.Zmat_F, self.Zmask_F = self.getZmat(gibbsmodel, which='F')
+            self.Zmat_B, self.Zmask_B = self.getZmat(gibbsmodel, which='B')
             self.Zmat_D, self.Zmask_D = self.getZmat(gibbsmodel, which='D')
             self.Zmat_U, self.Zmask_U = self.getZmat(gibbsmodel, which='U')
             self.Zmat_N, self.Zmask_N = self.getZmat(gibbsmodel, which='N')
@@ -2513,6 +2560,7 @@ class ptaLikelihood(object):
         self.Phi = None          # mark1, mark3, mark?, mark6                (Noise & corr)
         self.Phivec = None       # mark1, mark3, mark?, mark6          gibbs (Noise)
         self.Thetavec = None     #               mark?, mark6          gibbs (DM)
+        self.Beta = None         #                                     gibbs (Band Noise)
         self.Muvec = None        #                             mark11        (Jitter)
         self.Svec = None         #                                     gibbs (GWB PSD)
         self.Scor = None         #                                     gibbs (GWB corr)
@@ -2668,6 +2716,8 @@ class ptaLikelihood(object):
         signal['pwidth'] = np.array(signal['pwidth'])
         signal['pstart'] = np.array(signal['pstart'])
 
+        if 'freqband' in signal:
+            signal['freqband'] = np.array(signal['freqband'])
 
         # Add the signal
         if signal['stype']=='efac':
@@ -2676,7 +2726,8 @@ class ptaLikelihood(object):
         elif signal['stype'] in ['equad', 'jitter']:
             # Equad or Jitter
             self.addSignalEquad(signal)
-        elif signal['stype'] in ['powerlaw', 'spectrum', 'spectralModel']:
+        elif signal['stype'] in ['powerlaw', 'spectrum', 'spectralModel', \
+                'freqpowerlaw', 'freqspectrum', 'freqspectralModel']:
             # Any time-correlated signal
             self.addSignalTimeCorrelated(signal)
             self.haveStochSources = True
@@ -3065,6 +3116,7 @@ class ptaLikelihood(object):
         # First figure out how large we have to make the arrays
         npsrs = len(self.ptapsrs)
         self.npf = np.zeros(npsrs, dtype=np.int)
+        self.npb = np.zeros(npsrs, dtype=np.int)
         self.npu = np.zeros(npsrs, dtype=np.int)
         self.npff = np.zeros(npsrs, dtype=np.int)
         self.npfdm = np.zeros(npsrs, dtype=np.int)
@@ -3078,6 +3130,7 @@ class ptaLikelihood(object):
         self.npm_u = np.zeros(npsrs, dtype=np.int)
         self.npz = np.zeros(npsrs, dtype=np.int)
         self.npz_f = np.zeros(npsrs, dtype=np.int)
+        self.npz_b = np.zeros(npsrs, dtype=np.int)
         self.npz_d = np.zeros(npsrs, dtype=np.int)
         self.npz_u = np.zeros(npsrs, dtype=np.int)
         for ii, psr in enumerate(self.ptapsrs):
@@ -3087,6 +3140,7 @@ class ptaLikelihood(object):
             if not self.likfunc in ['mark2']:
                 self.npf[ii] = len(psr.Ffreqs)
                 self.npff[ii] = self.npf[ii]
+                self.npfb[ii] = len(psr.Ffreqs)*len(self.FBmats)
 
             if self.likfunc in ['mark4ln', 'mark9', 'mark10']:
                 self.npff[ii] += len(psr.SFfreqs)
@@ -3123,6 +3177,7 @@ class ptaLikelihood(object):
                 self.npm_d[ii] = np.sum(psr.Mmask_D)
                 self.npm_u[ii] = np.sum(psr.Mmask_U)
                 self.npz_f[ii] = psr.Zmat_F.shape[1]
+                self.npz_fb[ii] = psr.Zmat_B.shape[1]
                 self.npz_d[ii] = psr.Zmat_D.shape[1]
                 self.npz_u[ii] = psr.Zmat_U.shape[1]
 
@@ -3205,6 +3260,7 @@ class ptaLikelihood(object):
             self.Sigma_F = np.zeros((zlen_f, zlen_f))
             self.GNGldet = np.zeros(npsrs)
             self.Thetavec = np.zeros(np.sum(self.npfdm))
+            self.Betavec = np.zeros(np.sum(self.npfb))
             self.rGZ_F = np.zeros(zlen_f)
             self.rGZ_D = np.zeros(zlen_d)
             self.rGZ_U = np.zeros(zlen_u)
@@ -3285,6 +3341,7 @@ class ptaLikelihood(object):
     def makeModelDict(self,  nfreqs=20, ndmfreqs=None, \
             Tmax=None, \
             incRedNoise=False, noiseModel='powerlaw', fc=None, \
+            bandRedNoise=None, bandNoiseModel='powerlaw', \
             noisePrior='flatlog', \
             incDM=False, dmModel='powerlaw', \
             incClock=False, clockModel='powerlaw', \
@@ -3350,14 +3407,14 @@ class ptaLikelihood(object):
 
         signals = []
 
-        for ii, m2psr in enumerate(self.ptapsrs):
+        for pp, m2psr in enumerate(self.ptapsrs):
             if separateEfacs:
                 uflagvals = list(set(m2psr.flags))  # Unique flags
                 for flagval in uflagvals:
                     newsignal = OrderedDict({
                         "stype":"efac",
                         "corr":"single",
-                        "pulsarind":ii,
+                        "pulsarind":pp,
                         "flagname":"efacequad",
                         "flagvalue":flagval,
                         "bvary":[varyEfac],
@@ -3372,7 +3429,7 @@ class ptaLikelihood(object):
                 newsignal = OrderedDict({
                     "stype":"efac",
                     "corr":"single",
-                    "pulsarind":ii,
+                    "pulsarind":pp,
                     "flagname":"pulsarname",
                     "flagvalue":m2psr.name,
                     "bvary":[varyEfac],
@@ -3391,7 +3448,7 @@ class ptaLikelihood(object):
                         newsignal = OrderedDict({
                             "stype":"equad",
                             "corr":"single",
-                            "pulsarind":ii,
+                            "pulsarind":pp,
                             "flagname":"efacequad",
                             "flagvalue":flagval,
                             "bvary":[True],
@@ -3406,7 +3463,7 @@ class ptaLikelihood(object):
                     newsignal = OrderedDict({
                         "stype":"equad",
                         "corr":"single",
-                        "pulsarind":ii,
+                        "pulsarind":pp,
                         "flagname":"pulsarname",
                         "flagvalue":m2psr.name,
                         "bvary":[True],
@@ -3428,7 +3485,7 @@ class ptaLikelihood(object):
                         newsignal = OrderedDict({
                             "stype":"jitter",
                             "corr":"single",
-                            "pulsarind":ii,
+                            "pulsarind":pp,
                             "flagname":"efacequad",
                             "flagvalue":flagval,
                             "bvary":[True],
@@ -3455,7 +3512,7 @@ class ptaLikelihood(object):
                         newsignal = OrderedDict({
                             "stype":"jitter",
                             "corr":"single",
-                            "pulsarind":ii,
+                            "pulsarind":pp,
                             "flagname":"efacequad",
                             "flagvalue":flagval,
                             "bvary":[True],
@@ -3470,7 +3527,7 @@ class ptaLikelihood(object):
                     newsignal = OrderedDict({
                         "stype":"jitter",
                         "corr":"single",
-                        "pulsarind":ii,
+                        "pulsarind":pp,
                         "flagname":"pulsarname",
                         "flagvalue":m2psr.name,
                         "bvary":[True],
@@ -3486,7 +3543,7 @@ class ptaLikelihood(object):
                 if not 'rednoise' in gibbsmodel:
                     gibbsmodel.append('rednoise')
                 if noiseModel=='spectrum':
-                    nfreqs = numNoiseFreqs[ii]
+                    nfreqs = numNoiseFreqs[pp]
                     bvary = [True]*nfreqs
                     pmin = [-18.0]*nfreqs
                     pmax = [-7.0]*nfreqs
@@ -3511,7 +3568,7 @@ class ptaLikelihood(object):
                 newsignal = OrderedDict({
                     "stype":noiseModel,
                     "corr":"single",
-                    "pulsarind":ii,
+                    "pulsarind":pp,
                     "flagname":"pulsarname",
                     "flagvalue":m2psr.name,
                     "bvary":bvary,
@@ -3523,11 +3580,58 @@ class ptaLikelihood(object):
                     })
                 signals.append(newsignal)
 
+            if bandRedNoise is not None:
+                # We have band-limited red noise, at these frequency bands:
+                bandRedNoise = np.array(bandRedNoise)
+
+                if not 'freqrednoise' in gibbsmodel:
+                    gibbsmodel.append('freqrednoise')
+                for ii, band in enumerate(bandRedNoise):
+                    # Every row contains a low-high freq combination
+                    if bandNoiseModel=='spectrum':
+                        nfreqs = numNoiseFreqs[pp]
+                        bvary = [True]*nfreqs
+                        pmin = [-18.0]*nfreqs
+                        pmax = [-7.0]*nfreqs
+                        pstart = [-10.0]*nfreqs
+                        pwidth = [0.1]*nfreqs
+                    elif bandNoiseModel=='powerlaw':
+                        bvary = [True, True, False]
+                        pmin = [-20.0, 0.02, 1.0e-11]
+                        pmax = [-10.0, 6.98, 3.0e-9]
+                        pstart = [-15.0, 2.01, 1.0e-10]
+                        pwidth = [0.3, 0.3, 5.0e-11]
+                    elif bandNoiseModel=='spectralModel':
+                        bvary = [True, True, True]
+                        pmin = [-28.0, 0.0, -8.0]
+                        pmax = [15.0, 12.0, 2.0]
+                        pstart = [-22.0, 2.0, -1.0]
+                        pwidth = [-0.2, 0.1, 0.1]
+                    else:
+                        raise ValueError("ERROR: option {0} not known".
+                                format(bandNoiseModel))
+
+                    newsignal = OrderedDict({
+                        "stype":noiseModel,
+                        "corr":"single",
+                        "freqband":band,
+                        "pulsarind":pp,
+                        "flagname":"pulsarname",
+                        "flagvalue":m2psr.name,
+                        "bvary":bvary,
+                        "pmin":pmin,
+                        "pmax":pmax,
+                        "pwidth":pwidth,
+                        "pstart":pstart,
+                        "prior":noisePrior
+                        })
+                    signals.append(newsignal)
+
             if incDM:
                 if not 'dm' in gibbsmodel:
                     gibbsmodel.append('dm')
                 if dmModel=='dmspectrum':
-                    nfreqs = numDMFreqs[ii]
+                    nfreqs = numDMFreqs[pp]
                     bvary = [True]*nfreqs
                     pmin = [-14.0]*nfreqs
                     pmax = [-3.0]*nfreqs
@@ -3548,7 +3652,7 @@ class ptaLikelihood(object):
                 newsignal = OrderedDict({
                     "stype":dmModel,
                     "corr":"single",
-                    "pulsarind":ii,
+                    "pulsarind":pp,
                     "flagname":"pulsarname",
                     "flagvalue":m2psr.name,
                     "bvary":bvary,
@@ -3560,11 +3664,11 @@ class ptaLikelihood(object):
                     })
                 signals.append(newsignal)
 
-            for jj in range(numSingleFreqs[ii]):
+            for jj in range(numSingleFreqs[pp]):
                 newsignal = OrderedDict({
                     "stype":'frequencyline',
                     "corr":"single",
-                    "pulsarind":ii,
+                    "pulsarind":pp,
                     "flagname":"pulsarname",
                     "flagvalue":m2psr.name,
                     "bvary":[True, True],
@@ -3576,11 +3680,11 @@ class ptaLikelihood(object):
                     })
                 signals.append(newsignal)
 
-            for jj in range(numSingleDMFreqs[ii]):
+            for jj in range(numSingleDMFreqs[pp]):
                 newsignal = OrderedDict({
                     "stype":'dmfrequencyline',
                     "corr":"single",
-                    "pulsarind":ii,
+                    "pulsarind":pp,
                     "flagname":"pulsarname",
                     "flagvalue":m2psr.name,
                     "bvary":[True, True],
@@ -3687,7 +3791,7 @@ class ptaLikelihood(object):
                 newsignal = OrderedDict({
                     "stype":stype,
                     "corr":"single",
-                    "pulsarind":ii,
+                    "pulsarind":pp,
                     "bvary":bvary,
                     "pmin":pmin,
                     "pmax":pmax,
@@ -3699,7 +3803,7 @@ class ptaLikelihood(object):
                 signals.append(newsignal)
 
             if likfunc == 'mark11':
-                nmodes = 2*numNoiseFreqs[ii]
+                nmodes = 2*numNoiseFreqs[pp]
                 bvary = [True]*nmodes
                 pmin = [-1.0e-3]*nmodes
                 pmax = [1.0e-3]*nmodes
@@ -3709,7 +3813,7 @@ class ptaLikelihood(object):
                 newsignal = OrderedDict({
                     "stype":'fouriermode',
                     "corr":"single",
-                    "pulsarind":ii,
+                    "pulsarind":pp,
                     "flagname":"pulsarname",
                     "flagvalue":m2psr.name,
                     "bvary":bvary,
@@ -3722,7 +3826,7 @@ class ptaLikelihood(object):
                 signals.append(newsignal)
 
                 if incDM:
-                    nmodes = 2*numDMFreqs[ii]
+                    nmodes = 2*numDMFreqs[pp]
                     bvary = [True]*nmodes
                     pmin = [-1.0]*nmodes
                     pmax = [1.0]*nmodes
@@ -3732,7 +3836,7 @@ class ptaLikelihood(object):
                     newsignal = OrderedDict({
                         "stype":'dmfouriermode',
                         "corr":"single",
-                        "pulsarind":ii,
+                        "pulsarind":pp,
                         "flagname":"pulsarname",
                         "flagvalue":m2psr.name,
                         "bvary":bvary,
@@ -3758,7 +3862,7 @@ class ptaLikelihood(object):
                     newsignal = OrderedDict({
                         "stype":'jitterfouriermode',
                         "corr":"single",
-                        "pulsarind":ii,
+                        "pulsarind":pp,
                         "flagname":"pulsarname",
                         "flagvalue":m2psr.name,
                         "bvary":bvary,
@@ -3992,7 +4096,7 @@ class ptaLikelihood(object):
             "file version":2014.12,
             "author":"piccard-makeModel",
             "numpulsars":len(self.ptapsrs),
-            "pulsarnames":[self.ptapsrs[ii].name for ii in range(len(self.ptapsrs))],
+            "pulsarnames":[self.ptapsrs[pp].name for pp in range(len(self.ptapsrs))],
             "numNoiseFreqs":list(numNoiseFreqs),
             "numDMFreqs":list(numDMFreqs),
             "compression":compression,
@@ -4039,6 +4143,9 @@ class ptaLikelihood(object):
             signals[-1]['pmax'] = map(float, signals[-1]['pmax'])
             signals[-1]['pstart'] = map(float, signals[-1]['pstart'])
             signals[-1]['pwidth'] = map(float, signals[-1]['pwidth'])
+
+            if 'freqband' in signals[-1]:
+                signals[-1]['freqband'] = map(float, signals[-1]['freqband'])
 
         modeldict = OrderedDict({
             "file version":2014.12,
@@ -4168,6 +4275,23 @@ class ptaLikelihood(object):
                     signal['pstart'][ii] = startpars[parindex+pp]
                     pp = pp + 1
 
+    def getPsrFreqBands(self, modeldict, pp):
+        """
+        Given a model dictionary, and a pulsar number, return the
+        band-limited-noise frequency bands.
+
+        @param modeldict:   Model dictionary
+        @param pp:          Pulsar number
+        """
+        signals = modeldict['signals']
+        bandRedNoise = []
+
+        for ii, signal in enumerate(signals):
+            if 'freqband' in signal and signal['pulsarind'] == pp:
+                bandRedNoise.append(signal['freqband'])
+
+        return np.array(bandRedNoise)
+
 
     """
     Initialise the model.
@@ -4289,6 +4413,9 @@ class ptaLikelihood(object):
                 for ss in np.append(linsigind, nlsigind):
                     tmsigpars += signals[ss]['parid']
 
+            # Get the frequency bands for the band-limited noise
+            bandRedNoise = self.getPsrFreqBands(fullmodel, pindex)
+
             # We'll try to read the necessary quantities from the HDF5 file
             try:
                 if not fromFile:
@@ -4304,7 +4431,7 @@ class ptaLikelihood(object):
                         likfunc=likfunc, compression=compression, \
                         evalCompressionComplement=evalCompressionComplement, \
                         memsave=True, noGmat=noGmatWrite, \
-                        gibbsmodel=self.gibbsmodel)
+                        gibbsmodel=self.gibbsmodel, bandRedNoise=bandRedNoise)
             except (StandardError, ValueError, IOError, RuntimeError) as err:
                 # Create the Auxiliaries ourselves
 
@@ -4326,7 +4453,8 @@ class ptaLikelihood(object):
                                 likfunc=likfunc, compression=compression, \
                                 write='likfunc', tmsigpars=tmsigpars, \
                                 noGmatWrite=noGmatWrite, threshold=threshold, \
-                                gibbsmodel=self.gibbsmodel, trimquant=trimquant)
+                                gibbsmodel=self.gibbsmodel, trimquant=trimquant, \
+                                bandRedNoise=bandRedNoise)
 
             # When selecting Fourier modes, like in mark7/mark8, the binclude vector
             # indicates whether or not a frequency is included in the likelihood. By
