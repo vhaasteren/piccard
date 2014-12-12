@@ -1900,7 +1900,7 @@ class ptaPulsar(object):
                         self.freqs > band[1])
                 FBmat[mask, :] = 0.0
                 self.FBmats.append(FBmat)
-                self.Fbands.append(Fbands)
+                self.Fbands.append(band)
 
             self.FBmats = np.array(self.FBmats)
             self.Fbands = bandRedNoise
@@ -3116,7 +3116,7 @@ class ptaLikelihood(object):
         # First figure out how large we have to make the arrays
         npsrs = len(self.ptapsrs)
         self.npf = np.zeros(npsrs, dtype=np.int)
-        self.npb = np.zeros(npsrs, dtype=np.int)
+        self.npfb = np.zeros(npsrs, dtype=np.int)
         self.npu = np.zeros(npsrs, dtype=np.int)
         self.npff = np.zeros(npsrs, dtype=np.int)
         self.npfdm = np.zeros(npsrs, dtype=np.int)
@@ -3140,7 +3140,7 @@ class ptaLikelihood(object):
             if not self.likfunc in ['mark2']:
                 self.npf[ii] = len(psr.Ffreqs)
                 self.npff[ii] = self.npf[ii]
-                self.npfb[ii] = len(psr.Ffreqs)*len(self.FBmats)
+                self.npfb[ii] = len(psr.Ffreqs)*len(psr.FBmats)
 
             if self.likfunc in ['mark4ln', 'mark9', 'mark10']:
                 self.npff[ii] += len(psr.SFfreqs)
@@ -3177,7 +3177,7 @@ class ptaLikelihood(object):
                 self.npm_d[ii] = np.sum(psr.Mmask_D)
                 self.npm_u[ii] = np.sum(psr.Mmask_U)
                 self.npz_f[ii] = psr.Zmat_F.shape[1]
-                self.npz_fb[ii] = psr.Zmat_B.shape[1]
+                self.npz_b[ii] = psr.Zmat_B.shape[1]
                 self.npz_d[ii] = psr.Zmat_D.shape[1]
                 self.npz_u[ii] = psr.Zmat_U.shape[1]
 
@@ -3341,7 +3341,7 @@ class ptaLikelihood(object):
     def makeModelDict(self,  nfreqs=20, ndmfreqs=None, \
             Tmax=None, \
             incRedNoise=False, noiseModel='powerlaw', fc=None, \
-            bandRedNoise=None, bandNoiseModel='powerlaw', \
+            bandRedNoise=None, bandNoiseModel='blpowerlaw', \
             noisePrior='flatlog', \
             incDM=False, dmModel='powerlaw', \
             incClock=False, clockModel='powerlaw', \
@@ -3582,26 +3582,26 @@ class ptaLikelihood(object):
 
             if bandRedNoise is not None:
                 # We have band-limited red noise, at these frequency bands:
-                bandRedNoise = np.array(bandRedNoise)
+                bandRedNoise = np.atleast_2d(bandRedNoise)
 
                 if not 'freqrednoise' in gibbsmodel:
                     gibbsmodel.append('freqrednoise')
                 for ii, band in enumerate(bandRedNoise):
                     # Every row contains a low-high freq combination
-                    if bandNoiseModel=='spectrum':
+                    if bandNoiseModel=='blspectrum':
                         nfreqs = numNoiseFreqs[pp]
                         bvary = [True]*nfreqs
                         pmin = [-18.0]*nfreqs
                         pmax = [-7.0]*nfreqs
                         pstart = [-10.0]*nfreqs
                         pwidth = [0.1]*nfreqs
-                    elif bandNoiseModel=='powerlaw':
+                    elif bandNoiseModel=='blpowerlaw':
                         bvary = [True, True, False]
                         pmin = [-20.0, 0.02, 1.0e-11]
                         pmax = [-10.0, 6.98, 3.0e-9]
                         pstart = [-15.0, 2.01, 1.0e-10]
                         pwidth = [0.3, 0.3, 5.0e-11]
-                    elif bandNoiseModel=='spectralModel':
+                    elif bandNoiseModel=='blspectralModel':
                         bvary = [True, True, True]
                         pmin = [-28.0, 0.0, -8.0]
                         pmax = [15.0, 12.0, 2.0]
@@ -3612,7 +3612,7 @@ class ptaLikelihood(object):
                                 format(bandNoiseModel))
 
                     newsignal = OrderedDict({
-                        "stype":noiseModel,
+                        "stype":bandNoiseModel,
                         "corr":"single",
                         "freqband":band,
                         "pulsarind":pp,
@@ -4574,6 +4574,15 @@ class ptaLikelihood(object):
                 elif sig['stype'] == 'frequencyline':
                     flagname = 'frequencyline'
                     flagvalue = ['Line-Freq', 'Line-Ampl'][jj]
+                elif sig['stype'] == 'blpowerlaw':
+                    flagname = 'BLpowerlaw'
+                    flagvalue = ['BL-Amplitude', 'BL-spectral-index', 'BL-low-frequency-cutoff'][jj]
+                elif sig['stype'] == 'blspectralModel':
+                    flagname = 'blspectralModel'
+                    flagvalue = ['BL-SM-Amplitude', 'BL-SM-spectral-index', 'BL-SM-corner-frequency'][jj]
+                elif sig['stype'] == 'blspectrum':
+                    flagname = 'blfrequency'
+                    flagvalue = str(self.ptapsrs[psrindex].Ffreqs[2*jj])
                 elif sig['stype'] == 'bwm':
                     flagname = 'BurstWithMemory'
                     flagvalue = ['burst-arrival', 'amplitude', 'raj', 'decj', 'polarisation'][jj]
@@ -4961,12 +4970,12 @@ class ptaLikelihood(object):
         """
 
         if make_matrix:
-            self.Phi[:] = 0         # Start with a fresh matrix
+            self.Phi[:] = 0.0         # Start with a fresh matrix
 
-        self.Phivec[:] = 0      # ''
-        self.Thetavec[:] = 0    # ''
-        self.Svec[:] = 0
-        self.Scor[:] = 0
+        self.Phivec[:] = 0.0      # ''
+        self.Thetavec[:] = 0.0    # ''
+        self.Svec[:] = 0.0
+        self.Scor[:] = 0.0
         npsrs = len(self.ptapsrs)
 
         if selection is None:
@@ -5458,7 +5467,7 @@ class ptaLikelihood(object):
         # Re-set the relevant parts of Theta
         inds = np.sum(self.npfdm[:pp])
         inde = inds + self.npfdm[pp]
-        self.Thetavec[inds:inde] = 0
+        self.Thetavec[inds:inde] = 0.0
 
         if selection is None:
             selection = np.array([1]*len(self.ptasignals), dtype=np.bool)
@@ -5644,6 +5653,77 @@ class ptaLikelihood(object):
 
                     self.Phivec[findex:findex+2] += 10**pcdoubled
 
+    def setBeta(self, parameters, selection=None, pp=0):
+        """
+        Same as constructPhiAndTheta, but now for a single pulsar and only
+        band-limited red noise (Beta)
+        
+        @param parameters:  the full array of parameters
+        @param selection::  mask of signals to include
+        @param pp:          index of pulsar to do
+        """
+        psr = self.ptapsrs[pp]
+
+        # Re-set the relevant parts of Theta
+        inds = np.sum(self.npfb[:pp])
+        inde = inds + self.npfb[pp]
+        self.Betavec[inds:inde] = 0.0
+
+        if selection is None:
+            selection = np.array([1]*len(self.ptasignals), dtype=np.bool)
+
+        # Loop over all signals, and fill the phi matrix
+        #for m2signal in self.ptasignals:
+        for ss, m2signal in enumerate(self.ptasignals):
+            if m2signal['pulsarind'] == pp and selection[ss]:
+                # Create a parameters array for this particular signal
+                sparameters = m2signal['pstart'].copy()
+                sparameters[m2signal['bvary']] = \
+                        parameters[m2signal['parindex']:m2signal['parindex']+m2signal['npars']]
+                if m2signal['stype'] == 'blspectrum':
+                    # Find the FB index for the band we are in
+                    bind = np.where(np.all(psr.Fbands==m2signal['freqband'],axis=1))[0][0]
+                    pp = m2signal['pulsarind']
+                    findex = np.sum(self.npfb[:pp]) + bind*self.npf[pp]
+                    nfreq = int(self.npf[pp]/2)
+
+                    pcdoubled = np.array([sparameters, sparameters]).T.flatten()
+
+                    # Fill the Beta matrix
+                    self.Betavec[findex:findex+2*nfreq] += 10**pcdoubled
+
+                elif m2signal['stype'] == 'blpowerlaw':
+                    Amp = 10**sparameters[0]
+                    Si = sparameters[1]
+
+                    bind = np.where(np.all(psr.Fbands==m2signal['freqband'],axis=1))[0][0]
+                    pp = m2signal['pulsarind']
+                    findex = np.sum(self.npfb[:pp]) + bind*self.npf[pp]
+                    nfreq = int(self.npf[pp]/2)
+
+                    freqpy = self.ptapsrs[pp].Ffreqs * pic_spy
+                    pcdoubled = (Amp**2 * pic_spy**3 / (12*np.pi*np.pi * m2signal['Tmax'])) * freqpy ** (-Si)
+                    # Fill the Beta matrix
+                    self.Betavec[findex:findex+2*nfreq] += pcdoubled
+                elif m2signal['stype'] == 'blspectralModel':
+                    Amp = 10**sparameters[0]
+                    alpha = sparameters[1]
+                    fc = 10**sparameters[2] / pic_spy
+
+                    #Amp = 10**sparameters[0]
+                    #Si = sparameters[1]
+
+                    bind = np.where(np.all(psr.Fbands==m2signal['freqband'],axis=1))[0][0]
+                    pp = m2signal['pulsarind']
+                    findex = np.sum(self.npfb[:pp]) + bind*self.npf[pp]
+                    nfreq = int(self.npf[pp]/2)
+
+                    #freqpy = self.ptapsrs[pp]].Ffreqs * pic_spy
+                    #pcdoubled = (Amp**2 * pic_spy**3 / (12*np.pi*np.pi * m2signal['Tmax'])) * freqpy ** (-Si)
+                    freqpy = self.ptapsrs[pp].Ffreqs
+                    pcdoubled = (Amp * pic_spy**3 / m2signal['Tmax']) * ((1 + (freqpy/fc)**2)**(-0.5*alpha))
+                    # Fill the Beta matrix
+                    self.Betavec[findex:findex+2*nfreq] += pcdoubled
 
 
     """
@@ -7719,6 +7799,10 @@ class ptaLikelihood(object):
                 gibbs_expansion=True)
         self.gibbs_construct_all_freqcov()
 
+        # Band-limited red noise
+        for pp, psr in enumerate(self.ptapsrs):
+            self.setBeta(parameters, pp=pp)
+
         # The white noise
         self.setPsrNoise(parameters)
 
@@ -7736,6 +7820,7 @@ class ptaLikelihood(object):
         Jldet = np.zeros(npsrs)                 # All log(det(N)) values
         ThetaLD = 0.0
         PhiLD = 0.0
+        BetaLD = 0.0
         rGr = np.zeros(npsrs)                   # All rNr values
         sind = 0                                # Sigma-index
         phind = 0                               # Z/T-index
@@ -7760,9 +7845,11 @@ class ptaLikelihood(object):
             # Create the prior (Sigma = ZNZ + Phi)
             nms = self.npm[ii]
             nfs = self.npf[ii]
+            nfbs = self.npfb[ii]
             nfdms = self.npfdm[ii]
             findex = np.sum(self.npf[:ii])
             fdmindex = np.sum(self.npfdm[:ii])
+            fbindex = np.sum(self.npfb[:ii])
             if 'design' in self.gibbsmodel:
                 phind += nms         
             if 'rednoise' in self.gibbsmodel:
@@ -7782,6 +7869,12 @@ class ptaLikelihood(object):
                     # Here, we construct the indexing matrices
                     Finds[findex:findex+nfs] = np.arange(phind, phind+nfs)
                     phind += nfs
+            if 'freqrednoise' in self.gibbsmodel:
+                inds = slice(sind+phind, sind+phind+nfbs)
+                di = np.diag_indices(nfbs)
+                Sigma[inds, inds][di] += 1.0 / self.Betavec[fbindex:fbindex+nfbs]
+                BetaLD += np.sum(np.log(self.Betavec[fbindex:fbindex+nfbs]))
+                phind += nfbs
             if 'dm' in self.gibbsmodel:
                 inds = slice(sind+phind, sind+phind+nfdms)
                 di = np.diag_indices(nfdms)
@@ -7824,7 +7917,9 @@ class ptaLikelihood(object):
             Sigma[np.array([Finds]).T, Finds] += FPhi
 
         # If we have a non-trivial prior matrix, invert that stuff
-        if 'rednoise' in self.gibbsmodel or 'dm' in self.gibbsmodel:
+        if 'rednoise' in self.gibbsmodel or \
+                'dm' in self.gibbsmodel or \
+                'freqrednoise' in self.gibbsmodel:
             Sigma += ZNZ
 
             # With Sigma constructed, we can invert it
@@ -7845,11 +7940,12 @@ class ptaLikelihood(object):
             SigmaLD = 0.0
             ThetaLD = 0.0
             PhiLD = 0.0
+            BetaLD = 0.0
             rSr = 0.0
 
         return -0.5*np.sum(self.npobs-self.npm)*np.log(2*np.pi) \
                 -0.5*np.sum(Jldet) - 0.5*np.sum(rGr) \
-                +0.5*rSr - 0.5*SigmaLD - 0.5*PhiLD - 0.5*ThetaLD
+                +0.5*rSr - 0.5*SigmaLD - 0.5*PhiLD - 0.5*ThetaLD - 0.5*BetaLD
 
 
     # Now we will define the Gibbs likelihood functions, all preceded with
