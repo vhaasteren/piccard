@@ -22,7 +22,8 @@ chain. We still use the PAL/PAL2 version of PTMCMC_generic to do the actual MCMC
 steps, but the steps are performed in parameter blocks.
 """
 
-def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
+def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False, \
+        Nmult=4, Dmult=4, Fmult=4):
     """
     Run a blocked Gibbs sampler on the full likelihood, including all quadratic
     parameters numerically. The hyper-parameters are proposed using adaptive
@@ -35,20 +36,24 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
     3) Phi, the red noise PSD coefficients
     4) Jitter: pulse jitter/ecorr. Unlike in mark1, always included in 'N'
     5) Deterministic: all deterministic sources not described elsewhere
+                      (not supported yet)
 
     @param likob:       The likelihood object, containing everything
     @param steps:       The number of full-circle Gibbs steps to take
     @param chainsdir:   Where to save the MCMC chain
     @param noWrite:     If True, do not write results to file
+    @param Nmult:       Nmult * Ndim is number of mini-mcmc steps for block N
+    @param Dmult:       Dmult * Ddim is number of mini-mcmc steps for block DM
+    @param Fmult:       Fmult is number of mini-mcmc steps for block F (inc. GW)
     """
     if not likob.likfunc in ['gibbs']:
         raise ValueError("Likelihood not initialised for Gibbs sampling")
 
-    # Save the description of all the parameters
-    likob.saveModelParameters(chainsdir + '/ptparameters.txt')
-
     # Clear the file for writing
     if not noWrite:
+        # Save the description of all the parameters
+        likob.saveModelParameters(chainsdir + '/ptparameters.txt')
+
         chainfilename = chainsdir + '/chain_1.txt'
         chainfile = open(chainfilename, 'w')
         chainfile.close()
@@ -89,10 +94,10 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
                     "curStep":1, "covUpdate":0})      # Dict with info
     sampler_D = []          # DM variations (per pulsar)
     sampler_D_info = []     # Dict with info on samplers
-    for ii, psr in enumerate(likob.ptapsrs):
-        # Start with the noise search for pulsar ii
+    for pp, psr in enumerate(likob.ptapsrs):
+        # Start with the noise search for pulsar pp
         # Parameter mask for the white noise + ecorr/jitter signals
-        Nmask = likob.gibbs_get_signal_mask(ii, \
+        Nmask = likob.gibbs_get_signal_mask(pp, \
                 ['efac', 'equad', 'jitter', 'cequad'], ncoeffs)
 
         if np.sum(Nmask) > 0:
@@ -101,14 +106,15 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
             psrNcov = np.diag(awidth[Nmask]**2)
             Ndim = np.sum(Nmask)
             sampler_N.append(ptmcmc.PTSampler(Ndim, \
-                likob.gibbs_psr_noise_loglikelihood_mar, \
+                likob.gibbs_psr_noise_loglikelihood, \
                 likob.gibbs_psr_noise_logprior, \
-                cov=psrNcov, outDir='./gibbs-chains/', \
+                cov=psrNcov, outDir='./gibbs-chains-N/', \
                 verbose=False, nowrite=True, \
-                loglargs=[ii, Nmask, apars], \
-                logpargs=[ii, Nmask, apars]))
-            sampler_N_info.append(dict({"singleChain":20*Ndim, \
-                    "fullChain":Ndim*8000, "curStep":1, "covUpdate":400*Ndim}))
+                loglargs=[pp, Nmask, apars, True, 0], \
+                logpargs=[pp, Nmask, apars, True, 0]))
+            sampler_N_info.append(dict({"singleChain":Nmult*Ndim, \
+                    "fullChain":Ndim*Nmult*2000, "curStep":1, \
+                    "covUpdate":200*Ndim*Nmult}))
         else:
             sampler_N.append(None)
 
@@ -119,7 +125,7 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
 
         if 'dm' in likob.gibbsmodel:
             # Parameter mask for signals for DM variations
-            Dmask = likob.gibbs_get_signal_mask(ii, ['dmpowerlaw', 'dmspectrum'], ncoeffs)
+            Dmask = likob.gibbs_get_signal_mask(pp, ['dmpowerlaw', 'dmspectrum'], ncoeffs)
             if np.sum(Dmask) > 0:
                 psrDpars = apars[Dmask]
                 psrDcov = np.diag(awidth[Dmask]**2)
@@ -127,13 +133,13 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
                 sampler_D.append(ptmcmc.PTSampler(Ddim, \
                     likob.gibbs_psr_DM_loglikelihood_mar, \
                     likob.gibbs_psr_DM_logprior, \
-                    cov=psrDcov, outDir='./gibbs-chains/', \
+                    cov=psrDcov, outDir='./gibbs-chains-D/', \
                     verbose=False, nowrite=True, \
-                    loglargs=[ii, Dmask, apars], \
-                    logpargs=[ii, Dmask, apars]))
-                sampler_D_info.append(dict({"singleChain":20*Ddim, \
-                        "fullChain":Ddim*8000, "curStep":1, \
-                        "covUpdate":400*Ddim}))
+                    loglargs=[pp, Dmask, apars], \
+                    logpargs=[pp, Dmask, apars]))
+                sampler_D_info.append(dict({"singleChain":Dmult*Ddim, \
+                        "fullChain":Ddim*Dmult*2000, "curStep":1, \
+                        "covUpdate":200*Dmult*Ddim}))
             else:
                 sampler_D.append(None)
 
@@ -149,13 +155,13 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
             sampler_F = ptmcmc.PTSampler(Fdim, \
                     likob.gibbs_Phi_loglikelihood_mar, \
                     likob.gibbs_Phi_logprior, \
-                    cov=Fcov, outDir='./gibbs-chains/', \
+                    cov=Fcov, outDir='./gibbs-chains-F/', \
                     verbose=False, nowrite=True, \
                     loglargs=[Fmask, apars], \
                     logpargs=[Fmask, apars])
-            sampler_F_info = dict({"singleChain":20*Fdim, \
-                    "fullChain":Fdim*8000, "curStep":1, \
-                    "covUpdate":400*Fdim})
+            sampler_F_info = dict({"singleChain":Fmult, \
+                    "fullChain":Fdim*Fmult*2000, "curStep":1, \
+                    "covUpdate":200*Fmult*Fdim})
         else:
             sampler_F = None
 
@@ -165,8 +171,8 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
     # TODO: use only gibbs_current_a. The 'a' here, is actually the 'b' in the
     #       mark1 sampler
     a = []
-    for ii, psr in enumerate(likob.ptapsrs):
-        a.append(likob.gibbs_get_initial_quadratics(ii))
+    for pp, psr in enumerate(likob.ptapsrs):
+        a.append(likob.gibbs_get_initial_quadratics(pp))
 
     likob.gibbs_current_a = a
 
@@ -187,8 +193,8 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
     # generated from all the respective (conditional-) likelihood functions
     #b = []
     for pp, psr in enumerate(likob.ptapsrs):
-        bi, a[pp], xi2  = likob.gibbs_sample_psr_quadratics(apars[:ndim], \
-                a[pp], pp, joinNJ=True)
+        bi, a, xi2  = likob.gibbs_sample_psr_quadratics(apars[:ndim], \
+                a, pp, joinNJ=True)
     #b.append(bi)
     apars[ndim:] = np.hstack(a)
     likob.gibbs_current_a = a
@@ -217,8 +223,8 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
 
                 # Arguments for the log-likelihood function (so we can do
                 # subtraction)
-                sampler.logl.args = [pp, Nmask, apars]
-                sampler.logp.args = [pp, Nmask, apars]
+                sampler.logl.args = [pp, Nmask, apars, True, step]
+                sampler.logp.args = [pp, Nmask, apars, True, step]
                 
                 # The sampler always calculates the previous step as well, as it
                 # should here (other parameters have changed in the meantime)
@@ -229,11 +235,6 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
 
                 # This sets the Jvec as well
                 likob.setSinglePsrNoise(apars[:ndim], pp=pp)
-
-            ##################################################################
-            # We should not be saving the whole chain here. Can we checkpoint
-            # the MCMC chains here? RvH -- 20141130
-            ##################################################################
 
             if 'dm' in likob.gibbsmodel and sampler_D[pp] is not None:
                 # Conditional probability jump in the DM variation
@@ -282,7 +283,7 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
                 # analytically Gibbs-style.
                 # This directly also sets gibbs_current_a again (bad habit to do
                 # there, sorry!)
-                psr.gibbsresiduals = likob.gibbs_get_custom_subresiduals(ii, psr.Zmask_N)
+                psr.gibbsresiduals = likob.gibbs_get_custom_subresiduals(pp, psr.Zmask_N)
                 psr.gibbssubresiduals = psr.detresiduals - psr.gibbsresiduals
                 aa, a = gibbs_update_ecor_NJ(likob, apars[:ndim],  \
                         likob.gibbs_current_a, likob.gibbs_current_a, \
@@ -336,9 +337,9 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False):
         for pp, psr in enumerate(likob.ptapsrs):
             # NOTE: RvH 20141129: We definitely do not want to re-calculate all
             #       these quadratics. We can subtract plenty of 'm. Which ones?
-            bi, likob.gibbs_current_a[pp], xi2 = \
+            bi, likob.gibbs_current_a, xi2 = \
                     likob.gibbs_sample_psr_quadratics(apars[:ndim], \
-                    likob.gibbs_current_a[pp], pp, which='N')
+                    likob.gibbs_current_a, pp, which='N')
 
             #likob.gibbs_current_a = likob.gibbs_sample_M_quadratics( \
             #        likob.gibbs_current_a, pp)
@@ -480,7 +481,7 @@ def gibbs_prepare_get_quadratic_cov(likob):
         except np.linalg.LinAlgError:
             try:
                 Qs,Rs = sl.qr(ZZ) 
-                ZZi = sl.solve(Rs,  s.T)
+                ZZi = sl.solve(Rs, Qs.T)
             except np.linalg.LinAlgError:
                 print "ERROR: QR cannot invert ZZ"
                 raise
@@ -512,9 +513,9 @@ def gibbs_construct_mode_covariance(likob, mode):
     msk = likob.freqmask[:, mode]
 
     cov = likob.Scor[msk,:][:,msk] * gw_pcdoubled[mode]
-    for ii, psr in likob.ptapsrs:
-        ind = np.sum(msk[:ii])
-        cov[ind, ind] += likob.Phivec[likob.nfs[ii]+mode]
+    for pp, psr in enumerate(likob.ptapsrs):
+        ind = np.sum(msk[:pp])
+        cov[ind, ind] += likob.Phivec[likob.npf[pp]+mode]
 
     return cov
     
@@ -579,30 +580,31 @@ def gibbs_loglikelihood(likob, aparameters):
 
         ntot = 0
         nqind = quadparind + 0
+        lqp = 0
         if 'design' in likob.gibbsmodel:
             #allparameters[nqind:nqind+nms] = np.dot(psr.tmpConvi, allparameters[nqind:nqind+nms])
             ksi.append(allparameters[nqind:nqind+nms])
             ntot += nms
             nqind += nms
+            lqp += nms
         if 'rednoise' in likob.gibbsmodel:
             a.append(allparameters[nqind:nqind+nfs])
             ntot += nfs
             nqind += nfs
+            lqp += nfs
         if 'dm' in likob.gibbsmodel:
             d.append(allparameters[nqind:nqind+nfdms])
             ntot += nfdms
             nqind += nfdms
+            lqp += nfdms
         if 'jitter' in likob.gibbsmodel:
             j.append(allparameters[nqind:nqind+npus])
             ntot += npus
             nqind += npus
 
         # Calculate the quadratic parameter subtracted residuals
-        psr.gibbsresiduals = likob.gibbs_get_custom_subresiduals(ii, psr.Zmask_N)
+        psr.gibbsresiduals = np.dot(psr.Zmat[:,:lqp], likob.gibbs_current_a[ii][:lqp])
         psr.gibbssubresiduals = psr.detresiduals - psr.gibbsresiduals
-        #gibbscoefficients = allparameters[quadparind:quadparind+ntot]
-        #psr.gibbssubresiduals = np.dot(psr.Zmat, gibbscoefficients)
-        #psr.gibbsresiduals = psr.detresiduals - psr.gibbssubresiduals
 
         quadparind += ntot
 
@@ -668,15 +670,6 @@ def gibbs_logprior(likob, allparameters):
 
     return logpr
 
-def gibbs_logposterior(likob, allparameters):
-    """
-    Include the prior on the model parameters (from signals). Do not include a
-    prior for the quadratic (Gibbs) parameters.
-    """
-
-    return  gibbs_logprior(likob, allparameters) + \
-            gibbs_loglikelihood(likob, allparameters)
-
 class gibbs_likob_class(object):
     """
     Tiny class, that allow the Gibbs likelihood to be sampled.
@@ -689,7 +682,8 @@ class gibbs_likob_class(object):
         return gibbs_logprior(self.likob, pars)
 
     def loglikelihood(self, pars):
-        return gibbs_loglikelihood(self.likob, pars)
+        return self.likob.gibbs_full_loglikelihood(pars)
+        #return gibbs_loglikelihood(self.likob, pars)
 
     def logposterior(self, pars):
         return self.logprior(pars) + self.loglikelihood(pars)
@@ -1878,7 +1872,7 @@ def gibbs_prepare_loglik_N(likob, curpars):
         temp = pnl.loglikelihood(pnl.pstart)
         ndim = pnl.dimensions()
 
-        pnl.initSampler(singleChain=ndim*20, fullChain=ndim*8000, \
+        pnl.initSampler(singleChain=ndim*10, fullChain=ndim*8000, \
                 covUpdate=ndim*400)
 
     return loglik_N
@@ -1960,7 +1954,7 @@ def gibbs_prepare_loglik_J(likob, curpars):
 
                 ndim = pnl.dimensions()
 
-                pnl.initSampler(singleChain=ndim*20, fullChain=ndim*8000, \
+                pnl.initSampler(singleChain=ndim*10, fullChain=ndim*8000, \
                         covUpdate=ndim*400)
 
     return loglik_J
@@ -2047,7 +2041,7 @@ def gibbs_prepare_loglik_NJ(likob, curpars):
         temp = pnl.loglikelihood(pnl.pstart)
         ndim = pnl.dimensions()
 
-        pnl.initSampler(singleChain=ndim*20, fullChain=ndim*8000, \
+        pnl.initSampler(singleChain=ndim*10, fullChain=ndim*8000, \
                 covUpdate=ndim*400)
 
     return loglik_NJ
@@ -2670,7 +2664,7 @@ def gibbs_psr_corrs_ex(likob, psrindex, a):
     return (pSinv_vec, pPvec)
 
 
-def gibbs_psr_corrs_im(likob, psrindex, a):
+def gibbs_psr_corrs_im_old(likob, psrindex, a):
     """
     Get the Gibbs coefficient quadratic offsets for the correlated signals, for
     a specific pulsar, when the correlated signal is not modelled explicitly
@@ -2944,11 +2938,11 @@ def RunGibbsMCMC(likob, steps, chainsdir, covfile=None, burnin=10000,
     if not likob.likfunc in ['gibbs']:
         raise ValueError("Likelihood not initialised for Gibbs sampling")
 
-    # Save the description of all the parameters
-    likob.saveModelParameters(chainsdir + '/ptparameters.txt')
-
     # Clear the file for writing
     if not noWrite:
+        # Save the description of all the parameters
+        likob.saveModelParameters(chainsdir + '/ptparameters.txt')
+
         chainfilename = chainsdir + '/chain_1.txt'
         chainfile = open(chainfilename, 'w')
         chainfile.close()
@@ -2985,6 +2979,8 @@ def RunGibbsMCMC(likob, steps, chainsdir, covfile=None, burnin=10000,
 
     sampler.sample(p0, steps, thin=thin, burn=burnin)
 
+    return sampler
+
 
 
 
@@ -3017,11 +3013,11 @@ def RunGibbs_mark1(likob, steps, chainsdir, noWrite=False, joinNJ=True):
     if not likob.likfunc in ['gibbs']:
         raise ValueError("Likelihood not initialised for Gibbs sampling")
 
-    # Save the description of all the parameters
-    likob.saveModelParameters(chainsdir + '/ptparameters.txt')
-
     # Clear the file for writing
     if not noWrite:
+        # Save the description of all the parameters
+        likob.saveModelParameters(chainsdir + '/ptparameters.txt')
+
         chainfilename = chainsdir + '/chain_1.txt'
         chainfile = open(chainfilename, 'w')
         chainfile.close()
@@ -3129,10 +3125,10 @@ def RunGibbs_mark1(likob, steps, chainsdir, noWrite=False, joinNJ=True):
                         # next conditional.
                         # This conditional also sets gibbssubresiduals, which is
                         # used in pulsarDetLL
-                        a[pp], b[pp], xi2 = likob.gibbs_sample_psr_quadratics(pars, b[pp], pp, \
+                        a[pp], b, xi2 = likob.gibbs_sample_psr_quadratics(pars, b, pp, \
                                 which='N', joinNJ=True)
                     else:
-                        a[pp], b[pp], xi2 = likob.gibbs_sample_psr_quadratics(pars, b[pp], pp, \
+                        a[pp], b, xi2 = likob.gibbs_sample_psr_quadratics(pars, b, pp, \
                                 which='all', joinNJ=False)
 
                 samples[stepind, ndim:] = np.hstack(a)

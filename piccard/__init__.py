@@ -7,7 +7,7 @@ from piccard_freqstat import *
 from piccard_gibbs import *
 from resampler import *
 
-__version__ = 2014.11
+__version__ = 2014.12
 
 def test():
     # Run some tests here

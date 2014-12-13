@@ -695,7 +695,7 @@ def makeEfacPage(fig, samples, labels, mlchain, mlpso, txtfilename, \
 
     plt.subplots_adjust(left=0.115, right=0.95, top=0.9, bottom=0.25)
 
-    resp = ax.errorbar(x, yval, yerr=yerr, fmt=None, c='blue')
+    resp = ax.errorbar(x, yval, yerr=yerr, fmt="none", c='blue')
     if mlpso is not None:
         try:
             ress = ax.scatter(x, mlpso, s=50, c='r', marker='*')
@@ -833,7 +833,7 @@ def makeResidualsPlot(ax, toas, residuals, toaerrs, flags, \
 
 def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
         parametersfile=None, sampler='auto', make1dplots=True, \
-        maxpages=-1, skipTMP=False, triplot_hm=False):
+        maxpages=-1, skipTMP=True, triplot_hm=False):
     """
     Given an MCMC chain file, and an output directory, make all the results
     plots
@@ -2327,6 +2327,7 @@ Run a generic PTMCMC algorithm.
 def RunPTMCMC(likob, steps, chainsdir, covfile=None, burnin=10000):
     # Save the parameters to file
     likob.saveModelParameters(chainsdir + '/ptparameters.txt')
+    likob.saveResiduals(chainsdir)
 
     ndim = likob.dimensions
     pwidth = likob.pwidth.copy()
@@ -2343,6 +2344,8 @@ def RunPTMCMC(likob, steps, chainsdir, covfile=None, burnin=10000):
             outDir=chainsdir, verbose=True)
 
     sampler.sample(p0, steps, thin=1, burn=burnin)
+
+    return sampler
 
 """
 Obtain the MCMC chain as a numpy array, and a list of parameter indices

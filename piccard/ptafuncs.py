@@ -1015,15 +1015,16 @@ def quant2ind(U):
 
     return inds
 
-def quantreduce(U, eat, flags, calci=False):
+def quantreduce(U, eat, flags, calci=False, minObsPerEpoch=3):
     """
     Reduce the quantization matrix by removing the observing epochs that do not
     require any jitter parameters.
 
-    @param U:       quantization matrix
-    @param eat:     Epoch-averaged toas
-    @param flags:   the flags of the TOAs
-    @param calci:   Calculate pseudo-inverse yes/no
+    @param U:               quantization matrix
+    @param eat:             Epoch-averaged toas
+    @param flags:           the flags of the TOAs
+    @param calci:           Calculate pseudo-inverse yes/no
+    @param minObsPerEpoch:  How many observations per epoch we need for ecorr
 
     @return     newU, jflags (flags that need jitter)
     """
@@ -1035,9 +1036,9 @@ def quantreduce(U, eat, flags, calci=False):
         
         Umat = U[flagmask, :]
         ecnt = np.sum(Umat, axis=0)
-        incepoch = np.logical_or(incepoch, ecnt>1)
+        incepoch = np.logical_or(incepoch, ecnt>minObsPerEpoch)
 
-        if np.any(ecnt > 1):
+        if np.any(ecnt > minObsPerEpoch):
             jflags.append(flagval)
 
     Un = U[:, incepoch]
