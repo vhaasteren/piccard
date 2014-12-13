@@ -919,7 +919,14 @@ class ptaPulsar(object):
                             matricees
         """
         # The parameters that need to be included in the various conditionals
-        F_list = ['Offset', 'F0', 'F1', 'F2', 'F3', 'F4', 'F5']
+        F_list = ['Offset', \
+                'LAMBDA', 'BETA', 'RAJ', 'DECJ', 'PMRA', 'PMDEC', \
+                'ELONG', 'ELAT', 'PMELONG', 'PMELAT', 'TASC', 'EPS1', 'EPS2', \
+                'XDOT', 'PBDOT', 'KOM', 'KIN', 'EDOT', 'MTOT', 'SHAPMAX', \
+                'GAMMA', 'X2DOT', 'XPBDOT', 'E2DOT', 'OM_1', 'A1_1', 'XOMDOT', \
+                'PMLAMBDA', 'PMBETA', 'PX', 'PB', 'A1', 'E', 'ECC', \
+                'T0', 'OM', 'OMDOT', 'SINI', 'A1', 'M2']
+        F_front_list = ['JUMP', 'F']
         D_list = ['DM', 'DM1', 'DM2', 'DM3', 'DM4']
         U_list = []     # U_list needs to stay empty, otherwise 'joinNJ' in
                         # Gibbs mark2 will not work anymore -- RvH
@@ -933,7 +940,12 @@ class ptaPulsar(object):
         self.Mmask_U = np.array([0]*len(self.ptmdescription), dtype=np.bool)
         self.Mmat_g = np.zeros(self.Mmat.shape)
         for ii, par in enumerate(self.ptmdescription):
-            if par in F_list and 'rednoise' in gibbsmodel:
+            incrn = False
+            for par_front in F_front_list:
+                if par[:len(par_front)] == par_front:
+                    incrn = True
+
+            if (par in F_list or incrn) and 'rednoise' in gibbsmodel:
                 self.Mmask_F[ii] = True
 
             if par in D_list and 'dm' in gibbsmodel:
@@ -1031,8 +1043,8 @@ class ptaPulsar(object):
         dmask = self.getMmask(which=which)
 
         if which in ['F', 'B']:
-            #dmask = self.Mmask_F
-            dmask = self.getMmask(which='M')
+            dmask = self.Mmask_F
+            #dmask = self.getMmask(which='M')
 
         if 'design' in gibbsmodel:
             Ft_1 = self.Mmat_g[:, dmask]
