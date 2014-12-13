@@ -481,7 +481,7 @@ def gibbs_prepare_get_quadratic_cov(likob):
         except np.linalg.LinAlgError:
             try:
                 Qs,Rs = sl.qr(ZZ) 
-                ZZi = sl.solve(Rs,  s.T)
+                ZZi = sl.solve(Rs, Qs.T)
             except np.linalg.LinAlgError:
                 print "ERROR: QR cannot invert ZZ"
                 raise
@@ -513,9 +513,9 @@ def gibbs_construct_mode_covariance(likob, mode):
     msk = likob.freqmask[:, mode]
 
     cov = likob.Scor[msk,:][:,msk] * gw_pcdoubled[mode]
-    for ii, psr in likob.ptapsrs:
-        ind = np.sum(msk[:ii])
-        cov[ind, ind] += likob.Phivec[likob.nfs[ii]+mode]
+    for pp, psr in enumerate(likob.ptapsrs):
+        ind = np.sum(msk[:pp])
+        cov[ind, ind] += likob.Phivec[likob.npf[pp]+mode]
 
     return cov
     
@@ -580,30 +580,31 @@ def gibbs_loglikelihood(likob, aparameters):
 
         ntot = 0
         nqind = quadparind + 0
+        lqp = 0
         if 'design' in likob.gibbsmodel:
             #allparameters[nqind:nqind+nms] = np.dot(psr.tmpConvi, allparameters[nqind:nqind+nms])
             ksi.append(allparameters[nqind:nqind+nms])
             ntot += nms
             nqind += nms
+            lqp += nms
         if 'rednoise' in likob.gibbsmodel:
             a.append(allparameters[nqind:nqind+nfs])
             ntot += nfs
             nqind += nfs
+            lqp += nfs
         if 'dm' in likob.gibbsmodel:
             d.append(allparameters[nqind:nqind+nfdms])
             ntot += nfdms
             nqind += nfdms
+            lqp += nfdms
         if 'jitter' in likob.gibbsmodel:
             j.append(allparameters[nqind:nqind+npus])
             ntot += npus
             nqind += npus
 
         # Calculate the quadratic parameter subtracted residuals
-        psr.gibbsresiduals = likob.gibbs_get_custom_subresiduals(ii, psr.Zmask_N)
+        psr.gibbsresiduals = np.dot(psr.Zmat[:,:lqp], likob.gibbs_current_a[ii][:lqp])
         psr.gibbssubresiduals = psr.detresiduals - psr.gibbsresiduals
-        #gibbscoefficients = allparameters[quadparind:quadparind+ntot]
-        #psr.gibbssubresiduals = np.dot(psr.Zmat, gibbscoefficients)
-        #psr.gibbsresiduals = psr.detresiduals - psr.gibbssubresiduals
 
         quadparind += ntot
 
@@ -669,15 +670,6 @@ def gibbs_logprior(likob, allparameters):
 
     return logpr
 
-def gibbs_logposterior(likob, allparameters):
-    """
-    Include the prior on the model parameters (from signals). Do not include a
-    prior for the quadratic (Gibbs) parameters.
-    """
-
-    return  gibbs_logprior(likob, allparameters) + \
-            gibbs_loglikelihood(likob, allparameters)
-
 class gibbs_likob_class(object):
     """
     Tiny class, that allow the Gibbs likelihood to be sampled.
@@ -690,7 +682,8 @@ class gibbs_likob_class(object):
         return gibbs_logprior(self.likob, pars)
 
     def loglikelihood(self, pars):
-        return gibbs_loglikelihood(self.likob, pars)
+        return likob.gibbs_full_loglikelihood(pars)
+        #return gibbs_loglikelihood(self.likob, pars)
 
     def logposterior(self, pars):
         return self.logprior(pars) + self.loglikelihood(pars)

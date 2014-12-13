@@ -8753,8 +8753,10 @@ class ptaLikelihood(object):
                 nqind += npus
 
             # Calculate the quadratic parameter subtracted residuals
-            zmask = np.array([1]*psr.Zmat.shape[1], dtype=np.bool)
-            self.gibbsresiduals = self.gibbs_get_custom_subresiduals(ii, zmask)
+            #zmask = np.array([1]*psr.Zmat.shape[1], dtype=np.bool)
+            #self.gibbsresiduals = self.gibbs_get_custom_subresiduals(ii, zmask)
+            self.gibbsresiduals = psr.detresiduals - \
+                    np.dot(psr.Zmat, self.gibbs_current_a[ii])
 
             quadparind += ntot
 
