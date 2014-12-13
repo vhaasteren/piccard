@@ -1028,7 +1028,7 @@ class ptaPulsar(object):
 
         # dmask is the mask for the design matrix part (in case we have
         # non-linear analysis, or Gibbs sampling with specialized conditionals)
-        dmask = self.getMmas(which=which)
+        dmask = self.getMmask(which=which)
 
         if which in ['F', 'B']:
             #dmask = self.Mmask_F
