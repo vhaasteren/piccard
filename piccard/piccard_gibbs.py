@@ -682,7 +682,7 @@ class gibbs_likob_class(object):
         return gibbs_logprior(self.likob, pars)
 
     def loglikelihood(self, pars):
-        return likob.gibbs_full_loglikelihood(pars)
+        return self.likob.gibbs_full_loglikelihood(pars)
         #return gibbs_loglikelihood(self.likob, pars)
 
     def logposterior(self, pars):
@@ -2978,6 +2978,8 @@ def RunGibbsMCMC(likob, steps, chainsdir, covfile=None, burnin=10000,
             gl.logprior, cov=cov, outDir=chainsdir, verbose=True)
 
     sampler.sample(p0, steps, thin=thin, burn=burnin)
+
+    return sampler
 
 
 

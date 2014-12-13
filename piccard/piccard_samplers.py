@@ -2345,6 +2345,8 @@ def RunPTMCMC(likob, steps, chainsdir, covfile=None, burnin=10000):
 
     sampler.sample(p0, steps, thin=1, burn=burnin)
 
+    return sampler
+
 """
 Obtain the MCMC chain as a numpy array, and a list of parameter indices
 
