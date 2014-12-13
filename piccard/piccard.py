@@ -995,7 +995,7 @@ class ptaPulsar(object):
         @return:    Which columns of the design matrix are included in the
                     conditional that marginalises over the partial design matrix
         """
-        if which == 'F':
+        if which in ['F', 'B']:
             mask = self.Mmask_F
         elif which == 'D':
             mask = self.Mmask_D
@@ -1003,6 +1003,8 @@ class ptaPulsar(object):
             mask = self.Mmask_U
         elif which == 'M':
             mask = self.Mmask_M
+        elif which in ['all', 'N']:
+            mask = np.array([1]*self.Mmat_g.shape[1], dtype=np.bool)
         else:
             mask = np.array([1]*self.Mmat_g.shape[1], dtype=np.bool)
         
@@ -1026,28 +1028,11 @@ class ptaPulsar(object):
 
         # dmask is the mask for the design matrix part (in case we have
         # non-linear analysis, or Gibbs sampling with specialized conditionals)
+        dmask = self.getMmas(which=which)
+
         if which in ['F', 'B']:
-            dmask = self.Mmask_F
-        elif which == 'D':
-            dmask = self.Mmask_D
-        elif which == 'U':
-            dmask = self.Mmask_U
-        elif which == 'M':
-            #dmask = np.array([1]*self.Mmat_g.shape[1], dtype=np.bool)
-            #if 'rednoise' in gibbsmodel:
-            #    dmask = np.logical_and(dmask, \
-            #            np.logical_not(self.Mmask_F))
-            #if 'dm' in gibbsmodel:
-            #    dmask = np.logical_and(dmask, \
-            #            np.logical_not(self.Mmask_D))
-            #if 'jitter' in gibbsmodel:
-            #    dmask = np.logical_and(dmask, \
-            #            np.logical_not(self.Mmask_U))
-            dmask = self.Mmask_M
-        elif which in ['all', 'N']:
-            dmask = np.array([1]*self.Mmat_g.shape[1], dtype=np.bool)
-        else: # Just select all...
-            dmask = np.array([1]*self.Mmat_g.shape[1], dtype=np.bool)
+            #dmask = self.Mmask_F
+            dmask = self.getMmask(which='M')
 
         if 'design' in gibbsmodel:
             Ft_1 = self.Mmat_g[:, dmask]
