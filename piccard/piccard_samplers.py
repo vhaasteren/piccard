@@ -2324,7 +2324,7 @@ def RunDNest(likob, mcmcFile=None, numParticles=1, newLevelInterval=500,\
 """
 Run a generic PTMCMC algorithm.
 """
-def RunPTMCMC(likob, steps, chainsdir, covfile=None, burnin=10000):
+def RunPTMCMC(likob, steps, chainsdir, covfile=None, burnin=10000, resume=False):
     # Save the parameters to file
     likob.saveModelParameters(chainsdir + '/ptparameters.txt')
     likob.saveResiduals(chainsdir)
@@ -2341,7 +2341,7 @@ def RunPTMCMC(likob, steps, chainsdir, covfile=None, burnin=10000):
 
 
     sampler = ptmcmc.PTSampler(ndim, likob.loglikelihood, likob.logprior, cov=cov, \
-            outDir=chainsdir, verbose=True)
+            outDir=chainsdir, verbose=True, newFileOrder=False, resume=resume)
 
     sampler.sample(p0, steps, thin=1, burn=burnin)
 

@@ -109,7 +109,7 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False, \
                 likob.gibbs_psr_noise_loglikelihood, \
                 likob.gibbs_psr_noise_logprior, \
                 cov=psrNcov, outDir='./gibbs-chains-N/', \
-                verbose=False, nowrite=True, \
+                verbose=False, nowrite=True, newFileOrder=False, \
                 loglargs=[pp, Nmask, apars, True, 0], \
                 logpargs=[pp, Nmask, apars, True, 0]))
             sampler_N_info.append(dict({"singleChain":Nmult*Ndim, \
@@ -134,7 +134,7 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False, \
                     likob.gibbs_psr_DM_loglikelihood_mar, \
                     likob.gibbs_psr_DM_logprior, \
                     cov=psrDcov, outDir='./gibbs-chains-D/', \
-                    verbose=False, nowrite=True, \
+                    verbose=False, nowrite=True, newFileOrder=False, \
                     loglargs=[pp, Dmask, apars], \
                     logpargs=[pp, Dmask, apars]))
                 sampler_D_info.append(dict({"singleChain":Dmult*Ddim, \
@@ -156,7 +156,7 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False, \
                     likob.gibbs_Phi_loglikelihood_mar, \
                     likob.gibbs_Phi_logprior, \
                     cov=Fcov, outDir='./gibbs-chains-F/', \
-                    verbose=False, nowrite=True, \
+                    verbose=False, nowrite=True, newFileOrder=False, \
                     loglargs=[Fmask, apars], \
                     logpargs=[Fmask, apars])
             sampler_F_info = dict({"singleChain":Fmult, \
@@ -762,7 +762,7 @@ class pulsarNoiseLL(object):
         cov = np.diag(self.pwidth**2)
         self.sampler = ptmcmc.PTSampler(ndim, self.loglikelihood, \
                 self.logprior, cov=cov, outDir='./gibbs-chains/', \
-                verbose=False, nowrite=True)
+                verbose=False, nowrite=True, newFileOrder=False)
 
         self.singleChain = singleChain
         self.fullChain = fullChain
@@ -964,7 +964,7 @@ class pulsarJNoiseLL(object):
         cov = np.diag(self.pwidth**2)
         self.sampler = ptmcmc.PTSampler(ndim, self.loglikelihood, \
                 self.logprior, cov=cov, outDir='./gibbs-chains/', \
-                verbose=False, nowrite=True)
+                verbose=False, nowrite=True, newFileOrder=False)
 
         self.singleChain = singleChain
         self.fullChain = fullChain
@@ -1142,7 +1142,7 @@ class pulsarPSDLL(object):
         cov = np.diag(self.pwidth[self.bvary]**2)
         self.sampler = ptmcmc.PTSampler(ndim, self.loglikelihood, \
                 self.logprior, cov=cov, outDir='./gibbs-chains/', \
-                verbose=False, nowrite=True)
+                verbose=False, nowrite=True, newFileOrder=False)
 
         self.singleChain = singleChain
         self.fullChain = fullChain
@@ -1303,7 +1303,7 @@ class corrPSDLL(object):
         cov = np.diag(self.pwidth[self.bvary]**2)
         self.sampler = ptmcmc.PTSampler(ndim, self.loglikelihood, \
                 self.logprior, cov=cov, outDir='./gibbs-chains/', \
-                verbose=False, nowrite=True)
+                verbose=False, nowrite=True, newFileOrder=False)
 
         self.singleChain = singleChain
         self.fullChain = fullChain
@@ -1514,7 +1514,7 @@ class implicitPSDLL(object):
         cov = np.diag(self.pwidth[self.bvary]**2)
         self.sampler = ptmcmc.PTSampler(ndim, self.loglikelihood, \
                 self.logprior, cov=cov, outDir='./gibbs-chains/', \
-                verbose=False, nowrite=True)
+                verbose=False, nowrite=True, newFileOrder=False)
 
         self.singleChain = singleChain
         self.fullChain = fullChain
@@ -1727,7 +1727,7 @@ class pulsarDetLL(object):
         cov = np.diag(self.pwidth[self.bvary]**2)
         self.sampler = ptmcmc.PTSampler(ndim, self.loglikelihood, \
                 self.logprior, cov=cov, outDir='./gibbs-chains/', \
-                verbose=False, nowrite=True)
+                verbose=False, nowrite=True, newFileOrder=False)
 
         self.singleChain = singleChain
         self.fullChain = fullChain
@@ -2975,7 +2975,8 @@ def RunGibbsMCMC(likob, steps, chainsdir, covfile=None, burnin=10000,
     gl = gibbs_likob_class(likob)
 
     sampler = ptmcmc.PTSampler(ndim + ncoeffs, gl.loglikelihood, \
-            gl.logprior, cov=cov, outDir=chainsdir, verbose=True)
+            gl.logprior, cov=cov, outDir=chainsdir, verbose=True, \
+            newFileOrder=False)
 
     sampler.sample(p0, steps, thin=thin, burn=burnin)
 
