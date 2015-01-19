@@ -9196,9 +9196,9 @@ class ptaLikelihood(object):
             if "prior" in m2signal:
                 if m2signal["prior"] == 'linear' and m2signal['stype'] != 'spectrum':
                     # The prior has been set
-                    lp += parameters[m2signal['parindex']]
+                    lp += np.log(10)*parameters[m2signal['parindex']]
                 elif m2signal["prior"] == 'linear':
-                    lp += np.sum(parameters[m2signal['parindex']:m2signal['parindex']+m2signal['npars']])
+                    lp += np.log(10)*np.sum(parameters[m2signal['parindex']:m2signal['parindex']+m2signal['npars']])
             elif m2signal['stype'] == 'powerlaw' and m2signal['corr'] == 'anisotropicgwb':
                 nclm = m2signal['aniCorr'].clmlength()
                 # lp += parameters[m2signal['parindex']]
@@ -9212,8 +9212,8 @@ class ptaLikelihood(object):
                 clm = sparameters[m2signal['ntotpars']-nclm:m2signal['ntotpars']]
                 if m2signal['aniCorr'].priorIndicator(clm) == False:
                     lp -= 1e99
-            elif m2signal['stype'] == 'powerlaw' and m2signal['corr'] != 'single':
-                lp += parameters[m2signal['parindex']]
+            #elif m2signal['stype'] == 'powerlaw' and m2signal['corr'] != 'single':
+            #    lp += parameters[m2signal['parindex']]
             elif m2signal['stype'] == 'spectrum' and m2signal['corr'] == 'anisotropicgwb':
                 nclm = m2signal['aniCorr'].clmlength()
                 sparameters = m2signal['pstart'].copy()
@@ -9227,8 +9227,8 @@ class ptaLikelihood(object):
 
                 if m2signal['aniCorr'].priorIndicator(clm) == False:
                     lp -= 1e99
-            elif m2signal['stype'] == 'spectrum' and m2signal['corr'] != 'single':
-                lp += np.sum(parameters[m2signal['parindex']:m2signal['parindex']+m2signal['npars']])
+            #elif m2signal['stype'] == 'spectrum' and m2signal['corr'] != 'single':
+            #    lp += np.sum(parameters[m2signal['parindex']:m2signal['parindex']+m2signal['npars']])
 
             # Divide by the prior range
             if np.sum(m2signal['bvary']) > 0:
