@@ -151,6 +151,7 @@ class ptaPulsar(object):
         self.GGr = None
         self.GtF = None
         self.GtD = None
+        self.FBmats = np.array([])
 
         self.Zmat = None         # For the Gibbs sampling, this is the Fmat/Emat
         self.Zmat_M = None       # For the Gibbs sampling, this is the Fmat/Emat
