@@ -38,6 +38,13 @@ try:    # If MultiNest is not installed, do not use it
 except ImportError:
     pymultinest = None
 
+try:    # If MultiNest is not installed, do not use it
+    import pypolychord
+
+    pypolychord = pypolychord
+except ImportError:
+    pypolychord = None
+
 
 
 
@@ -2318,6 +2325,28 @@ def RunDNest(likob, mcmcFile=None, numParticles=1, newLevelInterval=500,\
 
     pydnest.dnestresults()
 
+def RunPolyChord(likob, chainroot, n_live_points=500, n_chords=1):
+    """
+    Run a PolyChord algorithm on the likelihood
+    Implementation from "PyPolyChord"
+
+    """
+    # Save the parameters to file
+    likob.saveModelParameters(chainroot + 'post_equal_weights.dat.mnparameters.txt')
+
+    ndim = likob.dimensions
+    prior_array = np.append(likob.pmin, likob.pmax)
+
+    if pypolychord is None:
+        raise ImportError("pypolychord")
+
+    def loglike(ndim, theta, phi):
+        return likob.loglikelihood(theta)
+
+
+    pypolychord.run(loglike, ndim, prior_array, n_live_points, n_chords, chainroot)
+
+    sys.stdout.flush()
 
 
 

@@ -31,7 +31,7 @@ setup(
                     + "Changelog\n"
                     + "---------\n\n"
                     + open("HISTORY.md").read(),
-    package_data={"": ["LICENSE", "AUTHORS.md"]},
+    package_data={"": ["README", "LICENSE", "AUTHORS.md"]},
     include_package_data=True,
     install_requires=["numpy", "scipy", "h5py"],
     classifiers=[
