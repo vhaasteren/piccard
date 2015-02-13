@@ -3010,19 +3010,21 @@ class ptaLikelihood(object):
     @param stype:   The signal type that must be matched
     @param corr:    Signal correlation that must be matched
     @param psrind:  Pulsar index that must be matched (-2 means all)
+    @param flag:    (flagname, flagval) that must be matched
 
     @return:        Index array with signals that qualify
     """
     def getSignalNumbersFromDict(self, signals, stype='powerlaw', \
-            corr='single', psrind=-2):
+            corr='single', psrind=-2, flag=None):
         signalNumbers = []
 
         for ii, signal in enumerate(signals):
             if signal['stype'] == stype and signal['corr'] == corr:
-                if psrind == -2:
-                    signalNumbers.append(ii)
-                elif signal['pulsarind'] == psrind:
-                    signalNumbers.append(ii)
+                if psrind == -2 or signal['pulsarind'] == psrind:
+                    if flag is None or \
+                            (flag[0] == signal['flagname'] and \
+                            flag[1] == signal['flagvalue']):
+                        signalNumbers.append(ii)
 
         return np.array(signalNumbers, dtype=np.int)
 

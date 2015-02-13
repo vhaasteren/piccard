@@ -2332,7 +2332,7 @@ def RunPolyChord(likob, chainroot, n_live_points=500, n_chords=1):
 
     """
     # Save the parameters to file
-    likob.saveModelParameters(chainroot + 'post_equal_weights.dat.mnparameters.txt')
+    likob.saveModelParameters(chainroot + '.dat.pcparameters.txt')
 
     ndim = likob.dimensions
     prior_array = np.append(likob.pmin, likob.pmax)

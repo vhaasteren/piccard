@@ -197,6 +197,42 @@ def cython_block_shermor_2D( \
 
     return Jldet, zNz
 
+# Proposals for calculating the Z.T * N^-1 * Z2 combinations
+def python_block_shermor_2D_asymm(Z, Z2, Nvec, Jvec, Uinds):
+    """
+    Sherman-Morrison block-inversion for Jitter, ZNiZ
+
+    @param Z:       The design matrix, array (n x m)
+    @param Z2:      The second design matrix, array (n x m2)
+    @param Nvec:    The white noise amplitude, array (n)
+    @param Jvec:    The jitter amplitude, array (k)
+    @param Uinds:   The start/finish indices for the jitter blocks (k x 2)
+
+    For this version, the residuals need to be sorted properly so that all the
+    blocks are continuous in memory. Here, there are n residuals, and k jitter
+    parameters.
+    
+    N = D + U*J*U.T
+    calculate: log(det(N)), Z.T * N^-1 * Z
+    """
+    ni = 1.0 / Nvec
+    Jldet = np.einsum('i->', np.log(Nvec))
+    zNz = np.dot(Z.T*ni, Z2)
+
+    for cc, jv in enumerate(Jvec):
+        if jv > 0.0:
+            Zblock = Z[Uinds[cc,0]:Uinds[cc,1], :]
+            Zblock2 = Z2[Uinds[cc,0]:Uinds[cc,1], :]
+            niblock = ni[Uinds[cc,0]:Uinds[cc,1]]
+
+            beta = 1.0 / (np.einsum('i->', niblock)+1.0/jv)
+            zn = np.dot(niblock, Zblock)
+            zn2 = np.dot(niblock, Zblock2)
+            zNz -= beta * np.outer(zn.T, zn2)
+            Jldet += np.log(jv) - np.log(beta)
+
+    return Jldet, zNz
+
 def python_draw_ecor(r, Nvec, Jvec, Uinds):
     """
     Given Jvec, draw new epoch-averaged residuals
