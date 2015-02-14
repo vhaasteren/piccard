@@ -172,7 +172,7 @@ class PTSampler(object):
         # set up output file
         self.fname = self.outDir + '/chain_{0}.txt'.format(self.temp)
         self.resumeLength = 0
-        if self.resume and os.path.isfile(self.fname):
+        if self.resume and os.path.isfile(self.fname) and not self.nowrite:
             if self.verbose:
                 print 'Resuming run from chain file {0}'.format(self.fname)
             try:
@@ -184,9 +184,11 @@ class PTSampler(object):
                 self.resumechain = np.loadtxt(self.fname)
                 self.resumeLength = self.resumechain.shape[0]
             self._chainfile = open(self.fname, 'a')
-        else:
+        elif not self.nowrite:
             self._chainfile = open(self.fname, 'w')
-        self._chainfile.close()
+
+        if not self.nowrite:
+            self._chainfile.close()
 
     
     def updateChains(self, p0, lnlike0, lnprob0, iter):
