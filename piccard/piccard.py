@@ -198,7 +198,7 @@ class ptaPulsar(object):
     def readFromH5_old(self, h5df, psrname):
         h5df.readPulsar_old(self, psrname)
 
-    def readFromH5(self, h5df, psrname, sort=None):
+    def readFromH5(self, h5df, psrname, sort='jitterext'):
         """
         Read the pulsar data (TOAs, residuals, design matrix, etc..) from an
         HDF5 file
@@ -2567,7 +2567,7 @@ class ptaLikelihood(object):
                         (None, 'time', 'jitterext'. Need jitterext for fast
                         jitter)
     """
-    def initFromFile(self, filename, pulsars='all', append=False, sort=None):
+    def initFromFile(self, filename, pulsars='all', append=False, sort='jitterext'):
         # Retrieve the pulsar list
         self.h5df = DataFile(filename)
         psrnames = self.h5df.getPulsarList()

@@ -148,7 +148,7 @@ class PTSampler(object):
         # set up covariance matrix and DE buffers
         # TODO: better way of allocating this to save memory
         if self.MPIrank == 0:
-            self._AMbuffer = np.zeros((self.Niter, self.ndim))
+            self._AMbuffer = np.zeros((maxIter, self.ndim))
             self._DEbuffer = np.zeros((self.burn, self.ndim))
 
         ### setup default jump proposal distributions ###
