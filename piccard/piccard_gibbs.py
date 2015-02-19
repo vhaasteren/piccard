@@ -981,20 +981,29 @@ class pulsarJNoiseLL(object):
 
         @return:    New/latest value in parameter space
         """
-        # Run the sampler for a small minichain
-        self.sampler.sample(p0, self.curStep+self.singleChain, \
-                maxIter=self.fullChain, covUpdate=self.covUpdate, \
-                burn=self.covUpdate, i0=self.curStep, thin=1)
+        # First run the sampler for a small minichain
+        if self.curStep == 0:
+            self.sampler.sample(p0, self.curStep+self.singleChain, \
+                    maxIter=self.fullChain, covUpdate=self.covUpdate, \
+                    burn=self.covUpdate, i0=self.curStep, thin=1)
+        else:
+            # Re-calculate the likelihood, because we have a new set of other
+            # parameters
+            lnlike0 = self.loglikelihood(p0)
+            lnprob0 = lnlike0 + self.logprior(p0)
+            for iter in range(self.curStep, self.curStep+self.singleChain):
+                p0, lnlike0, lnprob0 = self.sampler.PTMCMCOneStep(p0, lnlike0, lnprob0, iter)
 
+        # Update our current position
         self.curStep += self.singleChain
         retPos = self.sampler._chain[self.curStep-1, :].copy()
 
         # Subtract the mean off of the just-created samples. And because
         # covUpdate is supposed to be a multiple of singleChain, this will not
         # mess up the Adaptive Metropolis shizzle
-        self.sampler._chain[self.curStep-self.singleChain:self.curStep, :] = \
-                self.sampler._chain[self.curStep-self.singleChain:self.curStep, :] - \
-                np.mean(self.sampler._chain[self.curStep-self.singleChain:self.curStep, :])
+        #self.sampler._chain[self.curStep-self.singleChain:self.curStep, :] = \
+        #        self.sampler._chain[self.curStep-self.singleChain:self.curStep, :] - \
+        #        np.mean(self.sampler._chain[self.curStep-self.singleChain:self.curStep, :])
 
         # Check whether we're almost at the end of the chain
         if self.fullChain - self.curStep <= self.covUpdate:
