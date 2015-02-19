@@ -91,7 +91,7 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False, \
     sampler_F = None        # Red noise (full array, b/c correlations)
     sampler_F_info = \
             dict({"singleChain":0, "fullChain":0, \
-                    "curStep":1, "covUpdate":0})      # Dict with info
+                    "curStep":0, "covUpdate":0})      # Dict with info
     sampler_D = []          # DM variations (per pulsar)
     sampler_D_info = []     # Dict with info on samplers
     for pp, psr in enumerate(likob.ptapsrs):
@@ -113,7 +113,7 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False, \
                 loglargs=[pp, Nmask, apars, True, 0], \
                 logpargs=[pp, Nmask, apars, True, 0]))
             sampler_N_info.append(dict({"singleChain":Nmult*Ndim, \
-                    "fullChain":Ndim*Nmult*2000, "curStep":1, \
+                    "fullChain":Ndim*Nmult*2000, "curStep":0, \
                     "covUpdate":200*Ndim*Nmult}))
         else:
             sampler_N.append(None)
@@ -138,7 +138,7 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False, \
                     loglargs=[pp, Dmask, apars], \
                     logpargs=[pp, Dmask, apars]))
                 sampler_D_info.append(dict({"singleChain":Dmult*Ddim, \
-                        "fullChain":Ddim*Dmult*2000, "curStep":1, \
+                        "fullChain":Ddim*Dmult*2000, "curStep":0, \
                         "covUpdate":200*Dmult*Ddim}))
             else:
                 sampler_D.append(None)
@@ -160,7 +160,7 @@ def RunGibbs_mark2(likob, steps, chainsdir, noWrite=False, \
                     loglargs=[Fmask, apars], \
                     logpargs=[Fmask, apars])
             sampler_F_info = dict({"singleChain":Fmult, \
-                    "fullChain":Fdim*Fmult*2000, "curStep":1, \
+                    "fullChain":Fdim*Fmult*2000, "curStep":0, \
                     "covUpdate":200*Fmult*Fdim})
         else:
             sampler_F = None
@@ -414,9 +414,19 @@ def gibbs_runSampler(p0, sampler, sampler_dict):
         covUpdate = sampler_dict["covUpdate"]
 
         # Run the sampler for a small minichain
-        sampler.sample(p0, curStep+singleChain, \
-                maxIter=fullChain, covUpdate=covUpdate, \
-                burn=covUpdate, i0=curStep-1, thin=1)
+        if curStep == 0:
+            sampler.sample(p0, curStep+singleChain, \
+                    maxIter=fullChain, covUpdate=covUpdate, \
+                    burn=covUpdate, i0=curStep, thin=1)
+        else:
+            lnlike0 = sampler.logl(p0)
+            lnprob0 = lnlike0 + sampler.logp(p0)
+
+            for iter in range(curStep, curStep+singleChain):
+                p0, lnlike0, lnprob0 = sampler.PTMCMCOneStep(p0, lnlike0, lnprob0, iter)
+        #sampler.sample(p0, curStep+singleChain, \
+        #        maxIter=fullChain, covUpdate=covUpdate, \
+        #        burn=covUpdate, i0=curStep-1, thin=1)
 
         curStep += singleChain
         retPos = sampler._chain[curStep-1, :].copy()
@@ -781,9 +791,17 @@ class pulsarNoiseLL(object):
         """
 
         # Run the sampler for a small minichain
-        self.sampler.sample(p0, self.curStep+self.singleChain, \
-                maxIter=self.fullChain, covUpdate=self.covUpdate, \
-                burn=self.covUpdate, i0=self.curStep, thin=1)
+        if self.curStep == 0:
+            self.sampler.sample(p0, self.curStep+self.singleChain, \
+                    maxIter=self.fullChain, covUpdate=self.covUpdate, \
+                    burn=self.covUpdate, i0=self.curStep, thin=1)
+        else:
+            # Re-calculate the likelihood, because we have a new set of other
+            # parameters
+            lnlike0 = self.loglikelihood(p0)
+            lnprob0 = lnlike0 + self.logprior(p0)
+            for iter in range(self.curStep, self.curStep+self.singleChain):
+                p0, lnlike0, lnprob0 = self.sampler.PTMCMCOneStep(p0, lnlike0, lnprob0, iter)
 
         self.curStep += self.singleChain
         retPos = self.sampler._chain[self.curStep-1, :].copy()
@@ -1169,10 +1187,18 @@ class pulsarPSDLL(object):
 
         @return:    New/latest value in parameter space
         """
-        # Run the sampler for a small minichain
-        self.sampler.sample(p0, self.curStep+self.singleChain, \
-                maxIter=self.fullChain, covUpdate=self.covUpdate, \
-                burn=self.covUpdate, i0=self.curStep, thin=1)
+        # First run the sampler for a small minichain
+        if self.curStep == 0:
+            self.sampler.sample(p0, self.curStep+self.singleChain, \
+                    maxIter=self.fullChain, covUpdate=self.covUpdate, \
+                    burn=self.covUpdate, i0=self.curStep, thin=1)
+        else:
+            # Re-calculate the likelihood, because we have a new set of other
+            # parameters
+            lnlike0 = self.loglikelihood(p0)
+            lnprob0 = lnlike0 + self.logprior(p0)
+            for iter in range(self.curStep, self.curStep+self.singleChain):
+                p0, lnlike0, lnprob0 = self.sampler.PTMCMCOneStep(p0, lnlike0, lnprob0, iter)
 
         self.curStep += self.singleChain
         retPos = self.sampler._chain[self.curStep-1, :].copy()
@@ -1330,10 +1356,18 @@ class corrPSDLL(object):
         @return:    New/latest value in parameter space
         """
 
-        # Run the sampler for a small minichain
-        self.sampler.sample(p0, self.curStep+self.singleChain, \
-                maxIter=self.fullChain, covUpdate=self.covUpdate, \
-                burn=self.covUpdate, i0=self.curStep, thin=1)
+        # First run the sampler for a small minichain
+        if self.curStep == 0:
+            self.sampler.sample(p0, self.curStep+self.singleChain, \
+                    maxIter=self.fullChain, covUpdate=self.covUpdate, \
+                    burn=self.covUpdate, i0=self.curStep, thin=1)
+        else:
+            # Re-calculate the likelihood, because we have a new set of other
+            # parameters
+            lnlike0 = self.loglikelihood(p0)
+            lnprob0 = lnlike0 + self.logprior(p0)
+            for iter in range(self.curStep, self.curStep+self.singleChain):
+                p0, lnlike0, lnprob0 = self.sampler.PTMCMCOneStep(p0, lnlike0, lnprob0, iter)
 
         self.curStep += self.singleChain
         retPos = self.sampler._chain[self.curStep-1, :].copy()
@@ -1541,10 +1575,18 @@ class implicitPSDLL(object):
         @return:    New/latest value in parameter space
         """
 
-        # Run the sampler for a small minichain
-        self.sampler.sample(p0, self.curStep+self.singleChain, \
-                maxIter=self.fullChain, covUpdate=self.covUpdate, \
-                burn=self.covUpdate, i0=self.curStep, thin=1)
+        # First run the sampler for a small minichain
+        if self.curStep == 0:
+            self.sampler.sample(p0, self.curStep+self.singleChain, \
+                    maxIter=self.fullChain, covUpdate=self.covUpdate, \
+                    burn=self.covUpdate, i0=self.curStep, thin=1)
+        else:
+            # Re-calculate the likelihood, because we have a new set of other
+            # parameters
+            lnlike0 = self.loglikelihood(p0)
+            lnprob0 = lnlike0 + self.logprior(p0)
+            for iter in range(self.curStep, self.curStep+self.singleChain):
+                p0, lnlike0, lnprob0 = self.sampler.PTMCMCOneStep(p0, lnlike0, lnprob0, iter)
 
         self.curStep += self.singleChain
         retPos = self.sampler._chain[self.curStep-1, :].copy()
@@ -1755,10 +1797,18 @@ class pulsarDetLL(object):
         @return:    New/latest value in parameter space
         """
 
-        # Run the sampler for a small minichain
-        self.sampler.sample(p0, self.curStep+self.singleChain, \
-                maxIter=self.fullChain, covUpdate=self.covUpdate, \
-                burn=self.covUpdate, i0=self.curStep, thin=1)
+        # First run the sampler for a small minichain
+        if self.curStep == 0:
+            self.sampler.sample(p0, self.curStep+self.singleChain, \
+                    maxIter=self.fullChain, covUpdate=self.covUpdate, \
+                    burn=self.covUpdate, i0=self.curStep, thin=1)
+        else:
+            # Re-calculate the likelihood, because we have a new set of other
+            # parameters
+            lnlike0 = self.loglikelihood(p0)
+            lnprob0 = lnlike0 + self.logprior(p0)
+            for iter in range(self.curStep, self.curStep+self.singleChain):
+                p0, lnlike0, lnprob0 = self.sampler.PTMCMCOneStep(p0, lnlike0, lnprob0, iter)
 
         self.curStep += self.singleChain
         retPos = self.sampler._chain[self.curStep-1, :].copy()
