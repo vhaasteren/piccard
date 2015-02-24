@@ -3272,7 +3272,7 @@ class ptaLikelihood(object):
             Tmax=None, \
             incRedNoise=False, noiseModel='powerlaw', fc=None, \
             bandRedNoise=None, bandNoiseModel='blpowerlaw', \
-            noisePrior='flatlog', \
+            noisePrior='flatlog', dmPrior='flatlog', \
             incDM=False, dmModel='powerlaw', \
             incClock=False, clockModel='powerlaw', \
             incGWB=False, gwbModel='powerlaw', \
@@ -3352,7 +3352,7 @@ class ptaLikelihood(object):
                         "pmax":[50.0],
                         "pwidth":[0.1],
                         "pstart":[1.0],
-                        "prior":'linear'
+                        "prior":'flat'
                         })
                     signals.append(newsignal)
             else:
@@ -3367,7 +3367,7 @@ class ptaLikelihood(object):
                     "pmax":[50.0],
                     "pwidth":[0.1],
                     "pstart":[1.0],
-                    "prior":'linear'
+                    "prior":'flat'
                     })
                 signals.append(newsignal)
 
@@ -3590,7 +3590,7 @@ class ptaLikelihood(object):
                     "pmax":pmax,
                     "pwidth":pwidth,
                     "pstart":pstart,
-                    "prior":'flatlog'
+                    "prior":dmPrior
                     })
                 signals.append(newsignal)
 
@@ -9196,10 +9196,10 @@ class ptaLikelihood(object):
         # Loop over all signals
         for m2signal in self.ptasignals:
             if "prior" in m2signal:
-                if m2signal["prior"] == 'linear' and m2signal['stype'] != 'spectrum':
+                if m2signal["prior"] in ['linear', 'flat'] and m2signal['stype'] != 'spectrum':
                     # The prior has been set
                     lp += np.log(10)*parameters[m2signal['parindex']]
-                elif m2signal["prior"] == 'linear':
+                elif m2signal["prior"] in ['linear', 'flat']:
                     lp += np.log(10)*np.sum(parameters[m2signal['parindex']:m2signal['parindex']+m2signal['npars']])
             elif m2signal['stype'] == 'powerlaw' and m2signal['corr'] == 'anisotropicgwb':
                 nclm = m2signal['aniCorr'].clmlength()

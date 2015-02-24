@@ -6,6 +6,7 @@ from piccard_pso import *
 from piccard_freqstat import *
 from piccard_gibbs import *
 from resampler import *
+from distsampling import *
 
 __version__ = 2014.12
 

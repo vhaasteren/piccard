@@ -11,6 +11,7 @@ import sys
 from piccard import *
 from piccard_pso import *
 from jitterext import *
+from distsampling import *
 import PTMCMC_generic as ptmcmc
 
 
@@ -1019,9 +1020,9 @@ class pulsarJNoiseLL(object):
         # Subtract the mean off of the just-created samples. And because
         # covUpdate is supposed to be a multiple of singleChain, this will not
         # mess up the Adaptive Metropolis shizzle
-        #self.sampler._chain[self.curStep-self.singleChain:self.curStep, :] = \
-        #        self.sampler._chain[self.curStep-self.singleChain:self.curStep, :] - \
-        #        np.mean(self.sampler._chain[self.curStep-self.singleChain:self.curStep, :])
+        self.sampler._chain[self.curStep-self.singleChain:self.curStep, :] = \
+                self.sampler._chain[self.curStep-self.singleChain:self.curStep, :] - \
+                np.mean(self.sampler._chain[self.curStep-self.singleChain:self.curStep, :])
 
         # Check whether we're almost at the end of the chain
         if self.fullChain - self.curStep <= self.covUpdate:
@@ -2270,19 +2271,17 @@ def gibbs_sample_loglik_Phi_an(likob, a, curpars, ml=False):
                     else:
                         # We can sample directly from this distribution.
                         # Prior domain:
-                        pmin = signal['pmin'][jj]
-                        pmax = signal['pmax'][jj]
-                        rhomin = 10**pmin
-                        rhomax = 10**pmax
                         tau = 0.5*np.sum(a[ii][ntot+2*jj:ntot+2*jj+2]**2)
 
-                        # Draw samples between rhomax and rhomin, according to
-                        # an exponential distribution
-                        scale = 1 - np.exp(tau*(1.0/rhomax-1.0/rhomin))
-                        eta = np.random.rand(1) * scale
-                        rhonew = -tau / (np.log(1-eta)-tau/rhomax)
+                        if signal['prior'] == 'flatlog':
+                            newpars[signal['parindex']+jj] = \
+                                    sample_PSD_jeffreys_an(tau, \
+                                    signal['pmin'][jj], signal['pmax'][jj])
+                        elif signal['prior'] == 'flat':
+                            newpars[signal['parindex']+jj] = \
+                                    sample_PSD_flat_num(tau, \
+                                    signal['pmin'][jj], signal['pmax'][jj])
 
-                        newpars[signal['parindex']+jj] = np.log10(rhonew)
             elif signal['pulsarind'] == ii and signal['stype'] == 'dmspectrum':
                 nms = likob.npm[ii]
                 nfs = likob.npf[ii]
@@ -2303,19 +2302,16 @@ def gibbs_sample_loglik_Phi_an(likob, a, curpars, ml=False):
                     else:
                         # We can sample directly from this distribution.
                         # Prior domain:
-                        pmin = signal['pmin'][jj]
-                        pmax = signal['pmax'][jj]
-                        rhomin = 10**pmin
-                        rhomax = 10**pmax
                         tau = 0.5*np.sum(a[ii][ntot+2*jj:ntot+2*jj+2]**2)
 
-                        # Draw samples between rhomax and rhomin, according to
-                        # an exponential distribution
-                        scale = 1 - np.exp(tau*(1.0/rhomax-1.0/rhomin))
-                        eta = np.random.rand(1) * scale
-                        rhonew = -tau / (np.log(1-eta)-tau/rhomax)
-
-                        newpars[signal['parindex']+jj] = np.log10(rhonew)
+                        if signal['prior'] == 'flatlog':
+                            newpars[signal['parindex']+jj] = \
+                                    sample_PSD_jeffreys_an(tau, \
+                                    signal['pmin'][jj], signal['pmax'][jj])
+                        elif signal['prior'] == 'flat':
+                            newpars[signal['parindex']+jj] = \
+                                    sample_PSD_flat_num(tau, \
+                                    signal['pmin'][jj], signal['pmax'][jj])
 
     return newpars
 
