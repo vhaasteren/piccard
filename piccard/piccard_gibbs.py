@@ -2277,6 +2277,10 @@ def gibbs_sample_loglik_Phi_an(likob, a, curpars, ml=False):
                             newpars[signal['parindex']+jj] = \
                                     sample_PSD_jeffreys_an(tau, \
                                     signal['pmin'][jj], signal['pmax'][jj])
+                        elif signal['prior'] == 'sqrtjeffreys':
+                            newpars[signal['parindex']+jj] = \
+                                    sample_PSD_sqrtjeffreys_num(tau, \
+                                    signal['pmin'][jj], signal['pmax'][jj])
                         elif signal['prior'] == 'flat':
                             newpars[signal['parindex']+jj] = \
                                     sample_PSD_flat_num(tau, \
@@ -2307,6 +2311,10 @@ def gibbs_sample_loglik_Phi_an(likob, a, curpars, ml=False):
                         if signal['prior'] == 'flatlog':
                             newpars[signal['parindex']+jj] = \
                                     sample_PSD_jeffreys_an(tau, \
+                                    signal['pmin'][jj], signal['pmax'][jj])
+                        elif signal['prior'] == 'sqrtjeffreys':
+                            newpars[signal['parindex']+jj] = \
+                                    sample_PSD_sqrtjeffreys_num(tau, \
                                     signal['pmin'][jj], signal['pmax'][jj])
                         elif signal['prior'] == 'flat':
                             newpars[signal['parindex']+jj] = \

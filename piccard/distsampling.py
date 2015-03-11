@@ -128,6 +128,23 @@ def sample_PSD_jeffreys_num(tau, lxmin, lxmax, Ninter=500):
 
     return sample_func_num(Pfa, tau, lxmin, lxmax, Ninter)
 
+def sample_PSD_sqrtjeffreys_num(tau, lxmin, lxmax, Ninter=500):
+    """
+    Sample numerically from the distribution: exp(-tau/x) * tau/x**(3/2)
+    The distribution is truncated outside: 10**lxmin < x < 10**lxmax
+
+    @param tau:     Scaling parameter
+    @param lxmin:   Minimum bound (log10(xmin))
+    @param lxmax:   Maximum bound (log10(xmax))
+    @param Ninter:  Number of interpolation nodes in log(x)
+
+    @return:    log10(x)
+    """
+    def Pfa(alpha, tau):
+        return np.exp(-tau/np.exp(alpha)) / np.exp(0.5*alpha)
+
+    return sample_func_num(Pfa, tau, lxmin, lxmax, Ninter)
+
 def sample_PSD_flat_num(tau, lxmin, lxmax, Ninter=500):
     """
     Sample numerically from the distribution: exp(-tau/x) * tau/x
