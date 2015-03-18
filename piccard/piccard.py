@@ -659,13 +659,14 @@ class ptaPulsar(object):
     @param threshold:   To which fidelity will we compress the basis functions [1.0]
     @param tmpars:      When compressing to a list of timing model parameters,
                         this list of parameters is used.
+    @param complement:  Evaluate the compression complement
     """
     # TODO: selection of timing-model parameters should apply to _all_ forms of
     # compression. Still possible to do frequencies and include timing model
     # parameters, as long as we include the complement function
     def constructCompressionMatrix(self, compression='None', \
             nfmodes=-1, ndmodes=-1, likfunc='mark4', threshold=1.0, \
-            tmpars = None):
+            tmpars = None, complement=False):
         if compression == 'average':
             # To be sure, just construct the averages again. But is already done
             # in 'createPulsarAuxiliaries'
@@ -677,19 +678,20 @@ class ptaPulsar(object):
 
             #"""
             GU = np.dot(self.Gmat.T, self.Umat)
-            GUUG = np.dot(GU, GU.T)
+            #GUUG = np.dot(GU, GU.T)
             #"""
 
             # Construct an orthogonal basis, and singular values
             #svech, Vmath = sl.eigh(GUUG)
-            Vmat, svec, Vhsvd = sl.svd(GUUG)
+            #Vmat, svec, Vhsvd = sl.svd(GUUG)
+            Vmat, svec, Vhsvd = sl.svd(GU, full_matrices=not complement)
 
             # Decide how many basis vectors we'll take. (Would be odd if this is
             # not the number of columns of self.U. How to test? For now, use
             # 99.9% of rms power
-            cumrms = np.cumsum(svec)
-            totrms = np.sum(svec)
-            #print "svec:   ", svec
+            cumrms = np.cumsum(svec**2)
+            totrms = np.sum(svec**2)
+            #print "svec:   ", svec**2
             #print "cumrms: ", cumrms
             #print "totrms: ", totrms
             inds = (cumrms/totrms) >= threshold
@@ -718,9 +720,59 @@ class ptaPulsar(object):
 
             # H is the compression matrix
             Bmat = Vmat[:, :l].copy()
-            Bomat = Vmat[:, l:].copy()
             H = np.dot(self.Gmat, Bmat)
-            Ho = np.dot(self.Gmat, Bomat)
+
+            if complement:
+                Bomat = Vmat[:, l:].copy()
+                Ho = np.dot(self.Gmat, Bomat)
+
+            # Use another SVD to construct not only Hmat, but also Hcmat
+            # We use this version of Hmat, and not H from above, in case of
+            # linear dependences...
+            #svec, Vmat = sl.eigh(H)
+            Vmat, s, Vh = sl.svd(H, full_matrices=not complement)
+            self.Hmat = Vmat[:, :l]
+            self.Hcmat = Vmat[:, l:]
+
+            # For compression-complements, construct Ho and Hoc
+            if complement > 0:
+                Vmat, s, Vh = sl.svd(Ho)
+                self.Homat = Vmat[:, :Ho.shape[1]]
+                self.Hocmat = Vmat[:, Ho.shape[1]:]
+            else:
+                self.Homat = np.zeros((Vmat.shape[0], 0))
+                self.Hocmat = np.eye(Vmat.shape[0])
+
+        elif compression == 'frequencies':
+            # Use a power-law spectrum with spectral-index of 4.33
+            #freqpy = self.Ffreqs * pic_spy
+            #phivec = (pic_spy**3 / (12*np.pi*np.pi * self.Tmax)) * freqpy ** (-4.33)
+            #phivec = (pic_spy**3 / (12*np.pi*np.pi * self.Tmax)) * freqpy ** (-1.00)
+            #GF = np.dot(self.Gmat.T, self.Fmat * phivec)
+
+            GF = np.dot(self.Gmat.T, self.Fmat)
+            #GFFG = np.dot(GF, GF.T)
+            #Vmat, svec, Vhsvd = sl.svd(GFFG)
+            Vmat, svec, Vhsvd = sl.svd(GF, full_matrices=not complement)
+
+            cumrms = np.cumsum(svec**2)
+            totrms = np.sum(svec**2)
+            # print "Freqs: ", cumrms / totrms
+            l = np.flatnonzero( (cumrms/totrms) >= threshold )[0] + 1
+
+            # Use the number of frequencies, instead of a threshold now:
+            l = self.Fmat.shape[1]
+
+            print("Using {0} components for pulsar {1}".format(\
+                    l, self.name))
+
+            # H is the compression matrix
+            Bmat = Vmat[:, :l].copy()
+            H = np.dot(self.Gmat, Bmat)
+
+            if complement:
+                Bomat = Vmat[:, l:].copy()
+                Ho = np.dot(self.Gmat, Bomat)
 
             # Use another SVD to construct not only Hmat, but also Hcmat
             # We use this version of Hmat, and not H from above, in case of
@@ -739,142 +791,6 @@ class ptaPulsar(object):
                 self.Homat = np.zeros((Vmat.shape[0], 0))
                 self.Hocmat = np.eye(Vmat.shape[0])
 
-        elif compression == 'frequencies':
-            # Use a power-law spectrum with spectral-index of 4.33
-            #freqpy = self.Ffreqs * pic_spy
-            #phivec = (pic_spy**3 / (12*np.pi*np.pi * self.Tmax)) * freqpy ** (-4.33)
-            #phivec = (pic_spy**3 / (12*np.pi*np.pi * self.Tmax)) * freqpy ** (-1.00)
-            #GF = np.dot(self.Gmat.T, self.Fmat * phivec)
-
-            GF = np.dot(self.Gmat.T, self.Fmat)
-            GFFG = np.dot(GF, GF.T)
-            Vmat, svec, Vhsvd = sl.svd(GFFG)
-
-            cumrms = np.cumsum(svec)
-            totrms = np.sum(svec)
-            # print "Freqs: ", cumrms / totrms
-            l = np.flatnonzero( (cumrms/totrms) >= threshold )[0] + 1
-
-            # Use the number of frequencies, instead of a threshold now:
-            l = self.Fmat.shape[1]
-
-            print("Using {0} components for pulsar {1}".format(\
-                    l, self.name))
-
-            # H is the compression matrix
-            Bmat = Vmat[:, :l].copy()
-            Bomat = Vmat[:, l:].copy()
-            H = np.dot(self.Gmat, Bmat)
-            Ho = np.dot(self.Gmat, Bomat)
-
-            # Use another SVD to construct not only Hmat, but also Hcmat
-            # We use this version of Hmat, and not H from above, in case of
-            # linear dependences...
-            #svec, Vmat = sl.eigh(H)
-            Vmat, s, Vh = sl.svd(H)
-            self.Hmat = Vmat[:, :l]
-            self.Hcmat = Vmat[:, l:]
-
-            # For compression-complements, construct Ho and Hoc
-            Vmat, s, Vh = sl.svd(Ho)
-            self.Homat = Vmat[:, :Ho.shape[1]]
-            self.Hocmat = Vmat[:, Ho.shape[1]:]
-
-        elif compression == 'dmfrequencies' or compression == 'avefrequencies':
-            print "WARNING: compression on DM frequencies not normalised correctly!"
-
-            Ftot = np.zeros((len(self.toas), 0))
-
-            # Decide on the (dm)frequencies to include
-            if nfmodes == -1:
-                # Include all, and only all, frequency modes
-                #Ftot = np.append(Ftot, self.Fmat, axis=1)
-
-                # Produce an orthogonal basis for the frequencies
-                l = self.Fmat.shape[1]
-                Vmat, svec, Vhsvd = sl.svd(self.Fmat)
-                Ftot = np.append(Ftot, Vmat[:, :l].copy(), axis=1)
-            elif nfmodes == 0:
-                # Why would anyone do this?
-                pass
-            else:
-                # Should we check whether nfmodes is not too large?
-                #Ftot = np.append(Ftot, self.Fmat[:, :nfmodes], axis=1)
-
-                # Produce an orthogonal basis for the frequencies
-                l = nfmodes
-                Vmat, svec, Vhsvd = sl.svd(self.Fmat)
-                Ftot = np.append(Ftot, Vmat[:, :l].copy(), axis=1)
-
-            if ndmodes == -1:
-                # Include all, and only all, frequency modes
-                # Ftot = np.append(Ftot, self.DF, axis=1)
-
-                # Produce an orthogonal basis for the frequencies
-                l = self.DF.shape[1]
-                Vmat, svec, Vhsvd = sl.svd(self.DF)
-                Ftot = np.append(Ftot, Vmat[:, :l].copy(), axis=1)
-            elif ndmodes == 0:
-                # Do not include DM in the compression
-                pass
-            else:
-                # Should we check whether nfmodes is not too large?
-                # Ftot = np.append(Ftot, self.DF[:, :ndmodes], axis=1)
-
-                # Produce an orthogonal basis for the frequencies
-                l = self.DF.shape[1]
-                Vmat, svec, Vhsvd = sl.svd(self.DF)
-                Ftot = np.append(Ftot, Vmat[:, :l].copy(), axis=1)
-
-            if compression == 'avefrequencies':
-                print "WARNING: this type of compression is only for testing purposes"
-
-                # Calculate Umat and Ui
-                (self.avetoas, self.Umat, Ui) = quantize_fast(self.toas, calci=True)
-                print("WARNING: ignoring per-backend epoch averaging in compression")
-                UUi = np.dot(self.Umat, Ui)
-                GF = np.dot(self.Gmat.T, np.dot(UUi, Ftot))
-
-                Wjit = np.sum(self.Umat, axis=0)
-                self.Jweight = np.sum(Wjit * self.Umat, axis=1)
-            else:
-                GF = np.dot(self.Gmat.T, Ftot)
-
-            GFFG = np.dot(GF, GF.T)
-
-            # Construct an orthogonal basis, and singular (eigen) values
-            #svec, Vmat = sl.eigh(GFFG)
-            Vmat, svec, Vhsvd = sl.svd(GFFG)
-
-            # Decide how many basis vectors we'll take.
-            cumrms = np.cumsum(svec)
-            totrms = np.sum(svec)
-            # print "Freqs: ", cumrms / totrms
-            l = np.flatnonzero( (cumrms/totrms) >= threshold )[0] + 1
-            # l = Ftot.shape[1]-8         # This line would cause the threshold to be ignored
-
-            #print "Number of F basis vectors for " + \
-            #        self.name + ": " + str(self.Fmat.shape) + \
-            #        " --> " + str(l)
-
-            # H is the compression matrix
-            Bmat = Vmat[:, :l].copy()
-            Bomat = Vmat[:, l:].copy()
-            H = np.dot(self.Gmat, Bmat)
-            Ho = np.dot(self.Gmat, Bomat)
-
-            # Use another SVD to construct not only Hmat, but also Hcmat
-            # We use this version of Hmat, and not H from above, in case of
-            # linear dependences...
-            #svec, Vmat = sl.eigh(H)
-            Vmat, s, Vh = sl.svd(H)
-            self.Hmat = Vmat[:, :l]
-            self.Hcmat = Vmat[:, l:]
-
-            # For compression-complements, construct Ho and Hoc
-            Vmat, s, Vh = sl.svd(Ho)
-            self.Homat = Vmat[:, :Ho.shape[1]]
-            self.Hocmat = Vmat[:, Ho.shape[1]:]
         elif compression == 'qsd':
             # Only include (DM)QSD in the G-matrix. The other parameters can be
             # handled numerically with 'lineartimingmodel' signals
@@ -1147,13 +1063,15 @@ class ptaPulsar(object):
     @param gibbsmodel:      What coefficients to include in the Gibbs model
     @param trimquant:       Whether to trim the quantization matrix
     @param bandRedNoise:    Frequency bands for band-limited red noise
+    @param complement:  Evaluate the compression complement
 
     """
     def createPulsarAuxiliaries(self, h5df, Tmax, nfreqs, ndmfreqs, \
             twoComponent=False, nSingleFreqs=0, nSingleDMFreqs=0, \
             compression='None', likfunc='mark3', write='likfunc', \
             tmsigpars=None, noGmatWrite=False, threshold=1.0, \
-            gibbsmodel=[], trimquant=False, bandRedNoise=[]):
+            gibbsmodel=[], trimquant=False, bandRedNoise=[], \
+            complement=False):
         # For creating the auxiliaries it does not really matter: we are now
         # creating all quantities per default
         # TODO: set this parameter in another place?
@@ -1251,7 +1169,8 @@ class ptaPulsar(object):
                     if not par in tmsigpars:
                         tmpars += [par]
             self.constructCompressionMatrix(compression, nfmodes=2*nf,
-                    ndmodes=2*ndmf, threshold=threshold, tmpars=tmpars)
+                    ndmodes=2*ndmf, threshold=threshold, tmpars=tmpars,
+                    complement=complement)
             if write != 'no':
                 h5df.addData(self.name, 'pic_Hcmat', self.Hcmat[self.iisort,:])
                 h5df.addData(self.name, 'pic_Gcmat', self.Gcmat[self.iisort,:])
@@ -1347,7 +1266,7 @@ class ptaPulsar(object):
                     h5df.addData(self.name, 'pic_Aomat', self.Aomat)
                     h5df.addData(self.name, 'pic_AoGr', self.AoGr)
 
-        if likfunc == 'mark3' or likfunc == 'mark3fa' or write == 'all':
+        if likfunc in ['mark3', 'mark3fa', 'mark3nc'] or write == 'all':
             self.Gr = np.dot(self.Hmat.T, self.residuals)
             self.GGr = np.dot(self.Hmat, self.Gr)
             self.GtF = np.dot(self.Hmat.T, self.Fmat)
@@ -1964,7 +1883,7 @@ class ptaPulsar(object):
             twoComponent=False, nSingleFreqs=0, nSingleDMFreqs=0, \
             compression='None', likfunc='mark3', \
             evalCompressionComplement=True, memsave=True, noGmat=False, \
-            gibbsmodel=[], bandRedNoise=[]):
+            gibbsmodel=[], bandRedNoise=[], complement=False):
         # TODO: set this parameter in another place?
         if twoComponent:
             self.twoComponentNoise = True
@@ -2070,7 +1989,7 @@ class ptaPulsar(object):
                 dontread=(not self.twoComponentNoise)))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
 
-        if likfunc == 'mark3' or likfunc == 'mark3fa':
+        if likfunc in ['mark3', 'mark3fa', 'mark3nc']:
             self.Hmat = np.array(h5df.getData(self.name, 'pic_Hmat',
                 dontread=memsave, isort=mslice))
             self.Hcmat = np.array(h5df.getData(self.name, 'pic_Hcmat', \
@@ -2343,7 +2262,8 @@ class ptaPulsar(object):
                 #       advanced indexing
                 self.lAGF = self.AGF[:,bf]
 
-                if not likfunc in ['mark1', 'mark2', 'mark3', 'mark3fa', 'mark4', 'mark7', 'mark9']:
+                if not likfunc in ['mark1', 'mark2', 'mark3', 'mark3fa',
+                                    'mark3nc', 'mark4', 'mark7', 'mark9']:
                     self.lAGE = np.append(self.AGE[:,bf], self.AGD[:,bfdm], axis=1)
 
                 if likfunc in ['mark9', 'mark10']:
@@ -2357,7 +2277,8 @@ class ptaPulsar(object):
                 # For mark7
                 self.lFmat = self.Fmat[:,bf]
 
-                if not likfunc in ['mark1', 'mark2', 'mark3', 'mark3fa', 'mark4', 'mark7', 'mark9']:
+                if not likfunc in ['mark1', 'mark2', 'mark3', 'mark3fa',
+                                    'mark3nc', 'mark4', 'mark7', 'mark9']:
                     self.lEmat = np.append(self.Fmat[:,bf], self.DF[:,bfdm], axis=1)
 
                 if likfunc in ['mark9', 'mark10']:
@@ -3090,7 +3011,7 @@ class ptaLikelihood(object):
             if self.likfunc in ['mark10']:
                 self.npffdm[ii] += len(psr.SFdmfreqs)
 
-            if self.likfunc in ['mark1', 'mark2', 'mark3', 'mark3fa', 'mark4', \
+            if self.likfunc in ['mark1', 'mark2', 'mark3', 'mark3fa', 'mark3nc', 'mark4', \
                     'mark4ln', 'mark6', 'mark6fa', 'mark7', 'mark8', 'mark9', \
                     'mark10']:
                 self.npgs[ii] = len(psr.Gr)
@@ -3140,8 +3061,7 @@ class ptaLikelihood(object):
         elif self.likfunc == 'mark2':
             self.GNGldet = np.zeros(npsrs)
             self.rGr = np.zeros(npsrs)
-        elif self.likfunc == 'mark3' or self.likfunc == 'mark7' \
-                or self.likfunc == 'mark3fa':
+        elif self.likfunc in ['mark3', 'mark3fa', 'mark3nc', 'mark7']:
             self.Sigma = np.zeros((np.sum(self.npf), np.sum(self.npf)))
             self.GNGldet = np.zeros(npsrs)
             self.rGr = np.zeros(npsrs)
@@ -4361,7 +4281,8 @@ class ptaLikelihood(object):
                         likfunc=likfunc, compression=compression, \
                         evalCompressionComplement=evalCompressionComplement, \
                         memsave=True, noGmat=noGmatWrite, \
-                        gibbsmodel=self.gibbsmodel, bandRedNoise=bandRedNoise)
+                        gibbsmodel=self.gibbsmodel, bandRedNoise=bandRedNoise, \
+                        complement=self.evallikcomp)
             except (StandardError, ValueError, IOError, RuntimeError) as err:
                 # Create the Auxiliaries ourselves
 
@@ -4384,7 +4305,7 @@ class ptaLikelihood(object):
                                 write='likfunc', tmsigpars=tmsigpars, \
                                 noGmatWrite=noGmatWrite, threshold=threshold, \
                                 gibbsmodel=self.gibbsmodel, trimquant=trimquant, \
-                                bandRedNoise=bandRedNoise)
+                                bandRedNoise=bandRedNoise, complement=self.evallikcomp)
 
             # When selecting Fourier modes, like in mark7/mark8, the binclude vector
             # indicates whether or not a frequency is included in the likelihood. By
@@ -6222,7 +6143,7 @@ class ptaLikelihood(object):
 
         # MARK B
 
-        self.constructPhiAndTheta(parameters)
+        self.constructPhiAndTheta(parameters, make_matrix=(self.likfunc != 'mark3nc'))
 
         # MARK ??
         if self.haveDetSources:
@@ -6316,9 +6237,36 @@ class ptaLikelihood(object):
         # Now that all arrays are filled, we can proceed to do some linear
         # algebra. First we'll invert Phi. For a single pulsar, this will be
         # diagonal
-        if npsrs == 1:
-            PhiLD = np.sum(np.log(np.diag(self.Phi)))
-            Phiinv = np.diag(1.0 / np.diag(self.Phi))
+        if npsrs == 1 or self.likfunc == 'mark3nc':
+            PhiLD = np.sum(np.log(self.Phivec))
+            #Phiinv = np.diag(1.0 / self.Phivec)
+
+            SigmaLD = 0.0
+            rGSigmaGr = 0.0
+
+            for ii, psr in enumerate(self.ptapsrs):
+                findex = np.sum(self.npf[:ii])
+                nfreq = int(self.npf[ii]/2)
+
+                slc = slice(findex, findex+2*nfreq)
+
+                di = np.diag_indices(2*nfreq)
+                Sigma_psr = self.FGGNGGF[slc, slc].copy()# + Phiinv[slc, slc]
+                Sigma_psr[di] += 1.0 / self.Phivec[slc]
+
+                try:
+                    cf = sl.cho_factor(Sigma_psr)
+                    SigmaLD += 2*np.sum(np.log(np.diag(cf[0])))
+                    rGSigmaGr += np.dot(self.rGF[slc], sl.cho_solve(cf, self.rGF[slc]))
+                except np.linalg.LinAlgError:
+                    try:
+                        U, s, Vh = sl.svd(Sigma_psr)
+                        if not np.all(s > 0):
+                            raise ValueError("ERROR: Sigma singular according to SVD")
+                        SigmaLD += np.sum(np.log(s))
+                        rGSigmaGr += np.dot(self.rGF[slc], np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, self.rGF[slc]))))
+                    except np.linalg.LinAlgError:
+                        return -np.inf
         else:
             try:
                 #cf = sl.cho_factor(self.Phi + 1.0e-20*np.eye(self.Phi.shape[0]))
@@ -6339,21 +6287,21 @@ class ptaLikelihood(object):
 
         # MARK E
 
-        # Construct and decompose Sigma
-        self.Sigma = self.FGGNGGF + Phiinv
-        try:
-            cf = sl.cho_factor(self.Sigma)
-            SigmaLD = 2*np.sum(np.log(np.diag(cf[0])))
-            rGSigmaGr = np.dot(self.rGF, sl.cho_solve(cf, self.rGF))
-        except np.linalg.LinAlgError:
+            # Construct and decompose Sigma
+            self.Sigma = self.FGGNGGF + Phiinv
             try:
-                U, s, Vh = sl.svd(self.Sigma)
-                if not np.all(s > 0):
-                    raise ValueError("ERROR: Sigma singular according to SVD")
-                SigmaLD = np.sum(np.log(s))
-                rGSigmaGr = np.dot(self.rGF, np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, self.rGF))))
+                cf = sl.cho_factor(self.Sigma)
+                SigmaLD = 2*np.sum(np.log(np.diag(cf[0])))
+                rGSigmaGr = np.dot(self.rGF, sl.cho_solve(cf, self.rGF))
             except np.linalg.LinAlgError:
-                return -np.inf
+                try:
+                    U, s, Vh = sl.svd(self.Sigma)
+                    if not np.all(s > 0):
+                        raise ValueError("ERROR: Sigma singular according to SVD")
+                    SigmaLD = np.sum(np.log(s))
+                    rGSigmaGr = np.dot(self.rGF, np.dot(Vh.T, np.dot(np.diag(1.0/s), np.dot(U.T, self.rGF))))
+                except np.linalg.LinAlgError:
+                    return -np.inf
 
         # Mark F
         #print np.sum(self.npgs), -0.5*np.sum(self.rGr), -0.5*np.sum(self.GNGldet)
@@ -9155,7 +9103,7 @@ class ptaLikelihood(object):
                 ll = self.mark1loglikelihood(parameters)
             elif self.likfunc == 'mark2':
                 ll = self.mark2loglikelihood(parameters)
-            elif self.likfunc == 'mark3':
+            elif self.likfunc in ['mark3', 'mark3nc']:
                 ll = self.mark3loglikelihood(parameters)
             elif self.likfunc == 'mark3fa':
                 ll = self.mark3faloglikelihood(parameters)
@@ -9335,7 +9283,7 @@ class ptaLikelihood(object):
                 lp = self.mark4logprior(parameters)
             elif self.likfunc == 'mark2':
                 lp = self.mark4logprior(parameters)
-            elif self.likfunc == 'mark3':
+            elif self.likfunc in ['mark3', 'mark3nc']:
                 lp = self.mark4logprior(parameters)
             elif self.likfunc == 'mark3fa':
                 lp = self.mark4logprior(parameters)
