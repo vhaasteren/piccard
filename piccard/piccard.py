@@ -4896,9 +4896,9 @@ class ptaLikelihood(object):
                                 indexb = 0
                                 indexa += self.npff[aa]
 
+                        self.Svec += 10**pcdoubled
                         if gibbs_expansion:
                             # Expand in spectrum and correlations
-                            self.Svec += 10**pcdoubled
                             self.Scor = corrmat.copy()     # Yes, well, there can be only one
                 elif m2signal['stype'] == 'dmspectrum':
                     if m2signal['corr'] == 'single':
@@ -4960,9 +4960,9 @@ class ptaLikelihood(object):
                                 indexb = 0
                                 indexa += self.npff[aa]
 
+                        self.Svec += pcdoubled
                         if gibbs_expansion:
                             # Expand in spectrum and correlations
-                            self.Svec += pcdoubled
                             self.Scor = corrmat.copy()
                 elif m2signal['stype'] == 'spectralModel':
                     Amp = 10**sparameters[0]
@@ -5020,9 +5020,9 @@ class ptaLikelihood(object):
                                 indexb = 0
                                 indexa += self.npff[aa]
                         
+                        self.Svec += pcdoubled
                         if gibbs_expansion:
                             # Expand in spectrum and correlations
-                            self.Svec += pcdoubled
                             self.Scor = corrmat.copy()     # Yes, well, there can be only one
                 elif m2signal['stype'] == 'dmpowerlaw':
                     Amp = 10**sparameters[0]
@@ -5426,9 +5426,9 @@ class ptaLikelihood(object):
                                     sparameters[:-2*npixels]]).T.flatten()
 
 
+                        self.Svec += 10**pcdoubled
                         if gibbs_expansion:
                             # Expand in spectrum and correlations
-                            self.Svec += 10**pcdoubled
                             self.Scor = corrmat.copy()     # Yes, well, there can be only one
                 elif m2signal['stype'] == 'powerlaw':
                     Amp = 10**sparameters[0]
@@ -5457,9 +5457,9 @@ class ptaLikelihood(object):
                             pixpars = sparameters[3:]
                             corrmat = m2signal['aniCorr'].corrmat(pixpars)
 
+                        self.Svec += pcdoubled
                         if gibbs_expansion:
                             # Expand in spectrum and correlations
-                            self.Svec += pcdoubled
                             self.Scor = corrmat.copy()
                 elif m2signal['stype'] == 'spectralModel':
                     Amp = 10**sparameters[0]
@@ -5491,9 +5491,9 @@ class ptaLikelihood(object):
                             pixpars = sparameters[3:]
                             corrmat = m2signal['aniCorr'].corrmat(pixpars)
 
+                        self.Svec += pcdoubled
                         if gibbs_expansion:
                             # Expand in spectrum and correlations
-                            self.Svec += pcdoubled
                             self.Scor = corrmat.copy()     # Yes, well, there can be only one
                 elif m2signal['stype'] == 'frequencyline':
                     # For a frequency line, the FFmatrix is assumed to be set elsewhere
@@ -6238,7 +6238,8 @@ class ptaLikelihood(object):
         # algebra. First we'll invert Phi. For a single pulsar, this will be
         # diagonal
         if npsrs == 1 or self.likfunc == 'mark3nc':
-            PhiLD = np.sum(np.log(self.Phivec))
+            mult = 1.0 * int(self.likfunc == 'mark3nc')
+            PhiLD = np.sum(np.log(self.Phivec + mult * self.Svec))
             #Phiinv = np.diag(1.0 / self.Phivec)
 
             SigmaLD = 0.0
@@ -6252,7 +6253,7 @@ class ptaLikelihood(object):
 
                 di = np.diag_indices(2*nfreq)
                 Sigma_psr = self.FGGNGGF[slc, slc].copy()# + Phiinv[slc, slc]
-                Sigma_psr[di] += 1.0 / self.Phivec[slc]
+                Sigma_psr[di] += 1.0 / (self.Phivec[slc] + mult*self.Svec[slc])
 
                 try:
                     cf = sl.cho_factor(Sigma_psr)
