@@ -55,7 +55,7 @@ class PTSampler(object):
 
     """
 
-    def __init__(self, ndim, logl, logp, cov, covinds=None, loglargs=[], loglkwargs={}, \
+    def __init__(self, ndim, logl, logp, cov, groups=None, loglargs=[], loglkwargs={}, \
                  logpargs=[], logpkwargs={}, comm=MPI.COMM_WORLD, \
                  outDir='./chains', verbose=True, resume=False, nowrite=False,
                  newFileOrder=True):
@@ -81,16 +81,24 @@ class PTSampler(object):
                 pass
 
         # find indices for which to perform adaptive jumps
-        if covinds is None:
-            covinds = np.arange(0, self.ndim)
-        self.covinds = np.array(covinds)
-
+        self.groups = groups
+        if groups is None:
+            self.groups = [np.arange(0, self.ndim)]
+        
         # set up covariance matrix
-        ndim = len(self.covinds)
-        #TODO: this doesn't work unless parameters are in blocks
-        self.cov = cov[self.covinds.min():self.covinds.max()+1, \
-                       self.covinds.min():self.covinds.max()+1]
-        self.U, self.S, v = np.linalg.svd(self.cov)
+        self.cov = cov
+        self.U = [[]] * len(self.groups)
+        self.S = [[]] * len(self.groups)
+
+        # do svd on parameter groups
+        for ct, group in enumerate(self.groups):
+            covgroup = np.zeros((len(group), len(group)))
+            for ii in range(len(group)):
+                for jj in range(len(group)):
+                    covgroup[ii,jj] = self.cov[group[ii], group[jj]]
+            
+            self.U[ct], self.S[ct], v = np.linalg.svd(covgroup)
+
         self.M2 = np.zeros((ndim, ndim))
         self.mu = np.zeros(ndim)
 
@@ -141,7 +149,6 @@ class PTSampler(object):
         self._lnlike = np.zeros(N)
         self._chain = np.zeros((N, self.ndim))
         self.naccepted = 0
-        self.cur_neff = -1
         self.swapProposed = 0
         self.nswap_accepted = 0
 
@@ -208,16 +215,6 @@ class PTSampler(object):
             self._lnlike[ind] = lnlike0
             self._lnprob[ind] = lnprob0
 
-        # compute effective number of samples
-        if iter % 1000 == 0 and iter > 2*self.burn and self.MPIrank == 0:
-            try:
-                self.cur_neff = iter/np.max([acor.acor(self._AMbuffer[self.burn:(iter-1),ii])[0] \
-                                    for ii in range(self.ndim)])
-                #print '\n {0} effective samples'.format(Neff)
-            except NameError:
-                Neff = -1
-                pass
-
         # write to file
         if iter % self.isave == 0 and iter > 1 and iter > self.resumeLength \
                 and not self.nowrite:
@@ -227,9 +224,9 @@ class PTSampler(object):
             np.save(self.outDir + '/cov.npy', self.cov)
             if self.MPIrank == 0 and self.verbose and iter > 1:
                 sys.stdout.write('\r')
-                sys.stdout.write('Finished %2.2f percent in %f s Acceptance rate = %g Effective samples = %i'\
+                sys.stdout.write('Finished %2.2f percent in %f s Acceptance rate = %g'\
                                  %(iter/self.Niter*100, time.time() - self.tstart, \
-                                   self.naccepted/iter, self.cur_neff))
+                                   self.naccepted/iter))
                 sys.stdout.flush()
 
 
@@ -322,6 +319,16 @@ class PTSampler(object):
             # call PTMCMCOneStep
             p0, lnlike0, lnprob0 = self.PTMCMCOneStep(p0, lnlike0, lnprob0, iter)
 
+            # compute effective number of samples
+            if iter % 1000 == 0 and iter > 2*self.burn and self.MPIrank == 0:
+                try:
+                    Neff = iter/np.max([acor.acor(self._AMbuffer[self.burn:(iter-1),ii])[0] \
+                                        for ii in range(self.ndim)])
+                    #print '\n {0} effective samples'.format(Neff)
+                except NameError:
+                    Neff = 0
+                    pass
+
             # stop if reached maximum number of iterations
             if self.MPIrank == 0 and iter >= self.Niter-1:
                 if self.verbose:
@@ -372,7 +379,13 @@ class PTSampler(object):
         time.sleep(0.000001) 
         if getCovariance and self.MPIrank > 0:
             self.cov = self.comm.recv(source=0, tag=111)
-            self.U, self.S, v = np.linalg.svd(self.cov)
+            for ct, group in enumerate(self.groups):
+                covgroup = np.zeros((len(group), len(group)))
+                for ii in range(len(group)):
+                    for jj in range(len(group)):
+                        covgroup[ii,jj] = self.cov[group[ii], group[jj]]
+                
+                self.U[ct], self.S[ct], v = np.linalg.svd(covgroup)
             getCovariance = 0
         
         # update KDE buffer after burn in
@@ -486,7 +499,10 @@ class PTSampler(object):
         @param lnprob0: current log posterior value
         @param iter: current iteration number
 
-        @return swapReturn: 0 = no swap proposed, 1 = swap proposed and rejected, 2 = swap proposed and accepted
+        @return swapReturn: 0 = no swap proposed, 
+        1 = swap proposed and rejected, 
+        2 = swap proposed and accepted
+
         @return p0: new parameter vector
         @return lnlike0: new log-likelihood
         @return lnprob0: new log posterior value
@@ -560,7 +576,8 @@ class PTSampler(object):
                     # calculate new posterior values
                     lnprob0 = 1/self.temp * lnlike0 + self.logp(p0)
 
-        # Return values for colder chain: 0=nothing happened; 1=swap proposed, not accepted; 2=swap proposed & accepted
+        # Return values for colder chain: 0=nothing happened; 1=swap proposed, 
+        # not accepted; 2=swap proposed & accepted
         if swapProposed:
             if swapAccepted:
                 swapReturn = 2
@@ -641,7 +658,7 @@ class PTSampler(object):
         """
 
         it = iter - mem
-        ndim = len(self.covinds)
+        ndim = self.ndim
 
         if it == 0:
             self.M2 = np.zeros((ndim, ndim))
@@ -650,17 +667,23 @@ class PTSampler(object):
         for ii in range(mem):
             diff = np.zeros(ndim)
             it += 1
-            for jj, ind in enumerate(self.covinds):
+            for jj in range(ndim):
                 
-                diff[jj] = self._AMbuffer[iter-mem+ii, ind] - self.mu[jj]
+                diff[jj] = self._AMbuffer[iter-mem+ii, jj] - self.mu[jj]
                 self.mu[jj] += diff[jj]/it
 
-            self.M2 += np.outer(diff, (self._AMbuffer[iter-mem+ii,self.covinds]-self.mu))
+            self.M2 += np.outer(diff, (self._AMbuffer[iter-mem+ii,:]-self.mu))
 
         self.cov = self.M2/(it-1)  
 
-        # do svd
-        self.U, self.S, v = np.linalg.svd(self.cov)
+        # do svd on parameter groups
+        for ct, group in enumerate(self.groups):
+            covgroup = np.zeros((len(group), len(group)))
+            for ii in range(len(group)):
+                for jj in range(len(group)):
+                    covgroup[ii,jj] = self.cov[group[ii], group[jj]]
+
+            self.U[ct], self.S[ct], v = np.linalg.svd(covgroup)
 
     # function to update gaussian KDE  of posterior based on current samples
     def _updateKDE(self, iter):
@@ -735,7 +758,10 @@ class PTSampler(object):
 
         q = x.copy()
         qxy = 0
-        ndim = len(self.covinds)
+
+        # choose group
+        jumpind = np.random.randint(0, len(self.groups))
+        ndim = len(self.groups[jumpind])
 
         # adjust step size
         prob = np.random.rand()
@@ -772,8 +798,8 @@ class PTSampler(object):
 
         #y[ind] = y[ind] + np.random.randn(neff) * cd * np.sqrt(self.S[ind])
         #q[self.covinds] = np.dot(self.U, y)
-        q[self.covinds] += np.random.randn() * cd * np.sqrt(self.S[ind]) * \
-                self.U[:,ind].flatten()
+        q[self.groups[jumpind]] += np.random.randn() * cd * np.sqrt(self.S[jumpind][ind]) * \
+                self.U[jumpind][:,ind].flatten()
 
         return q, qxy
     
@@ -795,7 +821,10 @@ class PTSampler(object):
 
         q = x.copy()
         qxy = 0
-        ndim = len(self.covinds)
+        
+        # choose group
+        jumpind = np.random.randint(0, len(self.groups))
+        ndim = len(self.groups[jumpind])
 
         # adjust step size
         prob = np.random.rand()
@@ -821,15 +850,15 @@ class PTSampler(object):
             scale *= np.sqrt(self.temp)
         
         # get parmeters in new diagonalized basis
-        y = np.dot(self.U.T, x[self.covinds])
+        y = np.dot(self.U[jumpind].T, x[self.groups[jumpind]])
 
         # make correlated componentwise adaptive jump
-        ind = np.arange(len(self.covinds))
+        ind = np.arange(len(self.groups[jumpind]))
         neff = len(ind)
         cd = 2.4  / np.sqrt(2*neff) * scale 
 
-        y[ind] = y[ind] + np.random.randn(neff) * cd * np.sqrt(self.S[ind])
-        q[self.covinds] = np.dot(self.U, y)
+        y[ind] = y[ind] + np.random.randn(neff) * cd * np.sqrt(self.S[jumpind][ind])
+        q[self.groups[jumpind]] = np.dot(self.U[jumpind], y)
 
         #cd = 2.4/np.sqrt(2*self.ndim) * np.sqrt(scale)
         #q = np.random.multivariate_normal(x, cd**2*self.cov)
