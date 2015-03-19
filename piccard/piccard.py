@@ -6238,12 +6238,11 @@ class ptaLikelihood(object):
         # algebra. First we'll invert Phi. For a single pulsar, this will be
         # diagonal
         if npsrs == 1 or self.likfunc == 'mark3nc':
-            mult = 1.0 * int(self.likfunc == 'mark3nc')
-            PhiLD = np.sum(np.log(self.Phivec + mult * self.Svec))
             #Phiinv = np.diag(1.0 / self.Phivec)
 
             SigmaLD = 0.0
             rGSigmaGr = 0.0
+            PhiLD = 0.0
 
             for ii, psr in enumerate(self.ptapsrs):
                 findex = np.sum(self.npf[:ii])
@@ -6251,9 +6250,14 @@ class ptaLikelihood(object):
 
                 slc = slice(findex, findex+2*nfreq)
 
+                phivec = self.Phivec[slc]
+                if self.likfunc == 'mark3nc':
+                    phivec[:len(self.Svec)] += self.Svec
+                PhiLD += np.sum(np.log(phivec))
+
                 di = np.diag_indices(2*nfreq)
                 Sigma_psr = self.FGGNGGF[slc, slc].copy()# + Phiinv[slc, slc]
-                Sigma_psr[di] += 1.0 / (self.Phivec[slc] + mult*self.Svec[slc])
+                Sigma_psr[di] += 1.0 / (phivec)
 
                 try:
                     cf = sl.cho_factor(Sigma_psr)
