@@ -124,7 +124,7 @@ class PTSampler(object):
         """
         # get maximum number of iteration
         if maxIter is None and self.MPIrank > 0:
-            maxIter = 3*Niter
+            maxIter = 2*Niter
         elif maxIter is None and self.MPIrank == 0:
             maxIter = Niter
 
@@ -234,7 +234,7 @@ class PTSampler(object):
 
     def sample(self, p0, Niter, ladder=None, Tmin=1, Tmax=None, Tskip=100, \
                isave=1000, covUpdate=1000, KDEupdate=1000, SCAMweight=20, \
-               AMweight=20, DEweight=20, KDEweight=30, burn=10000, \
+               AMweight=20, DEweight=20, KDEweight=0, burn=10000, \
                maxIter=None, thin=10, i0=0, neff=100000):
 
         """
@@ -264,7 +264,7 @@ class PTSampler(object):
 
         # get maximum number of iterations
         if maxIter is None and self.MPIrank > 0:
-            maxIter = 3*Niter
+            maxIter = 2*Niter
         elif maxIter is None and self.MPIrank == 0:
             maxIter = Niter
 
