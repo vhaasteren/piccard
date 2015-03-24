@@ -167,6 +167,8 @@ class ptaPulsar(object):
         self.GtF = None
         self.GtD = None
         self.GtU = None
+        self.AG = None       # For two-component noise deterministic sources,
+                             # without Gmat/Hmat
         self.AGr = None      # Replaces GGr in 2-component noise model
         self.AoGr = None     #   Same but for orthogonal basis (when compressing)
         self.AGF = None      # Replaces GGtF in 2-component noise model
@@ -1198,6 +1200,7 @@ class ptaPulsar(object):
                 self.Wvec, self.Amat = sl.eigh(GtNeG)
                 self.AGr = np.dot(self.Amat.T, self.Gr)
                 self.AGF = np.dot(self.Amat.T, self.GtF)
+                self.AG = np.dot(self.Hmat, self.Amat).T
 
                 # Diagonalise HotEfHo
                 if self.Homat.shape[1] > 0:
@@ -1224,6 +1227,7 @@ class ptaPulsar(object):
                 if self.twoComponentNoise:
                     h5df.addData(self.name, 'pic_Wvec', self.Wvec)
                     h5df.addData(self.name, 'pic_Amat', self.Amat)
+                    h5df.addData(self.name, 'pic_AG', self.AG)
                     h5df.addData(self.name, 'pic_AGr', self.AGr)
                     h5df.addData(self.name, 'pic_AGF', self.AGF)
                     h5df.addData(self.name, 'pic_Wovec', self.Wovec)
@@ -1241,6 +1245,7 @@ class ptaPulsar(object):
                 GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
                 self.Wvec, self.Amat = sl.eigh(GtNeG)
                 self.AGr = np.dot(self.Amat.T, self.Gr)
+                self.AG = np.dot(self.Hmat, self.Amat).T
 
                 # Diagonalise HotEfHo
                 if self.Homat.shape[1] > 0:
@@ -1262,6 +1267,7 @@ class ptaPulsar(object):
                     h5df.addData(self.name, 'pic_Wvec', self.Wvec)
                     h5df.addData(self.name, 'pic_Amat', self.Amat)
                     h5df.addData(self.name, 'pic_AGr', self.AGr)
+                    h5df.addData(self.name, 'pic_AG', self.AG)
                     h5df.addData(self.name, 'pic_Wovec', self.Wovec)
                     h5df.addData(self.name, 'pic_Aomat', self.Aomat)
                     h5df.addData(self.name, 'pic_AoGr', self.AoGr)
@@ -1279,6 +1285,7 @@ class ptaPulsar(object):
 
                 self.AGr = np.dot(self.Amat.T, self.Gr)
                 self.AGF = np.dot(self.Amat.T, self.GtF)
+                self.AG = np.dot(self.Hmat, self.Amat).T
 
                 # Diagonalise HotEfHo
                 if self.Homat.shape[1] > 0:
@@ -1304,6 +1311,7 @@ class ptaPulsar(object):
                 if self.twoComponentNoise:
                     h5df.addData(self.name, 'pic_Wvec', self.Wvec)
                     h5df.addData(self.name, 'pic_Amat', self.Amat)
+                    h5df.addData(self.name, 'pic_AG', self.AG)
                     h5df.addData(self.name, 'pic_AGr', self.AGr)
                     h5df.addData(self.name, 'pic_AGF', self.AGF)
                     h5df.addData(self.name, 'pic_Wovec', self.Wovec)
@@ -1328,6 +1336,7 @@ class ptaPulsar(object):
 
                 self.AGr = np.dot(self.Amat.T, self.Gr)
                 self.AGU = np.dot(self.Amat.T, GtU)
+                self.AG = np.dot(self.Hmat, self.Amat).T
 
                 # Diagonalise HotEfHo
                 if self.Homat.shape[1] > 0:
@@ -1355,6 +1364,7 @@ class ptaPulsar(object):
                 if self.twoComponentNoise:
                     h5df.addData(self.name, 'pic_Wvec', self.Wvec)
                     h5df.addData(self.name, 'pic_Amat', self.Amat)
+                    h5df.addData(self.name, 'pic_AG', self.AG)
                     h5df.addData(self.name, 'pic_AGr', self.AGr)
                     h5df.addData(self.name, 'pic_AGU', self.AGU)
                     h5df.addData(self.name, 'pic_Wovec', self.Wovec)
@@ -1389,6 +1399,7 @@ class ptaPulsar(object):
 
                 self.AGr = np.dot(self.Amat.T, self.Gr)
                 self.AGU = np.dot(self.Amat.T, GtU)
+                self.AG = np.dot(self.Hmat, self.Amat).T
 
                 # Diagonalise HotEfHo
                 if self.Homat.shape[1] > 0:
@@ -1420,6 +1431,7 @@ class ptaPulsar(object):
                 if self.twoComponentNoise:
                     h5df.addData(self.name, 'pic_Wvec', self.Wvec)
                     h5df.addData(self.name, 'pic_Amat', self.Amat)
+                    h5df.addData(self.name, 'pic_AG', self.AG)
                     h5df.addData(self.name, 'pic_AGr', self.AGr)
                     h5df.addData(self.name, 'pic_AGU', self.AGU)
                     h5df.addData(self.name, 'pic_Wovec', self.Wovec)
@@ -1450,6 +1462,7 @@ class ptaPulsar(object):
                 GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
                 self.Wvec, self.Amat = sl.eigh(GtNeG)
 
+                self.AG = np.dot(self.Hmat, self.Amat).T
                 self.AGr = np.dot(self.Amat.T, self.Gr)
                 self.AGF = np.dot(self.Amat.T, self.GtF)
                 self.AGD = np.dot(self.Amat.T, GtD)
@@ -1488,6 +1501,7 @@ class ptaPulsar(object):
                 if self.twoComponentNoise:
                     h5df.addData(self.name, 'pic_Wvec', self.Wvec)
                     h5df.addData(self.name, 'pic_Amat', self.Amat)
+                    h5df.addData(self.name, 'pic_AG', self.AG)
                     h5df.addData(self.name, 'pic_AGr', self.AGr)
                     h5df.addData(self.name, 'pic_AGF', self.AGF)
                     h5df.addData(self.name, 'pic_AGD', self.AGD)
@@ -1512,6 +1526,7 @@ class ptaPulsar(object):
 
                 self.AGr = np.dot(self.Amat.T, self.Gr)
                 self.AGF = np.dot(self.Amat.T, self.GtF)
+                self.AG = np.dot(self.Hmat, self.Amat).T
 
                 # Diagonalise HotEfHo
                 if self.Homat.shape[1] > 0:
@@ -1537,6 +1552,7 @@ class ptaPulsar(object):
                 if self.twoComponentNoise:
                     h5df.addData(self.name, 'pic_Wvec', self.Wvec)
                     h5df.addData(self.name, 'pic_Amat', self.Amat)
+                    h5df.addData(self.name, 'pic_AG', self.AG)
                     h5df.addData(self.name, 'pic_AGr', self.AGr)
                     h5df.addData(self.name, 'pic_AGF', self.AGF)
                     h5df.addData(self.name, 'pic_Wovec', self.Wovec)
@@ -1564,6 +1580,7 @@ class ptaPulsar(object):
                 GtNeG = np.dot(self.Hmat.T, ((self.toaerrs**2) * self.Hmat.T).T)
                 self.Wvec, self.Amat = sl.eigh(GtNeG)
 
+                self.AG = np.dot(self.Hmat, self.Amat).T
                 self.AGr = np.dot(self.Amat.T, self.Gr)
                 self.AGF = np.dot(self.Amat.T, self.GtF)
                 self.AGD = np.dot(self.Amat.T, GtD)
@@ -1602,6 +1619,7 @@ class ptaPulsar(object):
                 if self.twoComponentNoise:
                     h5df.addData(self.name, 'pic_Wvec', self.Wvec)
                     h5df.addData(self.name, 'pic_Amat', self.Amat)
+                    h5df.addData(self.name, 'pic_AG', self.AG)
                     h5df.addData(self.name, 'pic_AGr', self.AGr)
                     h5df.addData(self.name, 'pic_AGF', self.AGF)
                     h5df.addData(self.name, 'pic_AGD', self.AGD)
@@ -1636,6 +1654,7 @@ class ptaPulsar(object):
                 self.AGr = np.dot(self.Amat.T, self.Gr)
                 self.AGF = np.dot(self.Amat.T, self.GtF)
                 self.AGFF = np.dot(self.Amat.T, GtFF)
+                self.AG = np.dot(self.Hmat, self.Amat).T
 
                 # Diagonalise HotEfHo
                 if self.Homat.shape[1] > 0:
@@ -1667,6 +1686,7 @@ class ptaPulsar(object):
                 if self.twoComponentNoise:
                     h5df.addData(self.name, 'pic_Wvec', self.Wvec)
                     h5df.addData(self.name, 'pic_Amat', self.Amat)
+                    h5df.addData(self.name, 'pic_AG', self.AG)
                     h5df.addData(self.name, 'pic_AGr', self.AGr)
                     h5df.addData(self.name, 'pic_AGF', self.AGF)
                     h5df.addData(self.name, 'pic_AGFF', self.AGFF)
@@ -1718,6 +1738,7 @@ class ptaPulsar(object):
 
                 self.AGr = np.dot(self.Amat.T, self.Gr)
                 self.AGF = np.dot(self.Amat.T, self.GtF)
+                self.AG = np.dot(self.Hmat, self.Amat).T
 
                 self.AGFF = np.dot(self.Amat.T, GtFF)
                 self.AGD = np.dot(self.Amat.T, GtD)
@@ -1772,6 +1793,7 @@ class ptaPulsar(object):
                 if self.twoComponentNoise:
                     h5df.addData(self.name, 'pic_Wvec', self.Wvec)
                     h5df.addData(self.name, 'pic_Amat', self.Amat)
+                    h5df.addData(self.name, 'pic_AG', self.AG)
                     h5df.addData(self.name, 'pic_AGr', self.AGr)
                     h5df.addData(self.name, 'pic_AGF', self.AGF)
                     h5df.addData(self.name, 'pic_AGFF', self.AGFF)
@@ -1968,6 +1990,8 @@ class ptaPulsar(object):
                 dontread=self.twoComponentNoise))
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF'))
             self.GtD = np.array(h5df.getData(self.name, 'pic_GtD'))
+            self.AG = np.array(h5df.getData(self.name, 'pic_AG',
+                dontread=(not self.twoComponentNoise)))
             self.AGr = np.array(h5df.getData(self.name, 'pic_AGr',
                 dontread=(memsave and not self.twoComponentNoise)))
             self.AGF = np.array(h5df.getData(self.name, 'pic_AGF',
@@ -1987,6 +2011,8 @@ class ptaPulsar(object):
                     dontread=self.twoComponentNoise))
             self.AGr = np.array(h5df.getData(self.name, 'pic_AGr',
                 dontread=(not self.twoComponentNoise)))
+            self.AG = np.array(h5df.getData(self.name, 'pic_AG',
+                dontread=(not self.twoComponentNoise)))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
 
         if likfunc in ['mark3', 'mark3fa', 'mark3nc']:
@@ -1996,6 +2022,8 @@ class ptaPulsar(object):
                     dontread=self.twoComponentNoise))
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
             self.AGr = np.array(h5df.getData(self.name, 'pic_AGr',
+                dontread=(not self.twoComponentNoise)))
+            self.AG = np.array(h5df.getData(self.name, 'pic_AG',
                 dontread=(not self.twoComponentNoise)))
             self.AGF = np.array(h5df.getData(self.name, 'pic_AGF',
                 dontread=(not self.twoComponentNoise)))
@@ -2012,6 +2040,8 @@ class ptaPulsar(object):
             self.UtF = np.array(h5df.getData(self.name, 'pic_UtF'))
             self.UtD = np.array(h5df.getData(self.name, 'pic_UtD', dontread=memsave))
             self.AGr = np.array(h5df.getData(self.name, 'pic_AGr',
+                dontread=(not self.twoComponentNoise)))
+            self.AG = np.array(h5df.getData(self.name, 'pic_AG',
                 dontread=(not self.twoComponentNoise)))
             self.AGU = np.array(h5df.getData(self.name, 'pic_AGU',
                 dontread=(not self.twoComponentNoise)))
@@ -2041,6 +2071,8 @@ class ptaPulsar(object):
             self.UtFF = np.array(h5df.getData(self.name, 'pic_UtFF', dontread=memsave))
             self.AGr = np.array(h5df.getData(self.name, 'pic_AGr',
                 dontread=(not self.twoComponentNoise)))
+            self.AG = np.array(h5df.getData(self.name, 'pic_AG',
+                dontread=(not self.twoComponentNoise)))
             self.AGU = np.array(h5df.getData(self.name, 'pic_AGU',
                 dontread=(not self.twoComponentNoise)))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
@@ -2062,6 +2094,8 @@ class ptaPulsar(object):
             self.Emat = np.array(h5df.getData(self.name, 'pic_Emat', \
                     isort=mslice))
             self.AGr = np.array(h5df.getData(self.name, 'pic_AGr',
+                dontread=(not self.twoComponentNoise)))
+            self.AG = np.array(h5df.getData(self.name, 'pic_AG',
                 dontread=(not self.twoComponentNoise)))
             self.AGF = np.array(h5df.getData(self.name, 'pic_AGF',
                 dontread=(memsave and not self.twoComponentNoise)))
@@ -2085,6 +2119,8 @@ class ptaPulsar(object):
             self.GtF = np.array(h5df.getData(self.name, 'pic_GtF', dontread=memsave))
             self.AGr = np.array(h5df.getData(self.name, 'pic_AGr',
                 dontread=(not self.twoComponentNoise)))
+            self.AG = np.array(h5df.getData(self.name, 'pic_AG',
+                dontread=(not self.twoComponentNoise)))
             self.AGF = np.array(h5df.getData(self.name, 'pic_AGF',
                 dontread=(memsave and not self.twoComponentNoise)))
             self.Fmat = np.array(h5df.getData(self.name, 'pic_Fmat', \
@@ -2100,6 +2136,8 @@ class ptaPulsar(object):
             self.Emat = np.array(h5df.getData(self.name, 'pic_Emat', \
                     dontread=memsave, isort=mslice))
             self.AGr = np.array(h5df.getData(self.name, 'pic_AGr',
+                dontread=(not self.twoComponentNoise)))
+            self.AG = np.array(h5df.getData(self.name, 'pic_AG',
                 dontread=(not self.twoComponentNoise)))
             self.AGF = np.array(h5df.getData(self.name, 'pic_AGF',
                 dontread=(memsave and not self.twoComponentNoise)))
@@ -2127,6 +2165,8 @@ class ptaPulsar(object):
                     dontread=memsave, isort=mslice))
             self.SFfreqs = np.array(h5df.getData(self.name, 'pic_SFfreqs'))
             self.AGr = np.array(h5df.getData(self.name, 'pic_AGr',
+                dontread=(not self.twoComponentNoise)))
+            self.AG = np.array(h5df.getData(self.name, 'pic_AG',
                 dontread=(not self.twoComponentNoise)))
             self.AGF = np.array(h5df.getData(self.name, 'pic_AGF',
                 dontread=(memsave and not self.twoComponentNoise)))
@@ -2160,6 +2200,8 @@ class ptaPulsar(object):
             self.GGtEE = np.array(h5df.getData(self.name, 'pic_GGtEE', \
                     isort=mslice))
             self.AGr = np.array(h5df.getData(self.name, 'pic_AGr',
+                dontread=(not self.twoComponentNoise)))
+            self.AG = np.array(h5df.getData(self.name, 'pic_AG',
                 dontread=(not self.twoComponentNoise)))
             self.AGF = np.array(h5df.getData(self.name, 'pic_AGF',
                 dontread=(memsave and not self.twoComponentNoise)))
@@ -5156,8 +5198,9 @@ class ptaLikelihood(object):
         # If necessary, transform these residuals to two-component basis
         for pp, psr in enumerate(self.ptapsrs):
             if psr.twoComponentNoise:
-                Gr = np.dot(psr.Hmat.T, psr.detresiduals)
-                psr.AGr = np.dot(psr.Amat.T, Gr)
+                #Gr = np.dot(psr.Hmat.T, psr.detresiduals)
+                #psr.AGr = np.dot(psr.Amat.T, Gr)
+                psr.AGr = np.dot(psr.AG, psr.detresiduals)
 
 
 
