@@ -3238,7 +3238,7 @@ class ptaLikelihood(object):
             incDM=False, dmModel='powerlaw', \
             incClock=False, clockModel='powerlaw', \
             incGWB=False, gwbModel='powerlaw', \
-            gwbSi=2.01, gwbVarySi=True, \
+            gwbSi=2.01, gwbVarySi=True, gwbPrior='flat', \
             incDipole=False, dipoleModel='powerlaw', \
             incAniGWB=False, anigwbModel='powerlaw', lAniGWB=1, \
             incPixelGWB=False, pixelgwbModel='powerlaw', npixels=4, \
@@ -3803,7 +3803,7 @@ class ptaLikelihood(object):
                 "pmax":pmax,
                 "pwidth":pwidth,
                 "pstart":pstart,
-                "prior":'flatlog'
+                "prior":gwbPrior,
                 })
             signals.append(newsignal)
 
