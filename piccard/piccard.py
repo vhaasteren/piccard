@@ -2442,9 +2442,10 @@ class ptaLikelihood(object):
         self.npu = None      # Number of avetoas per pulsar
         self.npm = None      # Number of columns of design matrix (full design matrix)
         self.npz = None      # Number of columns of Zmat
-        self.npz_f = None      # Number of columns of Zmat
-        self.npz_d = None      # Number of columns of Zmat
-        self.npz_U = None      # Number of columns of Zmat
+        self.npz_n = None      # Number of columns of Zmat_N
+        self.npz_f = None      # Number of columns of Zmat_F
+        self.npz_d = None      # Number of columns of Zmat_D
+        self.npz_U = None      # Number of columns of Zmat_U
         self.Tmax = None     # One Tmax to rule them all...
 
         # Which pulsars have which red noise frequencies...
@@ -3025,6 +3026,7 @@ class ptaLikelihood(object):
         self.npm_d = np.zeros(npsrs, dtype=np.int)
         self.npm_u = np.zeros(npsrs, dtype=np.int)
         self.npz = np.zeros(npsrs, dtype=np.int)
+        self.npz_n = np.zeros(npsrs, dtype=np.int)
         self.npz_f = np.zeros(npsrs, dtype=np.int)
         self.npz_b = np.zeros(npsrs, dtype=np.int)
         self.npz_d = np.zeros(npsrs, dtype=np.int)
@@ -3072,6 +3074,7 @@ class ptaLikelihood(object):
                 self.npm_f[ii] = np.sum(psr.Mmask_F)
                 self.npm_d[ii] = np.sum(psr.Mmask_D)
                 self.npm_u[ii] = np.sum(psr.Mmask_U)
+                self.npz_n[ii] = psr.Zmat_N.shape[1]
                 self.npz_f[ii] = psr.Zmat_F.shape[1]
                 self.npz_b[ii] = psr.Zmat_B.shape[1]
                 self.npz_d[ii] = psr.Zmat_D.shape[1]
@@ -3148,6 +3151,7 @@ class ptaLikelihood(object):
             self.GNGldet = np.zeros(npsrs)
             self.rGr = np.zeros(npsrs)
         elif self.likfunc in ['mark12', 'gibbs']:
+            zlen_n = np.sum(self.npz_n)
             zlen_f = np.sum(self.npz_f)
             zlen_d = np.sum(self.npz_d)
             zlen_u = np.sum(self.npz_u)
@@ -3235,6 +3239,9 @@ class ptaLikelihood(object):
             incRedNoise=False, noiseModel='powerlaw', fc=None, \
             bandRedNoise=None, bandNoiseModel='blpowerlaw', \
             noisePrior='flatlog', dmPrior='flatlog', \
+            noisePSDMin=[-18.0], noisePSDMax=[-7.0], \
+            noisePLMin=[-20.0, 0.02, 1.0e-11], \
+            noisePLMax=[-10.0, 6.98, 3.0e-9], \
             incDM=False, dmModel='powerlaw', \
             incClock=False, clockModel='powerlaw', \
             incGWB=False, gwbModel='powerlaw', \
@@ -3438,14 +3445,14 @@ class ptaLikelihood(object):
                 if noiseModel=='spectrum':
                     nfreqs = numNoiseFreqs[pp]
                     bvary = [True]*nfreqs
-                    pmin = [-18.0]*nfreqs
-                    pmax = [-7.0]*nfreqs
+                    pmin = [noisePSDMin[0]]*nfreqs
+                    pmax = [noisePSDMax[0]]*nfreqs
                     pstart = [-10.0]*nfreqs
                     pwidth = [0.1]*nfreqs
                 elif noiseModel=='powerlaw':
                     bvary = [True, True, False]
-                    pmin = [-20.0, 0.02, 1.0e-11]
-                    pmax = [-10.0, 6.98, 3.0e-9]
+                    pmin = noisePLMin
+                    pmax = noisePLMax
                     pstart = [-15.0, 2.01, 1.0e-10]
                     pwidth = [0.3, 0.3, 5.0e-11]
                 elif noiseModel=='spectralModel':
@@ -7737,7 +7744,8 @@ class ptaLikelihood(object):
             self.updateDetSources(parameters)
 
         # Size of the full matrix is:
-        nt = np.sum(self.npz) - np.sum(self.npu)# Size full T-matrix
+        #nt = np.sum(self.npz) - np.sum(self.npu)# Size full T-matrix
+        nt = np.sum(self.npz_n)                 # Size full T-matrix
         nf = np.sum(self.npf)                   # Size full F-matrix
         Sigma = np.zeros((nt, nt))              # Full Sigma matrix
         FPhi = np.zeros((nf, nf))               # RN full Phi matrix
@@ -7754,8 +7762,10 @@ class ptaLikelihood(object):
 
         for ii, psr in enumerate(self.ptapsrs):
             # The T-matrix is just the Z-matrix, minus the ecorr/jitter
-            tsize = psr.Zmat.shape[1] - np.sum(psr.Zmask_U)
-            Zmat = psr.Zmat[:,:tsize]
+            #tsize = psr.Zmat.shape[1] - np.sum(psr.Zmask_U)
+            #Zmat = psr.Zmat[:,:tsize]
+            Zmat = psr.Zmat_N
+            tsize = Zmat.shape[1]
 
             # Use jitter extension for ZNZ
             Jldet[ii], ZNZp = cython_block_shermor_2D(Zmat, psr.Nvec, \
