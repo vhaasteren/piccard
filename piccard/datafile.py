@@ -326,27 +326,27 @@ class DataFile(object):
             t2pulsar.fit(iters=iterations)
 
         self.writeData(psrGroup, 'TOAs', np.double(np.array(t2pulsar.toas())-pic_T0)*pic_spd, overwrite=overwrite)    # Seconds
-        self.writeData(psrGroup, 'prefitRes', np.double(t2pulsar.prefit.residuals), overwrite=overwrite)  # Seconds
+        self.writeData(psrGroup, 'prefitRes', np.double(t2pulsar.residuals()), overwrite=overwrite)  # Seconds
         self.writeData(psrGroup, 'postfitRes', np.double(t2pulsar.residuals()), overwrite=overwrite)  # Seconds
         self.writeData(psrGroup, 'toaErr', np.double(1e-6*t2pulsar.toaerrs), overwrite=overwrite)    # Seconds
-        self.writeData(psrGroup, 'freq', np.double(t2pulsar.ssbfreqs), overwrite=overwrite)    # MHz
+        self.writeData(psrGroup, 'freq', np.double(t2pulsar.ssbfreqs()), overwrite=overwrite)    # MHz
 
         # TODO: writing the design matrix should be done irrespective of the fitting flag
-        desmat = t2pulsar.designmatrix(fixunits=True)
+        desmat = t2pulsar.designmatrix(fixunits=True, fixsigns=True, incoffset=True)
         self.writeData(psrGroup, 'designmatrix', desmat, overwrite=overwrite)
 
         # Write the position of the pulsar, even if it is in ecliptic
         # coordinates
         if 'RAJ' in t2pulsar and 'DECJ' in t2pulsar:
-            raj = t2pulsar.prefit['RAJ'].val
-            decj = t2pulsar.prefit['DECJ'].val
+            raj = t2pulsar['RAJ'].val
+            decj = t2pulsar['DECJ'].val
         elif 'ELONG' in t2pulsar and 'ELAT' in t2pulsar:
             if ephem is None:
                 raise ImportError("pyephem not installed")
 
             # tempo/tempo2 RAJ/DECJ always refer precession/nutation-wise to
             # epoch J2000. Posepoch does not apply here (only to proper motion)
-            ec = ephem.Ecliptic(t2pulsar.prefit['ELONG'].val, t2pulsar.prefit['ELAT'].val)
+            ec = ephem.Ecliptic(t2pulsar['ELONG'].val, t2pulsar['ELAT'].val)
             eq = ephem.Equatorial(ec, epoch=ephem.J2000)
             raj = np.float(eq.ra)
             decj = np.float(eq.dec)
@@ -356,16 +356,16 @@ class DataFile(object):
         self.writeData(psrGroup, 'decj', np.float(decj), overwrite=overwrite)
 
         # Now obtain and write the timing model parameters
-        tmpname = ['Offset'] + list(t2pulsar.pars)
+        tmpname = ['Offset'] + list(t2pulsar.pars(which='fit'))
         tmpvalpre = np.zeros(len(tmpname))
         tmpvalpost = np.zeros(len(tmpname))
         tmperrpre = np.zeros(len(tmpname))
         tmperrpost = np.zeros(len(tmpname))
-        for i in range(len(t2pulsar.pars)):
-            tmpvalpre[i+1] = t2pulsar.prefit[tmpname[i+1]].val
-            tmpvalpost[i+1] = t2pulsar.prefit[tmpname[i+1]].val
-            tmperrpre[i+1] = t2pulsar.prefit[tmpname[i+1]].err
-            tmperrpost[i+1] = t2pulsar.prefit[tmpname[i+1]].err
+        for i in range(len(t2pulsar.pars(which='fit'))):
+            tmpvalpre[i+1] = t2pulsar[tmpname[i+1]].val
+            tmpvalpost[i+1] = t2pulsar[tmpname[i+1]].val
+            tmperrpre[i+1] = t2pulsar[tmpname[i+1]].err
+            tmperrpost[i+1] = t2pulsar[tmpname[i+1]].err
 
         self.writeData(psrGroup, 'tmp_name', tmpname, overwrite=overwrite)          # TMP name
         self.writeData(psrGroup, 'tmp_valpre', tmpvalpre, overwrite=overwrite)      # TMP pre-fit value
@@ -377,9 +377,11 @@ class DataFile(object):
         flagGroup = psrGroup.require_group('Flags')
 
         # Obtain the unique flags in this dataset, and write to file
-        uflags = list(set(t2pulsar.flags))
+        #uflags = list(set(t2pulsar.flags))
+        uflags = t2pulsar.flags()
         for flagid in uflags:
-            self.writeData(flagGroup, flagid, t2pulsar.flags[flagid], overwrite=overwrite)
+            #self.writeData(flagGroup, flagid, t2pulsar.flags[flagid], overwrite=overwrite)
+            self.writeData(flagGroup, flagid, t2pulsar.flagvals(flagid), overwrite=overwrite)
 
         if not "efacequad" in flagGroup:
             # Check if the sys-flag is present in this set. If it is, add an
