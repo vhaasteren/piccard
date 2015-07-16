@@ -247,8 +247,35 @@ class DataFile(object):
                 print("WARNING: h5py too old to support empty arrays: {0}".
                         format(field))
 
+    def get_used_t2pars(sefl, t2pulsar, inc_inactive=False):
+        """For a libstempo2 object t2pulsar, return the parameters that 'act'"""
+        actpars = []
+
+        M = t2pulsar.designmatrix(fixunits=True, fixsigns=True, incoffset=False)
+        for ii, par in enumerate(t2pulsar.pars(which='fit')):
+            if np.any(M[:,ii]) or inc_inactive:
+                actpars.append(par)
+
+        return actpars
+
+    def get_designmatrix(self, t2pulsar, pars):
+        """For the parameters 'pars', retrieve the design matrix"""
+        M = t2pulsar.designmatrix(fixunits=True, fixsigns=True, incoffset=True)
+        fitpars = t2pulsar.pars(which='fit')
+
+        msk = np.zeros(M.shape[1], dtype=np.bool)
+        for par in pars:
+            if par == 'Offset':
+                ind = 0
+            else:
+                ind = fitpars.index(par)+1
+
+            msk[ind] = True
+
+        return M[:,msk]
+
     def addTempoPulsar(self, parfile, timfile, iterations=1, mode='replace', \
-            dofit = False, maxobs=20000):
+            dofit = False, maxobs=20000, inc_inactive=False):
         """
         Add a pulsar to the HDF5 file, given a tempo2 par and tim file. No extra
         model matrices and auxiliary variables are added to the HDF5 file. This
@@ -263,6 +290,7 @@ class DataFile(object):
                             pulsar not to exist, and throws an exception otherwise.
         @param dofit:       Whether or not to do a fit at first (default: False)
         @param maxobs:      Maximum number of observations (if None, use standard)
+        @param inc_inactive:Strip parameters that do not have any effect.
         """
         # Check whether the two files exist
         if not os.path.isfile(parfile) or not os.path.isfile(timfile):
@@ -331,10 +359,6 @@ class DataFile(object):
         self.writeData(psrGroup, 'toaErr', np.double(1e-6*t2pulsar.toaerrs), overwrite=overwrite)    # Seconds
         self.writeData(psrGroup, 'freq', np.double(t2pulsar.ssbfreqs()), overwrite=overwrite)    # MHz
 
-        # TODO: writing the design matrix should be done irrespective of the fitting flag
-        desmat = t2pulsar.designmatrix(fixunits=True, fixsigns=True, incoffset=True)
-        self.writeData(psrGroup, 'designmatrix', desmat, overwrite=overwrite)
-
         # Write the position of the pulsar, even if it is in ecliptic
         # coordinates
         if 'RAJ' in t2pulsar and 'DECJ' in t2pulsar:
@@ -356,12 +380,14 @@ class DataFile(object):
         self.writeData(psrGroup, 'decj', np.float(decj), overwrite=overwrite)
 
         # Now obtain and write the timing model parameters
-        tmpname = ['Offset'] + list(t2pulsar.pars(which='fit'))
+        actpars = self.get_used_t2pars(t2pulsar, inc_inactive)
+        tmpname = ['Offset'] + actpars #+ list(t2pulsar.pars(which='fit'))
         tmpvalpre = np.zeros(len(tmpname))
         tmpvalpost = np.zeros(len(tmpname))
         tmperrpre = np.zeros(len(tmpname))
         tmperrpost = np.zeros(len(tmpname))
-        for i in range(len(t2pulsar.pars(which='fit'))):
+        #for i in range(len(t2pulsar.pars(which='fit'))):
+        for i in range(len(actpars)):
             tmpvalpre[i+1] = t2pulsar[tmpname[i+1]].val
             tmpvalpost[i+1] = t2pulsar[tmpname[i+1]].val
             tmperrpre[i+1] = t2pulsar[tmpname[i+1]].err
@@ -372,6 +398,11 @@ class DataFile(object):
         self.writeData(psrGroup, 'tmp_valpost', tmpvalpost, overwrite=overwrite)    # TMP post-fit value
         self.writeData(psrGroup, 'tmp_errpre', tmperrpre, overwrite=overwrite)      # TMP pre-fit error
         self.writeData(psrGroup, 'tmp_errpost', tmperrpost, overwrite=overwrite)    # TMP post-fit error
+
+        # TODO: writing the design matrix should be done irrespective of the fitting flag
+        #desmat = t2pulsar.designmatrix(fixunits=True, fixsigns=True, incoffset=True)
+        desmat = self.get_designmatrix(t2pulsar, tmpname)
+        self.writeData(psrGroup, 'designmatrix', desmat, overwrite=overwrite)
 
         # Get the flag group for this pulsar. Create if not there
         flagGroup = psrGroup.require_group('Flags')
