@@ -2354,7 +2354,7 @@ def RunPolyChord(likob, chainroot, n_live_points=500, n_chords=1):
 Run a generic PTMCMC algorithm.
 """
 def RunPTMCMC(likob, steps, chainsdir, covfile=None, burnin=10000, resume=False,
-        isave=1000):
+        isave=1000, maxIter=None):
     # Save the parameters to file
     likob.saveModelParameters(chainsdir + '/ptparameters.txt')
     likob.saveResiduals(chainsdir)
@@ -2373,7 +2373,7 @@ def RunPTMCMC(likob, steps, chainsdir, covfile=None, burnin=10000, resume=False,
     sampler = ptmcmc.PTSampler(ndim, likob.loglikelihood, likob.logprior, cov=cov, \
             outDir=chainsdir, verbose=True, newFileOrder=False, resume=resume)
 
-    sampler.sample(p0, steps, thin=1, burn=burnin, isave=isave)
+    sampler.sample(p0, steps, thin=1, burn=burnin, isave=isave, maxIter=maxIter)
 
     return sampler
 
