@@ -15,8 +15,10 @@ from piccard import *
 import pytwalk                  # Internal module
 import pydnest                  # Internal module
 import rjmcmchammer as rjemcee  # Internal module
-import PTMCMC_generic as ptmcmc
 from triplot import *
+
+import PTMCMC_generic as ptmcmc
+#from PTMCMCSampler import PTMCMCSampler as ptmcmc_new
 
 try:
     import statsmodels.api as smapi
@@ -32,14 +34,16 @@ except ImportError:
     emcee = mcmchammer
 
 try:    # If MultiNest is not installed, do not use it
-    import pymultinest
+    #import pymultinest
+    pymultinest = None
 
     pymultinest = pymultinest
 except ImportError:
     pymultinest = None
 
 try:    # If MultiNest is not installed, do not use it
-    import pypolychord
+    #import pypolychord
+    pypolychord = None
 
     pypolychord = pypolychord
 except ImportError:
@@ -2350,11 +2354,11 @@ def RunPolyChord(likob, chainroot, n_live_points=500, n_chords=1):
 
 
 
-"""
-Run a generic PTMCMC algorithm.
-"""
 def RunPTMCMC(likob, steps, chainsdir, covfile=None, burnin=10000, resume=False,
-        isave=1000, maxIter=None):
+        isave=1000, maxIter=None, thin=10):
+    """
+    Run a generic PTMCMC algorithm.
+    """
     # Save the parameters to file
     likob.saveModelParameters(chainsdir + '/ptparameters.txt')
     likob.saveResiduals(chainsdir)
@@ -2373,9 +2377,41 @@ def RunPTMCMC(likob, steps, chainsdir, covfile=None, burnin=10000, resume=False,
     sampler = ptmcmc.PTSampler(ndim, likob.loglikelihood, likob.logprior, cov=cov, \
             outDir=chainsdir, verbose=True, newFileOrder=False, resume=resume)
 
-    sampler.sample(p0, steps, thin=1, burn=burnin, isave=isave, maxIter=maxIter)
+    sampler.sample(p0, steps, thin=thin, burn=burnin, isave=isave, maxIter=maxIter)
 
     return sampler
+
+
+"""
+def RunPTMCMC_new(likob, steps, chainsdir, covfile=None, burnin=10000, resume=False,
+        isave=1000, maxIter=None):
+    # Save the parameters to file
+    likob.saveModelParameters(chainsdir + '/ptparameters.txt')
+    likob.saveResiduals(chainsdir)
+
+    ndim = likob.dimensions
+    pwidth = likob.pwidth.copy()
+
+    if not covfile is None:
+        cov = np.load(covfile)
+        p0 = likob.pstart #+ 0.001*likob.pwidth
+    else:
+        cov = np.diag(pwidth**2)
+        p0 = likob.pstart #+ likob.pwidth
+
+    def zerofunc(pars):
+        return 0.0
+
+    sampler = ptmcmc_new.PTSampler(ndim, likob.loglikelihood, zerofunc, cov=cov, \
+            outDir=chainsdir, verbose=True, resume=resume)
+
+    #sampler.sample(p0, steps, thin=1, burn=burnin, isave=isave, maxIter=maxIter)
+    sampler.sample(p0, steps, isave=1000, covUpdate=1000,
+            SCAMweight=1, AMweight=100, DEweight=100, burn=burnin,
+               maxIter=maxIter, thin=1, i0=0, neff=100000)
+
+    return sampler
+"""
 
 """
 Obtain the MCMC chain as a numpy array, and a list of parameter indices
