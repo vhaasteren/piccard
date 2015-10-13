@@ -186,6 +186,10 @@ class ptaPulsar(object):
         self.Jweight = None          # The weight of the jitter noise in compressed basis
         self.Jvec = None
 
+        # For gradients
+        self.d_Nvec_d_param = dict()
+        self.d_Jvec_d_param = dict()
+
         # To select the number of Frequency modes
         self.bfinc = None        # Number of modes of all internal matrices
         self.bfdminc = None      # Number of modes of all internal matrices (DM)
@@ -2530,8 +2534,7 @@ class ptaLikelihood(object):
         self.Phi = None          # mark1, mark3, mark?, mark6                (Noise & corr)
         self.Phivec = None       # mark1, mark3, mark?, mark6          gibbs (Noise)
         self.Thetavec = None     #               mark?, mark6          gibbs (DM)
-        self.Beta = None         #                                     gibbs (Band Noise)
-        self.Muvec = None        #                             mark11        (Jitter)
+        self.Betavec = None      #                                     gibbs (Band Noise)
         self.Svec = None         #                                     gibbs (GWB PSD)
         self.Scor = None         #                                     gibbs (GWB corr)
         self.Scor_im = None      #                                     gibbs (GWB impl)
@@ -2541,6 +2544,9 @@ class ptaLikelihood(object):
         self.Sigma_F = None      #                                     gibbs
         self.Sigma_F_cf = None   #                                     gibbs
         self.GNGldet = None      # mark1, mark3, mark?, mark6                (log-det)
+        self.d_Phivec_d_param = dict()          # For gradients
+        self.d_Thetavec_d_param = dict()        # For gradients
+        self.d_Betavec_d_param = dict()         # For gradients
 
         self.Fmat_gw = None      # The F-matrix, but for GWs
         self.Ffreqs_gw = None    # Frequencies of the GWs
@@ -3170,7 +3176,7 @@ class ptaLikelihood(object):
         self.Phi = np.zeros((np.sum(self.npf), np.sum(self.npf)))
         self.Phivec = np.zeros(np.sum(self.npf))
         self.Thetavec = np.zeros(np.sum(self.npfdm))
-        self.Muvec = np.zeros(np.sum(self.npu))
+        self.Betavec = np.zeros(np.sum(self.npfb))
         self.Svec = np.zeros(np.max(self.npf))
         self.Scor = np.zeros((len(self.ptapsrs), len(self.ptapsrs)))
 
@@ -3205,7 +3211,6 @@ class ptaLikelihood(object):
                 or self.likfunc == 'mark6fa':
             self.Sigma = np.zeros((np.sum(self.npf)+np.sum(self.npfdm), \
                     np.sum(self.npf)+np.sum(self.npfdm)))
-            self.Thetavec = np.zeros(np.sum(self.npfdm))
             self.GNGldet = np.zeros(npsrs)
             self.rGr = np.zeros(npsrs)
             self.rGE = np.zeros(np.sum(self.npf)+np.sum(self.npfdm))
@@ -3236,8 +3241,6 @@ class ptaLikelihood(object):
 
             self.Sigma_F = np.zeros((zlen_f, zlen_f))
             self.GNGldet = np.zeros(npsrs)
-            self.Thetavec = np.zeros(np.sum(self.npfdm))
-            self.Betavec = np.zeros(np.sum(self.npfb))
             self.rGZ_F = np.zeros(zlen_f)
             self.rGZ_D = np.zeros(zlen_d)
             self.rGZ_U = np.zeros(zlen_u)
@@ -4889,17 +4892,18 @@ class ptaLikelihood(object):
 
 
 
-    """
-    Loop over all signals, and fill the diagonal pulsar noise covariance matrix
-    (based on efac/equad)
-    For two-component noise model, fill the total weights vector
+    def setPsrNoise(self, parameters, selection=None, calc_gradient=False):
+        """
+        Loop over all signals, and fill the diagonal pulsar noise covariance matrix
+        (based on efac/equad)
+        For two-component noise model, fill the total weights vector
 
-    @param parameters:  The total parameters vector
-    @param selection:   Boolean array, indicating which parameters to include
-    @param incJitter:   Whether or not to include Jitter in the noise vectort
-
-    """
-    def setPsrNoise(self, parameters, selection=None):
+        @param parameters:  The total parameters vector
+        @param selection:   Boolean array, indicating which parameters to include
+        @param incJitter:   Whether or not to include Jitter in the noise vectort
+        @param calc_gradient:   If True, calculate all the gradients as well
+                                (placed in dictionaries)
+        """
         # For every pulsar, set the noise vector to zero
         for ii, psr in enumerate(self.ptapsrs):
             if psr.twoComponentNoise:
@@ -4952,7 +4956,8 @@ class ptaLikelihood(object):
 
 
     def constructPhiAndTheta(self, parameters, selection=None, \
-            make_matrix=True, noise_vec=False, gibbs_expansion=False):
+            make_matrix=True, noise_vec=False, gibbs_expansion=False,
+            calc_gradient=False):
         """
         Loop over all signals, and fill the phi matrix. This function assumes that
         the self.Phi matrix has already been allocated
@@ -4976,6 +4981,8 @@ class ptaLikelihood(object):
         @param gibbs_expansion: Do not build the Phi matrix, but place the
                                 correlated signals (only) in two tensor-product
                                 components (H&D or other)
+        @param calc_gradient:   If True, calculate all the gradients as well
+                                (placed in dictionaries)
         """
 
         if make_matrix:
@@ -4983,6 +4990,7 @@ class ptaLikelihood(object):
 
         self.Phivec[:] = 0.0      # ''
         self.Thetavec[:] = 0.0    # ''
+        self.Betavec[:] = 0.0    # ''
         self.Svec[:] = 0.0
         self.Scor[:] = 0.0
         npsrs = len(self.ptapsrs)
@@ -5058,6 +5066,21 @@ class ptaLikelihood(object):
                         if gibbs_expansion:
                             # Expand in spectrum and correlations
                             self.Scor = corrmat.copy()     # Yes, well, there can be only one
+                elif m2signal['stype'] == 'blspectrum':
+                    pp = m2signal['pulsarind']
+                    psr = self.ptapsrs[pp]
+                    inds = np.sum(self.npfb[:pp])
+                    inde = inds + self.npfb[pp]
+
+                    # Find the FB index for the band we are in
+                    bind = np.where(np.all(psr.Fbands==m2signal['freqband'],axis=1))[0][0]
+                    findex = np.sum(self.npfb[:pp]) + bind*self.npf[pp]
+                    nfreq = int(self.npf[pp]/2)
+
+                    pcdoubled = np.array([sparameters, sparameters]).T.flatten()
+
+                    # Fill the Beta matrix
+                    self.Betavec[findex:findex+2*nfreq] += 10**pcdoubled
                 elif m2signal['stype'] == 'dmspectrum':
                     if m2signal['corr'] == 'single':
                         findex = np.sum(self.npffdm[:m2signal['pulsarind']])
@@ -5182,6 +5205,45 @@ class ptaLikelihood(object):
                         if gibbs_expansion:
                             # Expand in spectrum and correlations
                             self.Scor = corrmat.copy()     # Yes, well, there can be only one
+                elif m2signal['stype'] == 'blpowerlaw':
+                    pp = m2signal['pulsarind']
+                    psr = self.ptapsrs[pp]
+                    inds = np.sum(self.npfb[:pp])
+                    inde = inds + self.npfb[pp]
+
+                    Amp = 10**sparameters[0]
+                    Si = sparameters[1]
+
+                    # Find the FB index for the band we are in
+                    bind = np.where(np.all(psr.Fbands==m2signal['freqband'],axis=1))[0][0]
+                    findex = np.sum(self.npfb[:pp]) + bind*self.npf[pp]
+                    nfreq = int(self.npf[pp]/2)
+
+                    freqpy = self.ptapsrs[pp].Ffreqs * pic_spy
+                    pcdoubled = (Amp**2 * pic_spy**3 / (12*np.pi*np.pi * m2signal['Tmax'])) * freqpy ** (-Si)
+
+                    # Fill the Beta matrix
+                    self.Betavec[findex:findex+2*nfreq] += 10**pcdoubled
+                elif m2signal['stype'] == 'blspectralModel':
+                    pp = m2signal['pulsarind']
+                    psr = self.ptapsrs[pp]
+                    inds = np.sum(self.npfb[:pp])
+                    inde = inds + self.npfb[pp]
+
+                    Amp = 10**sparameters[0]
+                    alpha = sparameters[1]
+                    fc = 10**sparameters[2] / pic_spy
+
+                    # Find the FB index for the band we are in
+                    bind = np.where(np.all(psr.Fbands==m2signal['freqband'],axis=1))[0][0]
+                    findex = np.sum(self.npfb[:pp]) + bind*self.npf[pp]
+                    nfreq = int(self.npf[pp]/2)
+
+                    freqpy = self.ptapsrs[pp].Ffreqs
+                    pcdoubled = (Amp * pic_spy**3 / m2signal['Tmax']) * ((1 + (freqpy/fc)**2)**(-0.5*alpha))
+
+                    # Fill the Beta matrix
+                    self.Betavec[findex:findex+2*nfreq] += 10**pcdoubled
                 elif m2signal['stype'] == 'dmpowerlaw':
                     Amp = 10**sparameters[0]
                     Si = sparameters[1]
@@ -5462,7 +5524,6 @@ class ptaLikelihood(object):
 
         psr.gibbs_N_sinds = np.array(psr.gibbs_N_sinds)
         psr.gibbs_NJ_sinds = np.array(psr.gibbs_NJ_sinds)
-
 
 
     def setTheta(self, parameters, selection=None, pp=0):
@@ -7871,7 +7932,12 @@ class ptaLikelihood(object):
     """
     def mark11loglikelihood(self, sr_parameters):
         # The red signal hyper-parameters
-        self.constructPhiAndTheta(sr_parameters, make_matrix=False)
+        self.setPhi(sr_parameters, gibbs_expansion=True)
+
+        # Hyper parameters for psr noise
+        for pp, psr in enumerate(self.ptapsrs):
+            self.setBeta(sr_parameters, pp=pp)
+            self.setTheta(sr_parameters, pp=pp)
 
         # The white noise hyper parameters
         self.setPsrNoise(sr_parameters)
@@ -7911,12 +7977,11 @@ class ptaLikelihood(object):
                 uindex = np.sum(self.npu[:ii])
                 npus = self.npu[ii]
                 ind = psr.jitterind
-                self.Muvec[uindex:uindex+npus] = psr.Jvec
 
                 self.rGr[ii] += np.sum(parameters[ind:ind+npus]**2 / \
-                    self.Muvec[uindex:uindex+npus])
+                    psr.Jvec)
 
-                self.GNGldet[ii] += np.sum(np.log(self.Muvec))
+                self.GNGldet[ii] += np.sum(np.log(psr.Jvec))
 
         ll = -0.5*np.sum(self.npobs)*np.log(2*np.pi) \
                 -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) \
