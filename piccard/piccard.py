@@ -2004,7 +2004,7 @@ class ptaPulsar(object):
         # G/H compression matrices
         vslice = self.isort
         mslice = (self.isort, slice(None, None, None))
-        if not likfunc in ['mark12', 'gibbs']:
+        if not likfunc in ['mark11', 'mark12', 'gibbs']:
             self.Gmat = np.array(h5df.getData(self.name, 'pic_Gmat', \
                     dontread=memsave, isort=mslice))
             self.Gcmat = np.array(h5df.getData(self.name, 'pic_Gcmat', \
@@ -2039,7 +2039,7 @@ class ptaPulsar(object):
 
         # If compression is not done, but Hmat represents a compression matrix,
         # we need to re-evaluate the lot. Raise an error
-        if not noGmat and not likfunc in ['mark12', 'gibbs']:
+        if not noGmat and not likfunc in ['mark11', 'mark12', 'gibbs']:
             if compression == 'dont':
                 pass
             elif (compression == 'None' or compression is None) and \
@@ -2537,7 +2537,6 @@ class ptaLikelihood(object):
         self.Betavec = None      #                                     gibbs (Band Noise)
         self.Svec = None         #                                     gibbs (GWB PSD)
         self.Scor = None         #                                     gibbs (GWB corr)
-        self.Scor_im = None      #                                     gibbs (GWB impl)
         self.Scor_im_cf = None   #                                     gibbs (GWB impl)
         self.Scor_im_inv = None  #                                     gibbs (GWB impl)
         self.Sigma = None        #        mark3, mark?, mark6                (everything)
@@ -2547,6 +2546,7 @@ class ptaLikelihood(object):
         self.d_Phivec_d_param = dict()          # For gradients
         self.d_Thetavec_d_param = dict()        # For gradients
         self.d_Betavec_d_param = dict()         # For gradients
+        self.d_Svec_d_param  = dict()           # For gradients
 
         self.Fmat_gw = None      # The F-matrix, but for GWs
         self.Ffreqs_gw = None    # Frequencies of the GWs
@@ -3365,6 +3365,11 @@ class ptaLikelihood(object):
                 compression == "None":
             compression = 'dont'
 
+        if likfunc in ['mark11'] and not (expandJitter and expandCEquad):
+            print("WARNING: mark11 needs explicit jitter/ecorr. Turned on")
+            expandJitter = True
+            expandCEquad = True
+
         # Figure out what the frequencies per pulsar are
         for pindex, m2psr in enumerate(self.ptapsrs):
             if incDM:
@@ -3461,7 +3466,7 @@ class ptaLikelihood(object):
                 if not 'jitter' in gibbsmodel and (expandJitter and expandCEquad):
                     # We are expanding the Jitter/CEquad in the Gibbs sampler
                     gibbsmodel.append('jitter')
-                if separateCEquads and not likfunc in ['mark12', 'gibbs']:
+                if separateCEquads and not likfunc in ['mark11', 'mark12', 'gibbs']:
                     uflagvals = list(set(m2psr.flags))  # Unique flags
                     for flagval in uflagvals:
                         newsignal = OrderedDict({
@@ -3478,7 +3483,7 @@ class ptaLikelihood(object):
                             "prior":'flatlog'
                             })
                         signals.append(newsignal)
-                elif separateCEquads and likfunc in ['mark12', 'gibbs']:
+                elif separateCEquads and likfunc in ['mark11', 'mark12', 'gibbs']:
                     # Need to decide on number of jitter parameters, and
                     # number of epochs with jitter first for Gibbs sampler
                     if not checkTOAsort(m2psr.toas, m2psr.flags, \
@@ -3506,6 +3511,8 @@ class ptaLikelihood(object):
                             })
                         signals.append(newsignal)
                 else:
+                    print "Doing jitter regular"
+                    (m2psr.avetoas, m2psr.Umat) = quantize_fast(m2psr.toas)
                     newsignal = OrderedDict({
                         "stype":"jitter",
                         "corr":"single",
@@ -3857,10 +3864,8 @@ class ptaLikelihood(object):
 
                 #if incJitter or incCEquad:
                 if 'jitter' in gibbsmodel:
-                    # Still part of 'mark11'
-                    (avetoas, Umat) = quantize_fast(m2psr.toas)
-                    print("WARNING: per-backend epoch averaging not supported in mark11")
-                    nmodes = len(avetoas)
+                    # We already have the U-matrix. Use those modes
+                    nmodes = len(m2psr.avetoas)
                     bvary = [True]*nmodes
                     pmin = [-1.0e6]*nmodes
                     pmax = [1.0e6]*nmodes
@@ -3881,9 +3886,6 @@ class ptaLikelihood(object):
                         "prior":'flat'
                         })
                     signals.append(newsignal)
-
-                    del avetoas
-                    del Umat
 
         if incGWB:
             if not 'rednoise' in gibbsmodel:
@@ -4384,7 +4386,7 @@ class ptaLikelihood(object):
         else:
             separateEfacs = (numEfacs + numEquads + numJits) > 2
 
-        if self.likfunc in ['mark12', 'gibbs']:
+        if self.likfunc in ['mark11', 'mark12', 'gibbs']:
             # For now, only trim the quantization matrix Umat for Gibbs/mark12
             trimquant = True
         else:
@@ -4935,6 +4937,10 @@ class ptaLikelihood(object):
 
                     psr.Nvec += m2signal['Nvec'] * pefac**2
 
+                    if calc_gradient and m2signal['npars'] == 1:
+                        psr.d_Nvec_d_param[m2signal['parindex']] = \
+                                2 * m2signal['Nvec'] * pefac
+
                 elif m2signal['stype'] == 'equad':
                     if m2signal['npars'] == 1:
                         pequadsqr = 10**(2*parameters[m2signal['parindex']])
@@ -4946,6 +4952,10 @@ class ptaLikelihood(object):
                         psr.Nwovec += pequadsqr
 
                     psr.Nvec += m2signal['Nvec'] * pequadsqr
+
+                    if calc_gradient and m2signal['npars'] == 1:
+                        psr.d_Nvec_d_param[m2signal['parindex']] = \
+                                2*np.log(10)*10**(2*parameters[m2signal['parindex']])
                 elif m2signal['stype'] == 'jitter':
                     if m2signal['npars'] == 1:
                         pequadsqr = 10**(2*parameters[m2signal['parindex']])
@@ -4954,6 +4964,97 @@ class ptaLikelihood(object):
 
                     psr.Jvec += m2signal['Jvec'] * pequadsqr
 
+                    if calc_gradient and m2signal['npars'] == 1:
+                        psr.d_Jvec_d_param[m2signal['parindex']] = \
+                                2*np.log(10)*10**(2*parameters[m2signal['parindex']])
+
+    def spBpsd(self, pars):
+        """given the signal parameters, return the PSD as placed on the diagonal
+        of the prior covariance
+        """
+        return 10**sparameters.repeat(2)
+
+    def d_spBpsd(self, pars):
+        """given the signal parameters, return the PSD as placed on the diagonal
+        of the prior covariance
+        """
+        d_psd = np.log(10)*10**sparameters
+        return np.diag(d_psd).repeat(2, axis=0)
+    
+    def plBpsd(self, lAmp, Si, T, freqs):
+        """given the signal parameters, return the PSD as placed on the diagonal
+        of the prior covariance
+        """
+        freqpy = freqs * pic_spy
+        return (10**(2*lAmp) * pic_spy**3 / (12*np.pi*np.pi * T)) * freqpy ** (-Si)
+
+    def d_plBpsd(self, lAmp, Si, T, freqs, ntotfreqs=None, nfreqind=None):
+        """given the signal parameters, return the PSD as placed on the diagonal
+        of the prior covariance
+        """
+        # Check whether we need indidces (for band-limited stuff)
+        if ntotfreqs is None:
+            ntotfreqs = len(freqs)
+        if nfreqind is None:
+            nfreqind = 0
+
+        freqpy = freqs * pic_spy
+        d_mat = np.zeros((ntotfreqs, 3))
+
+        d_mat[nfreqind:nfreqind+len(freqs),0] = (2*np.log(10)*10**(2*lAmp) * pic_spy**3 / (12*np.pi*np.pi * T)) * freqpy ** (-Si)
+        d_mat[nfreqind:nfreqind+len(freqs),1] = -np.log(freqpy)*(10**(2*lAmp) * pic_spy**3 / (12*np.pi*np.pi * T)) * freqpy ** (-Si)
+
+        return d_mat
+    
+    def smBpsd(self, lAmp, alpha, lfc, T, freqs):
+        """given the signal parameters, return the PSD as placed on the diagonal
+        of the prior covariance
+        """
+        fc = 10**lfc / pic_spy
+        return (10**lAmp * pic_spy**3 / T) * ((1 + (freqs/fc)**2)**(-0.5*alpha))
+
+    def d_smBpsd(self, lAmp, alpha, lfc, T, freqs, ntotfreqs=None, nfreqind=None):
+        """given the signal parameters, return the PSD as placed on the diagonal
+        of the prior covariance
+        """
+        # Check whether we need indidces (for band-limited stuff)
+        if ntotfreqs is None:
+            ntotfreqs = len(freqs)
+        if nfreqind is None:
+            nfreqind = 0
+
+        d_mat = np.zeros((len(freqs), 3))
+
+        d_mat[nfreqind:nfreqind+len(freqs),0] = (np.log(10)*10**lAmp * pic_spy**3 / T) * ((1 + (freqs/fc)**2)**(-0.5*alpha))
+        raise NotImplemented("Spectral model gradient not completed yet!")
+        d_mat[nfreqind:nfreqind+len(freqs),1] = (10**lAmp * pic_spy**3 / T) * ((1 + (freqs/fc)**2)**(-0.5*alpha))
+        d_mat[nfreqind:nfreqind+len(freqs),2] = (10**lAmp * pic_spy**3 / T) * ((1 + (freqs/fc)**2)**(-0.5*alpha))
+
+        return d_mat
+
+    def add_d_Phivec(self, d_mat, startindex, mask):
+        """Update d_Phivec_d_param with the new derivatives"""
+        for col in range(d_mat.shape[1]):
+            if mask[col]:
+                self.d_Phivec_d_param[startindex+col] = d_mat[:,col]
+
+    def add_d_Thetavec(self, d_mat, startindex, mask):
+        """Update d_Thetavec_d_param with the new derivatives"""
+        for col in range(d_mat.shape[1]):
+            if mask[col]:
+                self.d_Thetavec_d_param[startindex+col] = d_mat[:,col]
+
+    def add_d_Betavec(self, d_mat, startindex, mask):
+        """Update d_Betavec_d_param with the new derivatives"""
+        for col in range(d_mat.shape[1]):
+            if mask[col]:
+                self.d_Betavec_d_param[startindex+col] = d_mat[:,col]
+
+    def add_d_Svec(self, d_mat, startindex, mask):
+        """Update d_Svec_d_param with the new derivatives"""
+        for col in range(d_mat.shape[1]):
+            if mask[col]:
+                self.d_Svec_d_param[startindex+col] = d_mat[:,col]
 
     def constructPhiAndTheta(self, parameters, selection=None, \
             make_matrix=True, noise_vec=False, gibbs_expansion=False,
@@ -5016,35 +5117,41 @@ class ptaLikelihood(object):
                         # Pcdoubled is an array where every element of the parameters
                         # of this m2signal is repeated once (e.g. [1, 1, 3, 3, 2, 2, 5, 5, ...]
 
-                        pcdoubled = np.array([sparameters, sparameters]).T.flatten()
-
-                        # Fill the phi matrix
-                        di = np.diag_indices(2*nfreq)
+                        pcd = self.spBpsd(sparameters)
                         if make_matrix and not noise_vec:
-                            self.Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += 10**pcdoubled
+                            di = np.diag_indices(2*nfreq)
+                            self.Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += pcd
+                        self.Phivec[findex:findex+2*nfreq] += pcd
 
-                        self.Phivec[findex:findex+2*nfreq] += 10**pcdoubled
+                        if calc_gradient:
+                            d_mat = self.d_spBpsd(sparameters)
+                            self.add_d_Phivec(d_mat, m2signal['parindex'],
+                                    m2signal['bvary'])
+
                     elif m2signal['corr'] in ['gr', 'uniform', 'dipole', \
                                               'anisotropicgwb', 'pixelgwb']:
                         nfreq = m2signal['npars']
 
                         if m2signal['corr'] in ['gr', 'uniform', 'dipole']:
-                            pcdoubled = np.array([sparameters, sparameters]).T.flatten()
+                            #pcdoubled = np.array([sparameters, sparameters]).T.flatten()
+                            pcd = spBsd(sparameters)
                             corrmat = m2signal['corrmat']
                         elif m2signal['corr'] == 'anisotropicgwb':
                             nclm = m2signal['aniCorr'].clmlength()
                             # These indices do not seem right at all!
-                            pcdoubled = np.array([\
-                                    sparameters[:-nclm],\
-                                    sparameters[:-nclm]]).T.flatten()
+                            pcd = spBsd(sparameters[:-nclm])
+                            #pcdoubled = np.array([\
+                            #        sparameters[:-nclm],\
+                            #        sparameters[:-nclm]]).repeat(2)
                             clm = sparameters[-nclm:]
                             corrmat = m2signal['aniCorr'].corrmat(clm)
                         elif m2signal['corr'] == 'pixelgwb':
                             npixels = m2signal['aniCorr'].npixels
                             pixpars = sparameters[-2*npixels:]
                             corrmat = m2signal['aniCorr'].corrmat(pixpars)
-                            pcdoubled = np.array([sparameters[:-2*npixels], \
-                                    sparameters[:-2*npixels]]).T.flatten()
+                            pcd = spBsd(sparameters[:-2*npixels])
+                            #pcdoubled = np.array([sparameters[:-2*npixels], \
+                            #        sparameters[:-2*npixels]]).T.flatten()
 
                         if make_matrix:
                             # Only add it if we need the full matrix
@@ -5057,15 +5164,22 @@ class ptaLikelihood(object):
                                     nof = np.min([self.npf[aa], self.npf[bb], 2*nfreq])
                                     di = np.diag_indices(nof)
 
-                                    self.Phi[indexa:indexa+nof,indexb:indexb+nof][di] += 10**pcdoubled[:nof] * corrmat[aa, bb]
+                                    #self.Phi[indexa:indexa+nof,indexb:indexb+nof][di] += 10**pcdoubled[:nof] * corrmat[aa, bb]
+                                    self.Phi[indexa:indexa+nof,indexb:indexb+nof][di] += pcd[:nof] * corrmat[aa, bb]
                                     indexb += self.npff[bb]
                                 indexb = 0
                                 indexa += self.npff[aa]
 
-                        self.Svec += 10**pcdoubled
+                        #self.Svec += 10**pcdoubled
+                        self.Svec += pcd
                         if gibbs_expansion:
                             # Expand in spectrum and correlations
                             self.Scor = corrmat.copy()     # Yes, well, there can be only one
+
+                        if calc_gradient:
+                            d_mat = self.d_spBpsd(sparameters)
+                            self.add_d_Svec(d_mat, m2signal['parindex'],
+                                    m2signal['bvary'])
                 elif m2signal['stype'] == 'blspectrum':
                     pp = m2signal['pulsarind']
                     psr = self.ptapsrs[pp]
@@ -5077,40 +5191,67 @@ class ptaLikelihood(object):
                     findex = np.sum(self.npfb[:pp]) + bind*self.npf[pp]
                     nfreq = int(self.npf[pp]/2)
 
-                    pcdoubled = np.array([sparameters, sparameters]).T.flatten()
+                    #pcdoubled = np.array([sparameters, sparameters]).T.flatten()
+                    pcd = self.spBpsd(sparameters)
 
                     # Fill the Beta matrix
-                    self.Betavec[findex:findex+2*nfreq] += 10**pcdoubled
+                    #self.Betavec[findex:findex+2*nfreq] += 10**pcdoubled
+                    self.Betavec[findex:findex+2*nfreq] += pcd
+
+                    if calc_gradient:
+                        d_mat = self.d_spBpsd(sparameters,
+                                len(psr.Fbands)*self.npf[pp], bind*self.npf[pp])
+                        self.add_d_Betavec(d_mat, m2signal['parindex'],
+                                m2signal['bvary'])
                 elif m2signal['stype'] == 'dmspectrum':
                     if m2signal['corr'] == 'single':
                         findex = np.sum(self.npffdm[:m2signal['pulsarind']])
                         nfreq = int(self.npfdm[m2signal['pulsarind']]/2)
 
-                        pcdoubled = np.array([sparameters, sparameters]).T.flatten()
+                        #pcdoubled = np.array([sparameters, sparameters]).T.flatten()
+                        pcd = self.spBpsd(sparameters)
 
                         # Fill the Theta matrix
-                        self.Thetavec[findex:findex+2*nfreq] += 10**pcdoubled
+                        #self.Thetavec[findex:findex+2*nfreq] += 10**pcdoubled
+                        self.Thetavec[findex:findex+2*nfreq] += pcd
+
+                        if calc_gradient:
+                            d_mat = self.d_spBpsd(sparameters)
+                            self.add_d_Thetavec(d_mat, m2signal['parindex'],
+                                    m2signal['bvary'])
                 elif m2signal['stype'] == 'powerlaw':
-                    Amp = 10**sparameters[0]
+                    #Amp = 10**sparameters[0]    ###
+                    lAmp = sparameters[0]
                     Si = sparameters[1]
+                    sTmax = m2signal['Tmax']
+                    sfreqs = self.ptapsrs[m2signal['pulsarind']].Ffreqs
 
                     if m2signal['corr'] == 'single':
                         findex = np.sum(self.npff[:m2signal['pulsarind']])
                         nfreq = int(self.npf[m2signal['pulsarind']]/2)
-                        freqpy = self.ptapsrs[m2signal['pulsarind']].Ffreqs * pic_spy
-                        pcdoubled = (Amp**2 * pic_spy**3 / (12*np.pi*np.pi * m2signal['Tmax'])) * freqpy ** (-Si)
+                        # freqpy = self.ptapsrs[m2signal['pulsarind']].Ffreqs * pic_spy   ###
+                        # pcdoubled = (Amp**2 * pic_spy**3 / (12*np.pi*np.pi * m2signal['Tmax'])) * freqpy ** (-Si) ####
+                        pcd = self.plBpsd(lAmp, Si, sTmax, sfreqs)
 
                         # Fill the phi matrix
                         di = np.diag_indices(2*nfreq)
 
                         if make_matrix and not noise_vec:
-                            self.Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += pcdoubled
+                            #self.Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += pcdoubled
+                            self.Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += pcd
 
-                        self.Phivec[findex:findex+2*nfreq] += pcdoubled
+                        # self.Phivec[findex:findex+2*nfreq] += pcdoubled
+                        self.Phivec[findex:findex+2*nfreq] += pcd
+
+                        if calc_gradient:
+                            d_mat = self.d_plBpsd(lAmp, Si, sTmax, sfreqs)
+                            self.add_d_Phivec(d_mat, m2signal['parindex'],
+                                    m2signal['bvary'])
                     elif m2signal['corr'] in ['gr', 'uniform', 'dipole', \
                                               'anisotropicgwb', 'pixelgwb']:
-                        freqpy = m2signal['Ffreqs'] * pic_spy
-                        pcdoubled = (Amp**2 * pic_spy**3 / (12*np.pi*np.pi * m2signal['Tmax'])) * freqpy ** (-Si)
+                        #freqpy = m2signal['Ffreqs'] * pic_spy
+                        #pcdoubled = (Amp**2 * pic_spy**3 / (12*np.pi*np.pi * m2signal['Tmax'])) * freqpy ** (-Si)
+                        pcd = self.plBpsd(lAmp, Si, sTmax, sfreqs)
                         nfreq = len(freqpy)
 
                         if m2signal['corr'] in ['gr', 'uniform', 'dipole']:
@@ -5136,41 +5277,60 @@ class ptaLikelihood(object):
 
                                     di = np.diag_indices(nof)
 
-                                    self.Phi[indexa:indexa+nof,indexb:indexb+nof][di] += pcdoubled[:nof] * corrmat[aa, bb]
+                                    #self.Phi[indexa:indexa+nof,indexb:indexb+nof][di] += pcdoubled[:nof] * corrmat[aa, bb]
+                                    self.Phi[indexa:indexa+nof,indexb:indexb+nof][di] += pcd[:nof] * corrmat[aa, bb]
                                     indexb += self.npff[bb]
                                 indexb = 0
                                 indexa += self.npff[aa]
 
-                        self.Svec += pcdoubled
+                        #self.Svec += pcdoubled
+                        self.Svec += pcd
                         if gibbs_expansion:
                             # Expand in spectrum and correlations
                             self.Scor = corrmat.copy()
+
+                        if calc_gradient:
+                            d_mat = self.d_plBpsd(lAmp, Si, sTmax, sfreqs)
+                            self.add_d_Svec(d_mat, m2signal['parindex'],
+                                    m2signal['bvary'])
                 elif m2signal['stype'] == 'spectralModel':
-                    Amp = 10**sparameters[0]
+                    #Amp = 10**sparameters[0]
+                    lAmp = sparameters[0]
                     alpha = sparameters[1]
-                    fc = 10**sparameters[2] / pic_spy
+                    #fc = 10**sparameters[2] / pic_spy
+                    lfc = sparameters[2]
+                    sTmax = m2signal['Tmax']
+                    sfreqs = self.ptapsrs[m2signal['pulsarind']].Ffreqs
 
                     if m2signal['corr'] == 'single':
                         findex = np.sum(self.npff[:m2signal['pulsarind']])
                         nfreq = int(self.npf[m2signal['pulsarind']]/2)
-                        freqpy = self.ptapsrs[m2signal['pulsarind']].Ffreqs
-                        pcdoubled = (Amp * pic_spy**3 / m2signal['Tmax']) * ((1 + (freqpy/fc)**2)**(-0.5*alpha))
+                        #freqpy = self.ptapsrs[m2signal['pulsarind']].Ffreqs
+                        #pcdoubled = (Amp * pic_spy**3 / m2signal['Tmax']) * ((1 + (freqpy/fc)**2)**(-0.5*alpha))
+                        pcd = self.smBpsd(lAmp, alpha, lfc, sTmax, sfreqs)
 
-                        #pcdoubled = (Amp * pic_spy**3 / (m2signal['Tmax'])) * freqpy ** (-Si)
 
                         # Fill the phi matrix
                         di = np.diag_indices(2*nfreq)
 
                         if make_matrix and not noise_vec:
-                            self.Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += pcdoubled
+                            #self.Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += pcdoubled
+                            self.Phi[findex:findex+2*nfreq, findex:findex+2*nfreq][di] += pcd
 
-                        self.Phivec[findex:findex+2*nfreq] += pcdoubled
+                        #self.Phivec[findex:findex+2*nfreq] += pcdoubled
+                        self.Phivec[findex:findex+2*nfreq] += pcd
+
+                        if calc_gradient:
+                            d_mat = self.d_smBpsd(lAmp, alpha, lfc, sTmax, sfreqs)
+                            self.add_d_Phivec(d_mat, m2signal['parindex'],
+                                    m2signal['bvary'])
                     elif m2signal['corr'] in ['gr', 'uniform', 'dipole', \
                                               'anisotropicgwb', 'pixelgwb']:
-                        freqpy = self.ptapsrs[0].Ffreqs * pic_spy
-                        pcdoubled = (Amp * pic_spy**3 / m2signal['Tmax']) / \
-                                ((1 + (freqpy/fc)**2)**(-0.5*alpha))
+                        #freqpy = self.ptapsrs[0].Ffreqs * pic_spy
+                        #pcdoubled = (Amp * pic_spy**3 / m2signal['Tmax']) / \
+                        #        ((1 + (freqpy/fc)**2)**(-0.5*alpha))
                         nfreq = len(freqpy)
+                        pcd = self.smBpsd(lAmp, alpha, lfc, sTmax, sfreqs)
 
                         if m2signal['corr'] in ['gr', 'uniform', 'dipole']:
                             corrmat = m2signal['corrmat']
@@ -5196,67 +5356,106 @@ class ptaLikelihood(object):
 
                                     di = np.diag_indices(nof)
 
-                                    self.Phi[indexa:indexa+nof,indexb:indexb+nof][di] += pcdoubled[:nof] * corrmat[aa, bb]
+                                    #self.Phi[indexa:indexa+nof,indexb:indexb+nof][di] += pcdoubled[:nof] * corrmat[aa, bb]
+                                    self.Phi[indexa:indexa+nof,indexb:indexb+nof][di] += pcd[:nof] * corrmat[aa, bb]
                                     indexb += self.npff[bb]
                                 indexb = 0
                                 indexa += self.npff[aa]
                         
-                        self.Svec += pcdoubled
+                        #self.Svec += pcdoubled
+                        self.Svec += pcd
                         if gibbs_expansion:
                             # Expand in spectrum and correlations
                             self.Scor = corrmat.copy()     # Yes, well, there can be only one
+
+                        if calc_gradient:
+                            d_mat = self.d_smBpsd(sparameters)
+                            self.add_d_Svec(d_mat, m2signal['parindex'],
+                                    m2signal['bvary'])
                 elif m2signal['stype'] == 'blpowerlaw':
                     pp = m2signal['pulsarind']
                     psr = self.ptapsrs[pp]
                     inds = np.sum(self.npfb[:pp])
                     inde = inds + self.npfb[pp]
 
-                    Amp = 10**sparameters[0]
+                    #Amp = 10**sparameters[0]
+                    lAmp = sparameters[0]
                     Si = sparameters[1]
+                    sTmax = m2signal['Tmax']
+                    sfreqs = self.ptapsrs[m2signal['pulsarind']].Ffreqs
 
                     # Find the FB index for the band we are in
                     bind = np.where(np.all(psr.Fbands==m2signal['freqband'],axis=1))[0][0]
                     findex = np.sum(self.npfb[:pp]) + bind*self.npf[pp]
                     nfreq = int(self.npf[pp]/2)
 
-                    freqpy = self.ptapsrs[pp].Ffreqs * pic_spy
-                    pcdoubled = (Amp**2 * pic_spy**3 / (12*np.pi*np.pi * m2signal['Tmax'])) * freqpy ** (-Si)
+                    #freqpy = self.ptapsrs[pp].Ffreqs * pic_spy
+                    #pcdoubled = (Amp**2 * pic_spy**3 / (12*np.pi*np.pi * m2signal['Tmax'])) * freqpy ** (-Si)
+                    pcd = self.plBpsd(lAmp, Si, sTmax, sfreqs)
 
                     # Fill the Beta matrix
-                    self.Betavec[findex:findex+2*nfreq] += 10**pcdoubled
+                    #self.Betavec[findex:findex+2*nfreq] += 10**pcdoubled
+                    self.Betavec[findex:findex+2*nfreq] += pcd
+
+                    if calc_gradient:
+                        d_mat = self.d_plBpsd(lAmp, Si, sTmax, sfreqs,
+                                len(psr.Fbands)*self.npf[pp], bind*self.npf[pp])
+                        self.add_d_Betavec(d_mat, m2signal['parindex'],
+                                m2signal['bvary'])
                 elif m2signal['stype'] == 'blspectralModel':
                     pp = m2signal['pulsarind']
                     psr = self.ptapsrs[pp]
                     inds = np.sum(self.npfb[:pp])
                     inde = inds + self.npfb[pp]
 
-                    Amp = 10**sparameters[0]
+                    lAmp = sparameters[0]
                     alpha = sparameters[1]
-                    fc = 10**sparameters[2] / pic_spy
+                    #fc = 10**sparameters[2] / pic_spy
+                    lfc = sparameters[2]
+                    sTmax = m2signal['Tmax']
+                    sfreqs = self.ptapsrs[m2signal['pulsarind']].Ffreqs
 
                     # Find the FB index for the band we are in
                     bind = np.where(np.all(psr.Fbands==m2signal['freqband'],axis=1))[0][0]
                     findex = np.sum(self.npfb[:pp]) + bind*self.npf[pp]
                     nfreq = int(self.npf[pp]/2)
 
-                    freqpy = self.ptapsrs[pp].Ffreqs
-                    pcdoubled = (Amp * pic_spy**3 / m2signal['Tmax']) * ((1 + (freqpy/fc)**2)**(-0.5*alpha))
+                    #freqpy = self.ptapsrs[pp].Ffreqs
+                    #pcdoubled = (Amp * pic_spy**3 / m2signal['Tmax']) * ((1 + (freqpy/fc)**2)**(-0.5*alpha))
+                    pcd = smBpsd(lAmp, alpha, lfc, sTmax, sfreqs)
 
                     # Fill the Beta matrix
-                    self.Betavec[findex:findex+2*nfreq] += 10**pcdoubled
+                    #self.Betavec[findex:findex+2*nfreq] += 10**pcdoubled
+                    self.Betavec[findex:findex+2*nfreq] += pcd
+
+                    if calc_gradient:
+                        d_mat = self.d_smBpsd(lAmp, alpha, lfc, sTmax, sfreqs,
+                                len(psr.Fbands)*self.npf[pp], bind*self.npf[pp])
+                        self.add_d_Betavec(d_mat, m2signal['parindex'],
+                                m2signal['bvary'])
                 elif m2signal['stype'] == 'dmpowerlaw':
-                    Amp = 10**sparameters[0]
+                    #Amp = 10**sparameters[0]
+                    lAmp = sparameters[0]
                     Si = sparameters[1]
+                    sTmax = m2signal['Tmax']
+                    sfreqs = self.ptapsrs[m2signal['pulsarind']].Fdmfreqs
 
                     if m2signal['corr'] == 'single':
                         findex = np.sum(self.npffdm[:m2signal['pulsarind']])
                         nfreq = int(self.npfdm[m2signal['pulsarind']]/2)
-                        freqpy = self.ptapsrs[m2signal['pulsarind']].Fdmfreqs * pic_spy
+                        #freqpy = self.ptapsrs[m2signal['pulsarind']].Fdmfreqs * pic_spy
                         # TODO: change the units of the DM signal
-                        pcdoubled = (Amp**2 * pic_spy**3 / (12*np.pi*np.pi * m2signal['Tmax'])) * freqpy ** (-Si)
+                        #pcdoubled = (Amp**2 * pic_spy**3 / (12*np.pi*np.pi * m2signal['Tmax'])) * freqpy ** (-Si)
+                        pcd = self.plBpsd(lAmp, Si, sTmax, sfreqs)
 
                         # Fill the Theta matrix
-                        self.Thetavec[findex:findex+2*nfreq] += pcdoubled
+                        #self.Thetavec[findex:findex+2*nfreq] += pcdoubled
+                        self.Thetavec[findex:findex+2*nfreq] += pcd
+
+                        if calc_gradient:
+                            d_mat = self.d_plBpsd(lAmp, Si,sTmax, sfreqs)
+                            self.add_d_Thetavec(d_mat, m2signal['parindex'],
+                                    m2signal['bvary'])
 
                 elif m2signal['stype'] == 'frequencyline':
                     # For a frequency line, the FFmatrix is assumed to be set elsewhere
@@ -5278,12 +5477,13 @@ class ptaLikelihood(object):
                     pcdoubled = np.array([sparameters[1], sparameters[1]])
                     self.Thetavec[findex:findex+2] += 10**pcdoubled
 
-    """
-    Update the deterministic signals for the new values of the parameters. This
-    updated signal is used in the likelihood functions
-    """
-    def updateDetSources(self, parameters, selection=None):
+    def updateDetSources(self, parameters, selection=None, calc_gradient=False):
+        """
+        Update the deterministic signals for the new values of the parameters. This
+        updated signal is used in the likelihood functions
+        """
         npsrs = len(self.ptapsrs)
+        gradient = np.zeros_like(parameters)
 
         if selection is None:
             selection = np.array([1]*len(self.ptasignals), dtype=np.bool)
@@ -5324,6 +5524,9 @@ class ptaLikelihood(object):
                             np.dot(Mmat, \
                             (sparameters-m2signal['pstart']))
 
+                    if calc_gradient:
+                        raise NotImplementedError("No gradients available yet")
+
                 elif m2signal['stype'] == 'nonlineartimingmodel':
                     # The t2psr libstempo object has to be set. Assume it is.
                     pp = m2signal['pulsarind']
@@ -5346,6 +5549,9 @@ class ptaLikelihood(object):
                     # Generate the new residuals
                     psr.detresiduals = np.array(psr.t2psr.residuals(updatebats=True), dtype=np.double) + offset
 
+                    if calc_gradient:
+                        raise NotImplementedError("No gradients available yet")
+
         # Loop over all signals, and construct the deterministic signals
         for ss, m2signal in enumerate(self.ptasignals):
             if selection[ss]:
@@ -5361,18 +5567,97 @@ class ptaLikelihood(object):
                                     self.ptapsrs[pp].toas)
 
                             self.ptapsrs[pp].detresiduals -= bwmsig
+
+                    if calc_gradient:
+                        raise NotImplementedError("No gradients available yet")
                 elif m2signal['stype'] == 'timingmodel_xi':
+                    pp = m2signal['pulsarind']
                     self.ptapsrs[pp].detresiduals -= \
                             np.dot(self.ptapsrs[pp].Mmat_g, sparameters)
                 elif m2signal['stype'] == 'fouriermode_xi':
+                    pp = m2signal['pulsarind']
                     self.ptapsrs[pp].detresiduals -= \
                             np.dot(self.ptapsrs[pp].Fmat, sparameters)
                 elif m2signal['stype'] == 'dmfouriermode_xi':
+                    pp = m2signal['pulsarind']
                     self.ptapsrs[pp].detresiduals -= \
                             np.dot(self.ptapsrs[pp].DF, sparameters)
                 elif m2signal['stype'] == 'jitterfouriermode_xi':
+                    pp = m2signal['pulsarind']
                     self.ptapsrs[pp].detresiduals -= \
                             np.dot(self.ptapsrs[pp].Umat, sparameters)
+
+        if calc_gradient:
+            # Loop over all signals, and construct the gradients
+            for ss, m2signal in enumerate(self.ptasignals):
+                if selection[ss]:
+                    # Create a parameters array for this particular signal
+                    sparameters = m2signal['pstart'].copy()
+                    sparameters[m2signal['bvary']] = \
+                            parameters[m2signal['parindex']:m2signal['parindex']+m2signal['npars']]
+                    if m2signal['stype'] == 'bwm':
+                        #for pp in range(len(self.ptapsrs)):
+                        #    if m2signal['pulsarind'] == pp or m2signal['pulsarind'] == -1:
+                        #        bwmsig = bwmsignal(sparameters, \
+                        #                self.ptapsrs[pp].raj, self.ptapsrs[pp].decj, \
+                        #                self.ptapsrs[pp].toas)
+
+                        #        self.ptapsrs[pp].detresiduals -= bwmsig
+
+                        if calc_gradient:
+                            raise NotImplementedError("No gradients available yet")
+                    elif m2signal['stype'] == 'timingmodel_xi':
+                        pp = m2signal['pulsarind']
+                        #self.ptapsrs[pp].detresiduals -= \
+                        #        np.dot(self.ptapsrs[pp].Mmat_g, sparameters)
+                        psr = self.ptapsrs[pp]
+                        d_L_d_a = np.dot(psr.Mmat_g.T / psr.Nvec, psr.detresiduals)
+                        parslice = slice(m2signal['parindex'],
+                                m2signal['parindex']+m2signal['npars'])
+                        smask = m2signal['bvary']
+                        gradient[parslice] = d_L_d_a[smask]
+                    elif m2signal['stype'] == 'fouriermode_xi':
+                        pp = m2signal['pulsarind']
+                        #self.ptapsrs[pp].detresiduals -= \
+                        #        np.dot(self.ptapsrs[pp].Fmat, sparameters)
+                        psr = self.ptapsrs[pp]
+                        parslice = slice(m2signal['parindex'],
+                                m2signal['parindex']+m2signal['npars'])
+                        smask = m2signal['bvary']
+                        findex = np.sum(self.npf[:pp])
+                        nfs = self.npf[pp]
+                        phislice = slice(findex, findex+nfs)
+
+                        d_L_d_a = np.dot(psr.Fmat.T / psr.Nvec, psr.detresiduals) \
+                                + sparameters / self.Phivec[phislice]
+                        gradient[parslice] = d_L_d_a[smask]
+                    elif m2signal['stype'] == 'dmfouriermode_xi':
+                        pp = m2signal['pulsarind']
+                        psr = self.ptapsrs[pp]
+                        #self.ptapsrs[pp].detresiduals -= \
+                        #        np.dot(self.ptapsrs[pp].DF, sparameters)
+                        parslice = slice(m2signal['parindex'],
+                                m2signal['parindex']+m2signal['npars'])
+                        smask = m2signal['bvary']
+                        fdmindex = np.sum(self.npfdm[:pp])
+                        nfdms = self.npfdm[pp]
+                        thetaslice = slice(fdmindex, fdmindex+nfdms)
+
+                        d_L_d_a = np.dot(psr.DF.T / psr.Nvec, psr.detresiduals) \
+                                + sparameters / self.Thetavec[thetaslice]
+                        gradient[parslice] = d_L_d_a[smask]
+                    elif m2signal['stype'] == 'jitterfouriermode_xi':
+                        pp = m2signal['pulsarind']
+                        #self.ptapsrs[pp].detresiduals -= \
+                        #        np.dot(self.ptapsrs[pp].Umat, sparameters)
+                        psr = self.ptapsrs[pp]
+                        parslice = slice(m2signal['parindex'],
+                                m2signal['parindex']+m2signal['npars'])
+                        smask = m2signal['bvary']
+
+                        d_L_d_a = np.dot(psr.Umat.T / psr.Nvec, psr.detresiduals) \
+                                + sparameters / psr.Jvec
+                        gradient[parslice] = d_L_d_a[smask]
 
 
         # If necessary, transform these residuals to two-component basis
@@ -5381,6 +5666,8 @@ class ptaLikelihood(object):
                 #Gr = np.dot(psr.Hmat.T, psr.detresiduals)
                 #psr.AGr = np.dot(psr.Amat.T, Gr)
                 psr.AGr = np.dot(psr.AG, psr.detresiduals)
+
+        return gradient
 
 
 
@@ -7827,7 +8114,8 @@ class ptaLikelihood(object):
                 +0.5*rGSigmaGr - 0.5*PhiLD - 0.5*SigmaLD - 0.5*ThetaLD
 
 
-    def stingray_transformation(self, sr_parameters, forward=False):
+    def stingray_transformation(self, sr_parameters, forward=False,
+            calc_gradient=False):
         """Perform the stingray transformation
 
         :param sr_parameters:
@@ -7836,10 +8124,15 @@ class ptaLikelihood(object):
         :param forward:
             Whether to do the forward, or backward transform. Forward is to
             renormalized parameters
+
+        :param calc_gradient:
+            When True, calculate the gradients
         """
         parameters = sr_parameters.copy()
 
         log_jacob = 0.0
+        gradient = np.zeros_like(sr_parameters)
+        d_a_d_xi = np.zeros_like(sr_parameters)
 
         for ii, psr in enumerate(self.ptapsrs):
             if psr.timingmodelind is not None:
@@ -7855,9 +8148,9 @@ class ptaLikelihood(object):
                     parameters[slc] = (sr_parameters[slc]-mean)/std
                 else:
                     parameters[slc] = sr_parameters[slc]*std+mean
-                    #print("tmpars:", sr_parameters[slc], parameters[slc])
 
                 log_jacob += np.sum(np.log(std))
+                d_a_d_xi[slc] = std
 
             if psr.fourierind is not None:
                 # Have a red noise stingray transformation
@@ -7878,7 +8171,13 @@ class ptaLikelihood(object):
                     parameters[slc] = sr_parameters[slc]*std+mean
                     #print("rnpars:", sr_parameters[slc], parameters[slc])
 
+                if calc_gradient:
+                    for key, value in self.d_Phivec_d_param.iteritems():
+                        d_lj_d_phi = 0.5 * Sigmavec / self.Phivec[findex:findex+nfs]**2
+                        gradient[key] = np.sum(d_lj_d_phi * value)
+
                 log_jacob += np.sum(np.log(std))
+                d_a_d_xi[slc] = std
 
             if psr.dmfourierind is not None:
                 # Have a dm noise stingray transformation
@@ -7898,7 +8197,13 @@ class ptaLikelihood(object):
                 else:
                     parameters[slc] = sr_parameters[slc]*std+mean
 
+                if calc_gradient:
+                    for key, value in self.d_Thetavec_d_param.iteritems():
+                        d_lj_d_theta = 0.5 * Sigmavec / self.Thetavec[fdmindex:fdmindex+nfdms]**2
+                        gradient[key] = np.sum(d_lj_d_theta * value)
+
                 log_jacob += np.sum(np.log(std))
+                d_a_d_xi[slc] = std
 
             if psr.jitterind is not None:
                 # Have an ecor stingray transformation
@@ -7906,7 +8211,7 @@ class ptaLikelihood(object):
                 nus = self.npu[ii]
 
                 Sigmavec = 1.0/(psr.ZNZ_srvec[psr.Zmask_U_only] + \
-                        1.0 / psr.Jvec[uindex:uindex+nus])
+                        1.0 / psr.Jvec)
                 std = np.sqrt(Sigmavec)        # No hyper pars
                 mean = Sigmavec * psr.ZNy_srvec[psr.Zmask_U_only]
                 index = psr.jitterind
@@ -7918,9 +8223,15 @@ class ptaLikelihood(object):
                 else:
                     parameters[slc] = sr_parameters[slc]*std+mean
 
-                log_jacob += np.sum(np.log(std))
+                if calc_gradient:
+                    for key, value in psr.d_Jvec_d_param.iteritems():
+                        d_lj_d_J = 0.5 * Sigmavec / psr.Jvec**2
+                        gradient[key] = np.sum(d_lj_d_theta * value)
 
-        return parameters, log_jacob
+                log_jacob += np.sum(np.log(std))
+                d_a_d_xi[slc] = std
+
+        return parameters, log_jacob, gradient, d_a_d_xi
     
 
 
@@ -7932,56 +8243,102 @@ class ptaLikelihood(object):
     """
     def mark11loglikelihood(self, sr_parameters):
         # The red signal hyper-parameters
+        """
         self.setPhi(sr_parameters, gibbs_expansion=True)
 
         # Hyper parameters for psr noise
         for pp, psr in enumerate(self.ptapsrs):
             self.setBeta(sr_parameters, pp=pp)
             self.setTheta(sr_parameters, pp=pp)
+        """
+        self.constructPhiAndTheta(sr_parameters, make_matrix=False,
+                gibbs_expansion=True, calc_gradient=True)
 
         # The white noise hyper parameters
-        self.setPsrNoise(sr_parameters)
+        self.setPsrNoise(sr_parameters, calc_gradient=True)
 
         # Perform the stingray transformation
-        parameters, log_jacob = self.stingray_transformation(sr_parameters,
-                forward=False)
+        parameters, log_jacob, lj_gradient, d_a_d_xi = \
+                self.stingray_transformation(sr_parameters,
+                        forward=False, calc_gradient=True)
 
         # The deterministic sources
-        self.updateDetSources(parameters)
+        det_gradient = self.updateDetSources(parameters, calc_gradient=True)
+
+        # If other deterministic sources are included, we cannot just blindly
+        # multiply with d_a_d_xi, unless we set d_a_d_xi also for _all_
+        # deterministic parameters in updateDetSources --- RvH
+        gradient = lj_gradient + det_gradient*d_a_d_xi
 
         for ii, psr in enumerate(self.ptapsrs):
             self.rGr[ii] = np.sum(psr.detresiduals**2 / psr.Nvec)
             self.GNGldet[ii] = np.sum(np.log(psr.Nvec))
+
+            # Gradient for Nvec hyper-parameters
+            for key, value in psr.d_Nvec_d_param.iteritems():
+                # Inner product
+                gradient[key] += 0.5 * np.sum(psr.detresiduals**2 *
+                        value / psr.Nvec**2)
+
+                # Determinant
+                gradient[key] += -0.5 * np.sum(value / psr.Nvec)
 
             if psr.fourierind is not None:
                 findex = np.sum(self.npf[:ii])
                 nfreq = self.npf[ii]
                 ind = psr.fourierind
 
-                self.rGr[ii] += np.sum(parameters[ind:ind+nfreq]**2 / \
-                    self.Phivec[findex:findex+nfreq])
+                asqr = parameters[ind:ind+nfreq]**2
+                phivec = self.Phivec[findex:findex+nfreq]
 
-                self.GNGldet[ii] += np.sum(np.log(self.Phivec))
+                self.rGr[ii] += np.sum(asqr / phivec)
+                self.GNGldet[ii] += np.sum(np.log(phivec))
+
+                # Gradient for Phivec hyper-parameters
+                for key, value in self.d_Phivec_d_param.iteritems():
+                    # Inner product
+                    gradient[key] += 0.5 * np.sum(asqr * value / phivec)
+
+                    # Determinant
+                    gradient[key] += -0.5 * np.sum(value / phivec)
 
             if psr.dmfourierind is not None:
                 fdmindex = np.sum(self.npfdm[:ii])
                 nfreqdm = self.npfdm[ii]
                 ind = psr.dmfourierind
 
-                self.rGr[ii] += np.sum(parameters[ind:ind+nfreqdm]**2 / \
-                    self.Thetavec[fdmindex:fdmindex+nfreqdm])
+                asqr = parameters[ind:ind+nfreqdm]**2
+                thetavec = self.Thetavec[fdmindex:fdmindex+nfreqdm]
 
-                self.GNGldet[ii] += np.sum(np.log(self.Thetavec))
+                self.rGr[ii] += np.sum(asqr / thetavec)
+                self.GNGldet[ii] += np.sum(np.log(thetavec))
+
+                # Gradient for Thetavec hyper-parameters
+                for key, value in self.d_Thetavec_d_param.iteritems():
+                    # Inner product
+                    gradient[key] += 0.5 * np.sum(asqr * value / thetavec)
+
+                    # Determinant
+                    gradient[key] += -0.5 * np.sum(value / thetavec)
 
             if psr.jitterind is not None:
                 uindex = np.sum(self.npu[:ii])
                 npus = self.npu[ii]
                 ind = psr.jitterind
 
-                self.rGr[ii] += np.sum(parameters[ind:ind+npus]**2 / \
-                    psr.Jvec)
+                asqr = parameters[ind:ind+npus]**2
+                jvec = psr.Jvec
 
-                self.GNGldet[ii] += np.sum(np.log(psr.Jvec))
+                self.rGr[ii] += np.sum(asqr / jvec)
+                self.GNGldet[ii] += np.sum(np.log(jvec))
+
+                # Gradient for Thetavec hyper-parameters
+                for key, value in psr.d_Jvec_d_param.iteritems():
+                    # Inner product
+                    gradient[key] += 0.5 * np.sum(asqr * value / jvec)
+
+                    # Determinant
+                    gradient[key] += -0.5 * np.sum(value / jvec)
 
         ll = -0.5*np.sum(self.npobs)*np.log(2*np.pi) \
                 -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) \
@@ -7989,7 +8346,7 @@ class ptaLikelihood(object):
         #print("Loglik + logjac = {0} + {1}".format(ll, log_jacob))
         #print("{0}, {1}".format(np.sum(self.rGr), np.sum(self.GNGldet)))
 
-        return ll + log_jacob
+        return ll + log_jacob, gradient
 
 
     def mark12loglikelihood(self, parameters):
@@ -9462,7 +9819,7 @@ class ptaLikelihood(object):
             elif self.likfunc == 'mark10':
                 ll = self.mark10loglikelihood(parameters)
             elif self.likfunc == 'mark11':
-                ll = self.mark11loglikelihood(parameters)
+                ll, _ = self.mark11loglikelihood(parameters)
             elif self.likfunc == 'mark12':
                 ll = self.mark12loglikelihood(parameters)
 
@@ -9641,6 +9998,8 @@ class ptaLikelihood(object):
                 lp = self.mark9logprior(parameters)
             elif self.likfunc == 'mark10':  # Mark9 ''
                 lp = self.mark9logprior(parameters)
+            elif self.likfunc == 'mark11':
+                lp = self.mark4logprior(parameters)
             elif self.likfunc == 'mark12':
                 lp = self.mark4logprior(parameters)
             elif self.likfunc == 'gibbs':
