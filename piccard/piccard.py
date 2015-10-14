@@ -3511,7 +3511,6 @@ class ptaLikelihood(object):
                             })
                         signals.append(newsignal)
                 else:
-                    print "Doing jitter regular"
                     (m2psr.avetoas, m2psr.Umat) = quantize_fast(m2psr.toas)
                     newsignal = OrderedDict({
                         "stype":"jitter",
@@ -3811,7 +3810,7 @@ class ptaLikelihood(object):
                         "pmax":pmax,
                         "pwidth":pwidth,
                         "pstart":pstart,
-                        "prior":'flat'
+                        "prior":'flatlog'
                         })
                     signals.append(newsignal)
 
@@ -3834,7 +3833,7 @@ class ptaLikelihood(object):
                         "pmax":pmax,
                         "pwidth":pwidth,
                         "pstart":pstart,
-                        "prior":'flat'
+                        "prior":'flatlog'
                         })
                     signals.append(newsignal)
 
@@ -3858,7 +3857,7 @@ class ptaLikelihood(object):
                         "pmax":pmax,
                         "pwidth":pwidth,
                         "pstart":pstart,
-                        "prior":'flat'
+                        "prior":'flatlog'
                         })
                     signals.append(newsignal)
 
@@ -3883,7 +3882,7 @@ class ptaLikelihood(object):
                         "pmax":pmax,
                         "pwidth":pwidth,
                         "pstart":pstart,
-                        "prior":'flat'
+                        "prior":'flatlog'
                         })
                     signals.append(newsignal)
 
@@ -5607,6 +5606,9 @@ class ptaLikelihood(object):
                         if calc_gradient:
                             raise NotImplementedError("No gradients available yet")
                     elif m2signal['stype'] == 'timingmodel_xi':
+                        if not np.all(m2signal['bvary']):
+                            raise ValueError("Fixing xi-parameters not allowed")
+
                         pp = m2signal['pulsarind']
                         #self.ptapsrs[pp].detresiduals -= \
                         #        np.dot(self.ptapsrs[pp].Mmat_g, sparameters)
@@ -5617,6 +5619,9 @@ class ptaLikelihood(object):
                         smask = m2signal['bvary']
                         gradient[parslice] = d_L_d_a[smask]
                     elif m2signal['stype'] == 'fouriermode_xi':
+                        if not np.all(m2signal['bvary']):
+                            raise ValueError("Fixing xi-parameters not allowed")
+
                         pp = m2signal['pulsarind']
                         #self.ptapsrs[pp].detresiduals -= \
                         #        np.dot(self.ptapsrs[pp].Fmat, sparameters)
@@ -5629,9 +5634,12 @@ class ptaLikelihood(object):
                         phislice = slice(findex, findex+nfs)
 
                         d_L_d_a = np.dot(psr.Fmat.T / psr.Nvec, psr.detresiduals) \
-                                + sparameters / self.Phivec[phislice]
+                                - sparameters / self.Phivec[phislice]
                         gradient[parslice] = d_L_d_a[smask]
                     elif m2signal['stype'] == 'dmfouriermode_xi':
+                        if not np.all(m2signal['bvary']):
+                            raise ValueError("Fixing xi-parameters not allowed")
+
                         pp = m2signal['pulsarind']
                         psr = self.ptapsrs[pp]
                         #self.ptapsrs[pp].detresiduals -= \
@@ -5644,9 +5652,12 @@ class ptaLikelihood(object):
                         thetaslice = slice(fdmindex, fdmindex+nfdms)
 
                         d_L_d_a = np.dot(psr.DF.T / psr.Nvec, psr.detresiduals) \
-                                + sparameters / self.Thetavec[thetaslice]
+                                - sparameters / self.Thetavec[thetaslice]
                         gradient[parslice] = d_L_d_a[smask]
                     elif m2signal['stype'] == 'jitterfouriermode_xi':
+                        if not np.all(m2signal['bvary']):
+                            raise ValueError("Fixing xi-parameters not allowed")
+
                         pp = m2signal['pulsarind']
                         #self.ptapsrs[pp].detresiduals -= \
                         #        np.dot(self.ptapsrs[pp].Umat, sparameters)
@@ -5656,7 +5667,7 @@ class ptaLikelihood(object):
                         smask = m2signal['bvary']
 
                         d_L_d_a = np.dot(psr.Umat.T / psr.Nvec, psr.detresiduals) \
-                                + sparameters / psr.Jvec
+                                - sparameters / psr.Jvec
                         gradient[parslice] = d_L_d_a[smask]
 
 
@@ -8140,6 +8151,7 @@ class ptaLikelihood(object):
                 Sigmavec = 1.0/psr.ZNZ_srvec[psr.Zmask_M_only]  # No hyper pars
                 std = np.sqrt(Sigmavec)
                 mean = Sigmavec * psr.ZNy_srvec[psr.Zmask_M_only]
+                #std[:] = 1.0 ; mean[:] = 0.0
                 index = psr.timingmodelind
                 npars = len(std)
                 slc = slice(index, index+npars)
@@ -8161,15 +8173,17 @@ class ptaLikelihood(object):
                         1.0 / self.Phivec[findex:findex+nfs])
                 std = np.sqrt(Sigmavec)
                 mean = Sigmavec * psr.ZNy_srvec[psr.Zmask_F_only]
+                #std[:] = 1.0
+                #mean[:] = 0.0
                 index = psr.fourierind
                 npars = len(std)
                 slc = slice(index, index+npars)
+                #slc = np.arange(index, index+npars)
 
                 if forward:
                     parameters[slc] = (sr_parameters[slc]-mean)/std
                 else:
                     parameters[slc] = sr_parameters[slc]*std+mean
-                    #print("rnpars:", sr_parameters[slc], parameters[slc])
 
                 if calc_gradient:
                     for key, value in self.d_Phivec_d_param.iteritems():
@@ -8297,7 +8311,7 @@ class ptaLikelihood(object):
                 # Gradient for Phivec hyper-parameters
                 for key, value in self.d_Phivec_d_param.iteritems():
                     # Inner product
-                    gradient[key] += 0.5 * np.sum(asqr * value / phivec)
+                    gradient[key] += 0.5 * np.sum(asqr * value / phivec**2)
 
                     # Determinant
                     gradient[key] += -0.5 * np.sum(value / phivec)
@@ -8316,7 +8330,7 @@ class ptaLikelihood(object):
                 # Gradient for Thetavec hyper-parameters
                 for key, value in self.d_Thetavec_d_param.iteritems():
                     # Inner product
-                    gradient[key] += 0.5 * np.sum(asqr * value / thetavec)
+                    gradient[key] += 0.5 * np.sum(asqr * value / thetavec**2)
 
                     # Determinant
                     gradient[key] += -0.5 * np.sum(value / thetavec)
@@ -8335,7 +8349,7 @@ class ptaLikelihood(object):
                 # Gradient for Thetavec hyper-parameters
                 for key, value in psr.d_Jvec_d_param.iteritems():
                     # Inner product
-                    gradient[key] += 0.5 * np.sum(asqr * value / jvec)
+                    gradient[key] += 0.5 * np.sum(asqr * value / jvec**2)
 
                     # Determinant
                     gradient[key] += -0.5 * np.sum(value / jvec)
