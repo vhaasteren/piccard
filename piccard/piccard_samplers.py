@@ -2353,9 +2353,8 @@ def RunPolyChord(likob, chainroot, n_live_points=500, n_chords=1):
     sys.stdout.flush()
 
 
-
 def RunPTMCMC(likob, steps, chainsdir, covfile=None, burnin=10000, resume=False,
-        isave=1000, maxIter=None, thin=10):
+        isave=1000, maxIter=None, thin=10, priorWeight=20):
     """
     Run a generic PTMCMC algorithm.
     """
@@ -2376,6 +2375,9 @@ def RunPTMCMC(likob, steps, chainsdir, covfile=None, burnin=10000, resume=False,
 
     sampler = ptmcmc.PTSampler(ndim, likob.loglikelihood, likob.logprior, cov=cov, \
             outDir=chainsdir, verbose=True, newFileOrder=False, resume=resume)
+
+    if len(likob._prior_draw_signal) > 0:
+        sampler.addProposalToCycle(likob.drawFromPrior, priorWeight)
 
     sampler.sample(p0, steps, thin=thin, burn=burnin, isave=isave, maxIter=maxIter)
 

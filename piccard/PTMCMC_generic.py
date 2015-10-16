@@ -322,10 +322,10 @@ class PTSampler(object):
             # compute effective number of samples
             if iter % 1000 == 0 and iter > 2*self.burn and self.MPIrank == 0:
                 try:
-                    Neff = iter/np.nanmax([acor.acor(self._AMbuffer[self.burn:(iter-1),ii])[0] \
-                                        for ii in range(self.ndim)])
+                    Neff = int(iter/np.nanmax([acor.acor(self._AMbuffer[self.burn:(iter-1),ii])[0] \
+                                        for ii in range(self.ndim)]))
                     #print '\n {0} effective samples'.format(Neff)
-                except NameError:
+                except (NameError, OverflowError):
                     Neff = 0
                     pass
 
@@ -336,9 +336,9 @@ class PTSampler(object):
                 runComplete = True
             
             # stop if reached effective number of samples
-            if self.MPIrank == 0 and int(Neff) > self.neff:
+            if self.MPIrank == 0 and Neff > self.neff:
                 if self.verbose:
-                    print '\nRun Complete with {0} effective samples'.format(int(Neff))
+                    print '\nRun Complete with {0} effective samples'.format(Neff)
                 runComplete = True
 
             if self.MPIrank == 0 and runComplete:
