@@ -3348,6 +3348,7 @@ class ptaLikelihood(object):
             compression = 'None', \
             evalCompressionComplement = False, \
             explicitGWBcomponents = False, \
+            priorDraws=True, \
             likfunc='mark12'):
         # We have to determine the number of frequencies we'll need
         numNoiseFreqs = np.zeros(len(self.ptapsrs), dtype=np.int)
@@ -4157,6 +4158,7 @@ class ptaLikelihood(object):
             "compression":compression,
             "orderFrequencyLines":orderFrequencyLines,
             "evalCompressionComplement":evalCompressionComplement,
+            "priorDraws":priorDraws,
             "likfunc":likfunc,
             "Tmax":Tmax,
             "gibbsmodel":gibbsmodel,
@@ -4528,6 +4530,10 @@ class ptaLikelihood(object):
 
         self.allocateLikAuxiliaries()
         self.registerModel()
+
+        # Add the prior draws for when sampling with the PTSampler
+        if self.priorDraws:
+            self.addPriorDraws(which='hyper')
 
     def registerModel(self):
         """
@@ -5661,7 +5667,7 @@ class ptaLikelihood(object):
 
                         pp = m2signal['pulsarind']
                         psr = self.ptapsrs[pp]
-                        d_L_d_a = np.dot(psr.Mmat_g.T / psr.Nvec, psr.detresiduals)
+                        d_L_d_a = np.dot(psr.Mmat_g.T, psr.detresiduals / psr.Nvec)
                         parslice = slice(m2signal['parindex'],
                                 m2signal['parindex']+m2signal['npars'])
                         smask = m2signal['bvary']
@@ -5679,7 +5685,7 @@ class ptaLikelihood(object):
                         nfs = self.npf[pp]
                         phislice = slice(findex, findex+nfs)
 
-                        d_L_d_xi = np.dot(psr.Fmat.T / psr.Nvec, psr.detresiduals)
+                        d_L_d_xi = np.dot(psr.Fmat.T, psr.detresiduals / psr.Nvec)
                         d_Pr_d_xi = - sparameters / self.Phivec[phislice]
                         d_L_d_b[parslice] = d_L_d_xi[smask]
                         d_Pr_d_b[parslice] = d_Pr_d_xi[smask]
@@ -5696,7 +5702,7 @@ class ptaLikelihood(object):
                         nfdms = self.npfdm[pp]
                         thetaslice = slice(fdmindex, fdmindex+nfdms)
 
-                        d_L_d_xi = np.dot(psr.DF.T / psr.Nvec, psr.detresiduals)
+                        d_L_d_xi = np.dot(psr.DF.T, psr.detresiduals / psr.Nvec)
                         d_Pr_d_xi = -sparameters / self.Thetavec[thetaslice]
                         d_L_d_b[parslice] = d_L_d_xi[smask]
                         d_Pr_d_b[parslice] = d_Pr_d_xi[smask]
@@ -5710,7 +5716,7 @@ class ptaLikelihood(object):
                                 m2signal['parindex']+m2signal['npars'])
                         smask = m2signal['bvary']
 
-                        d_L_d_xi = np.dot(psr.Umat.T / psr.Nvec, psr.detresiduals)
+                        d_L_d_xi = np.dot(psr.Umat.T, psr.detresiduals / psr.Nvec)
                         d_Pr_d_xi = -sparameters / psr.Jvec
                         d_L_d_b[parslice] = d_L_d_xi[smask]
                         d_Pr_d_b[parslice] = d_Pr_d_xi[smask]
@@ -10434,6 +10440,8 @@ class ptaLikelihood(object):
                     stype='spectrum', corr='gr')
             for s in signums:
                 self._prior_draw_signal.append(s)
+
+        self._prior_draw_signal = np.unique(self._prior_draw_signal)
 
 
     def drawFromPrior(self, parameters, iter, beta):
