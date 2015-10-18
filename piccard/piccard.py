@@ -196,7 +196,7 @@ class ptaPulsar(object):
         self.bprevfinc = None     # Current number of modes in RJMCMC
         self.bprevfdminc = None   # Current number of modes in RJMCMC
 
-        # Indices for when we are in mark11
+        # Indices for when we are in mark13
         self.timingmodelind = None
         self.fourierind = None
         self.dmfourierind = None
@@ -916,8 +916,8 @@ class ptaPulsar(object):
             U, s, Vt = sl.svd(self.Mmat[:,self.Mmask_M], full_matrices=False)
             self.Mmat_g[:, self.Mmask_M] = U
 
-        if likfunc != 'gibbs':
-            self.Mmat_g = self.Mmat / np.sqrt(np.sum(self.Mmat**2, axis=0))
+        #if likfunc != 'gibbs':
+        #    self.Mmat_g = self.Mmat / np.sqrt(np.sum(self.Mmat**2, axis=0))
 
         #U, s, Vh = sl.svd(self.Mmat)
         #self.Gmat = U[:, self.Mmat.shape[1]:]
@@ -1137,7 +1137,7 @@ class ptaPulsar(object):
         # For creating the auxiliaries it does not really matter: we are now
         # creating all quantities per default
         # TODO: set this parameter in another place?
-        if twoComponent and not likfunc in ['mark11', 'mark12', 'gibbs']:
+        if twoComponent and not likfunc in ['mark14', 'mark13', 'mark12', 'gibbs']:
             self.twoComponentNoise = True
 
         # Before writing anything to file, we need to know right away how many
@@ -1869,11 +1869,7 @@ class ptaPulsar(object):
                     #h5df.addData(self.name, 'pic_AoGE', self.AoGE)
                     #h5df.addData(self.name, 'pic_AoGEE', self.AoGEE)
 
-        #if likfunc == 'mark11' or write == 'all':
-        #    # We need to initialize the Stingray transformation
-        #    pass
-
-        if likfunc in ['mark11', 'mark12', 'gibbs'] or write == 'all':
+        if likfunc in ['mark14', 'mark13', 'mark12', 'gibbs'] or write == 'all':
             # Set the band-limited F-matrices
             self.FBmats = []
             self.Fbands = []
@@ -2006,7 +2002,7 @@ class ptaPulsar(object):
         # G/H compression matrices
         vslice = self.isort
         mslice = (self.isort, slice(None, None, None))
-        if not likfunc in ['mark11', 'mark12', 'gibbs']:
+        if not likfunc in ['mark14', 'mark13', 'mark12', 'gibbs']:
             self.Gmat = np.array(h5df.getData(self.name, 'pic_Gmat', \
                     dontread=memsave, isort=mslice))
             self.Gcmat = np.array(h5df.getData(self.name, 'pic_Gcmat', \
@@ -2041,7 +2037,7 @@ class ptaPulsar(object):
 
         # If compression is not done, but Hmat represents a compression matrix,
         # we need to re-evaluate the lot. Raise an error
-        if not noGmat and not likfunc in ['mark11', 'mark12', 'gibbs']:
+        if not noGmat and not likfunc in ['mark14', 'mark13', 'mark12', 'gibbs']:
             if compression == 'dont':
                 pass
             elif (compression == 'None' or compression is None) and \
@@ -2291,7 +2287,7 @@ class ptaPulsar(object):
                     isort=mslice))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
 
-        if likfunc in ['mark11', 'mark12', 'gibbs']:
+        if likfunc in ['mark14', 'mark13', 'mark12', 'gibbs']:
             self.Zmat = np.array(h5df.getData(self.name, 'pic_Zmat', \
                     isort=mslice))
             self.tmpConv = np.array(h5df.getData(self.name, 'pic_tmpConv'))
@@ -2498,6 +2494,7 @@ class ptaLikelihood(object):
         self.pmax = None
         self.pstart = None
         self.pwidth = None
+        self.interval = None
 
         self.pardes = None
         self.haveStochSources = False
@@ -3135,7 +3132,7 @@ class ptaLikelihood(object):
             self.npu[ii] = len(psr.avetoas)
 
             if self.likfunc in ['mark1', 'mark4', 'mark4ln', 'mark6', \
-                    'mark6fa', 'mark8', 'mark10', 'mark11', 'mark12', 'gibbs']:
+                    'mark6fa', 'mark8', 'mark10', 'mark13', 'mark14', 'mark12', 'gibbs']:
                 self.npfdm[ii] = len(psr.Fdmfreqs)
                 self.npffdm[ii] = len(psr.Fdmfreqs)
 
@@ -3149,13 +3146,13 @@ class ptaLikelihood(object):
                 self.npgos[ii] = len(psr.toas) - self.npgs[ii] #- psr.Mmat.shape[1]
                 psr.Nwvec = np.zeros(self.npgs[ii])
                 psr.Nwovec = np.zeros(self.npgos[ii])
-            elif self.likfunc in ['mark11', 'mark12', 'gibbs']:
+            elif self.likfunc in ['mark14', 'mark13', 'mark12', 'gibbs']:
                 self.npgs[ii] = len(psr.toas) - psr.Mmat.shape[1]
                 self.npgos[ii] = len(psr.toas) - self.npgs[ii] #- psr.Mmat.shape[1]
                 psr.Nwvec = np.zeros(self.npgs[ii])
                 psr.Nwovec = np.zeros(self.npgos[ii])
 
-            if self.likfunc in ['mark11', 'mark12', 'gibbs']:
+            if self.likfunc in ['mark14', 'mark13', 'mark12', 'gibbs']:
                 self.npm[ii] = psr.Mmat.shape[1]
                 self.npz[ii] = psr.Zmat.shape[1]
                 self.npm_f[ii] = np.sum(psr.Mmask_F)
@@ -3167,8 +3164,8 @@ class ptaLikelihood(object):
                 self.npz_d[ii] = psr.Zmat_D.shape[1]
                 self.npz_u[ii] = psr.Zmat_U.shape[1]
 
-        # These quantities are mostly used in Gibbs sampling, for when we
-        # are numerically dealing with the quadratic coefficients.
+        # These quantities are mostly used in explicit Fourier mode sampling,
+        # for when we are numerically dealing with the quadratic coefficients.
         maxfreqs = np.max(self.npf)
         self.freqmask = np.zeros((npsrs, maxfreqs), dtype=np.bool)
         self.freqb = np.zeros((npsrs, maxfreqs))
@@ -3233,11 +3230,8 @@ class ptaLikelihood(object):
             self.rGE = np.zeros(np.sum(self.npff)+np.sum(self.npffdm))
             self.EGGNGGE = np.zeros((np.sum(self.npff)+np.sum(self.npffdm), \
                     np.sum(self.npff)+np.sum(self.npffdm)))
-        #elif self.likfunc == 'mark11':
-        #    self.GNGldet = np.zeros(npsrs)
-        #    self.rGr = np.zeros(npsrs)
-        elif self.likfunc in ['mark11', 'mark12', 'gibbs']:
-            # Probably should do mark11 elsewhere, but this should work
+        elif self.likfunc in ['mark14', 'mark13', 'mark12', 'gibbs']:
+            # Probably should do mark13 elsewhere, but this should work
             zlen_n = np.sum(self.npz_n)
             zlen_f = np.sum(self.npz_f)
             zlen_d = np.sum(self.npz_d)
@@ -3365,12 +3359,12 @@ class ptaLikelihood(object):
         gibbsmodel = ['design']
 
         # If we have Gibbs sampling, do not do any compression:
-        if likfunc in ['mark11', 'mark12', 'gibbs'] and \
+        if likfunc in ['mark14', 'mark13', 'mark12', 'gibbs'] and \
                 compression == "None":
             compression = 'dont'
 
-        if likfunc in ['mark11'] and not (expandJitter and expandCEquad):
-            print("WARNING: mark11 needs explicit jitter/ecorr. Turned on")
+        if likfunc in ['mark14', 'mark13'] and not (expandJitter and expandCEquad):
+            print("WARNING: mark13 needs explicit jitter/ecorr. Turned on")
             expandJitter = True
             expandCEquad = True
 
@@ -3413,6 +3407,7 @@ class ptaLikelihood(object):
                         "pmax":[5.0],
                         "pwidth":[0.1],
                         "pstart":[1.0],
+                        "interval":[True],
                         "prior":'flat'
                         })
                     signals.append(newsignal)
@@ -3428,6 +3423,7 @@ class ptaLikelihood(object):
                     "pmax":[5.0],
                     "pwidth":[0.1],
                     "pstart":[1.0],
+                    "interval":[True],
                     "prior":'flat'
                     })
                 signals.append(newsignal)
@@ -3447,6 +3443,7 @@ class ptaLikelihood(object):
                             "pmax":[-4.0],
                             "pwidth":[0.2],
                             "pstart":[-8.0],
+                            "interval":[True],
                             "prior":'flatlog'
                             })
                         signals.append(newsignal)
@@ -3462,6 +3459,7 @@ class ptaLikelihood(object):
                         "pmax":[-4.0],
                         "pwidth":[0.2],
                         "pstart":[-8.0],
+                        "interval":[True],
                         "prior":'flatlog'
                         })
                     signals.append(newsignal)
@@ -3470,7 +3468,7 @@ class ptaLikelihood(object):
                 if not 'jitter' in gibbsmodel and (expandJitter and expandCEquad):
                     # We are expanding the Jitter/CEquad in the Gibbs sampler
                     gibbsmodel.append('jitter')
-                if separateCEquads and not likfunc in ['mark11', 'mark12', 'gibbs']:
+                if separateCEquads and not likfunc in ['mark14', 'mark13', 'mark12', 'gibbs']:
                     uflagvals = list(set(m2psr.flags))  # Unique flags
                     for flagval in uflagvals:
                         newsignal = OrderedDict({
@@ -3484,10 +3482,11 @@ class ptaLikelihood(object):
                             "pmax":[-4.0],
                             "pwidth":[0.3],
                             "pstart":[-8.0],
+                            "interval":[True],
                             "prior":'flatlog'
                             })
                         signals.append(newsignal)
-                elif separateCEquads and likfunc in ['mark11', 'mark12', 'gibbs']:
+                elif separateCEquads and likfunc in ['mark14', 'mark13', 'mark12', 'gibbs']:
                     # Need to decide on number of jitter parameters, and
                     # number of epochs with jitter first for Gibbs sampler
                     if not checkTOAsort(m2psr.toas, m2psr.flags, \
@@ -3511,6 +3510,7 @@ class ptaLikelihood(object):
                             "pmax":[-4.0],
                             "pwidth":[0.3],
                             "pstart":[-8.0],
+                            "interval":[True],
                             "prior":'flatlog'
                             })
                         signals.append(newsignal)
@@ -3527,6 +3527,7 @@ class ptaLikelihood(object):
                         "pmax":[-4.0],
                         "pwidth":[0.3],
                         "pstart":[-8.0],
+                        "interval":[True],
                         "prior":'flatlog'
                         })
                     signals.append(newsignal)
@@ -3541,18 +3542,21 @@ class ptaLikelihood(object):
                     pmax = [noisePSDMax[0]]*nfreqs
                     pstart = [-10.0]*nfreqs
                     pwidth = [0.1]*nfreqs
+                    interval = [True]*nfreqs
                 elif noiseModel=='powerlaw':
                     bvary = [True, True, False]
                     pmin = noisePLMin
                     pmax = noisePLMax
                     pstart = [-15.0, 2.01, 1.0e-10]
                     pwidth = [0.3, 0.3, 5.0e-11]
+                    interval = [True, True, True]
                 elif noiseModel=='spectralModel':
                     bvary = [True, True, True]
                     pmin = [-28.0, 0.0, -8.0]
                     pmax = [15.0, 12.0, 2.0]
                     pstart = [-22.0, 2.0, -1.0]
                     pwidth = [-0.2, 0.1, 0.1]
+                    interval = [True, True, True]
                 else:
                     raise ValueError("ERROR: option {0} not known".
                             format(noiseModel))
@@ -3568,6 +3572,7 @@ class ptaLikelihood(object):
                     "pmax":pmax,
                     "pwidth":pwidth,
                     "pstart":pstart,
+                    "interval":interval,
                     "prior":noisePrior
                     })
                 signals.append(newsignal)
@@ -3587,18 +3592,21 @@ class ptaLikelihood(object):
                         pmax = [-7.0]*nfreqs
                         pstart = [-10.0]*nfreqs
                         pwidth = [0.1]*nfreqs
+                        interval = [True]*nfreqs
                     elif bandNoiseModel=='blpowerlaw':
                         bvary = [True, True, False]
                         pmin = [-20.0, 0.02, 1.0e-11]
                         pmax = [-10.0, 6.98, 3.0e-9]
                         pstart = [-15.0, 2.01, 1.0e-10]
                         pwidth = [0.3, 0.3, 5.0e-11]
+                        interval = [True, True, True]
                     elif bandNoiseModel=='blspectralModel':
                         bvary = [True, True, True]
                         pmin = [-28.0, 0.0, -8.0]
                         pmax = [15.0, 12.0, 2.0]
                         pstart = [-22.0, 2.0, -1.0]
                         pwidth = [-0.2, 0.1, 0.1]
+                        interval = [True, True, True]
                     else:
                         raise ValueError("ERROR: option {0} not known".
                                 format(bandNoiseModel))
@@ -3615,6 +3623,7 @@ class ptaLikelihood(object):
                         "pmax":pmax,
                         "pwidth":pwidth,
                         "pstart":pstart,
+                        "interval":interval,
                         "prior":noisePrior
                         })
                     signals.append(newsignal)
@@ -3629,6 +3638,7 @@ class ptaLikelihood(object):
                     pmax = [-3.0]*nfreqs
                     pstart = [-7.0]*nfreqs
                     pwidth = [0.1]*nfreqs
+                    interval = [True]*nfreqs
                     #dmModel = 'dmspectrum'
                 elif dmModel=='dmpowerlaw':
                     bvary = [True, True, False]
@@ -3636,6 +3646,7 @@ class ptaLikelihood(object):
                     pmax = [-6.5, 6.98, 3.0e-9]
                     pstart = [-13.0, 2.01, 1.0e-10]
                     pwidth = [0.3, 0.3, 5.0e-11]
+                    interval = [True, True, True]
                     #dmModel = 'dmpowerlaw'
                 else:
                     raise ValueError("ERROR: option {0} not known".
@@ -3652,6 +3663,7 @@ class ptaLikelihood(object):
                     "pmax":pmax,
                     "pwidth":pwidth,
                     "pstart":pstart,
+                    "interval":interval,
                     "prior":dmPrior
                     })
                 signals.append(newsignal)
@@ -3668,6 +3680,7 @@ class ptaLikelihood(object):
                     "pmax":[-5.0, -9.0],
                     "pwidth":[-0.1, -0.1],
                     "pstart":[-7.0, -10.0],
+                    "interval":[True, True],
                     "prior":'flatlog'
                     })
                 signals.append(newsignal)
@@ -3684,11 +3697,12 @@ class ptaLikelihood(object):
                     "pmax":[-5.0, -9.0],
                     "pwidth":[-0.1, -0.1],
                     "pstart":[-7.0, -10.0],
+                    "interval":[True, True],
                     "prior":'flatlog'
                     })
                 signals.append(newsignal)
 
-            if incTimingModel and not likfunc == 'mark11':
+            if incTimingModel and not likfunc in ['mark13', 'mark14']:
                 if nonLinear:
                     # Get the parameter errors from libstempo. Initialise the
                     # libstempo object
@@ -3721,7 +3735,7 @@ class ptaLikelihood(object):
                     #tmperrs = m2psr.ptmparerrs
                     tmpest = m2psr.ptmpars
 
-                if keepTimingModelPars is None and not likfunc == 'mark11':
+                if keepTimingModelPars is None and not likfunc in ['mark13', 'mark14']:
                     # Figure out which parameters we'll keep in the design matrix
                     jumps = []
                     for tmpar in m2psr.ptmdescription:
@@ -3737,11 +3751,11 @@ class ptaLikelihood(object):
                     # marginalise over).
                     #(newM, newG, newGc, newptmpars, newptmdescription) = \
                     #        m2psr.getModifiedDesignMatrix(removeAll=True)
-                elif likfunc != 'mark11':
+                elif not likfunc in ['mark13', 'mark14']:
                     newptmdescription = m2psr.getNewTimingModelParameterList( \
                             keep=False, tmpars=keepTimingModelPars)
                 else:
-                    # Actually, if we are in likfunc == 'mark11', we need _all_
+                    # Actually, if we are in likfunc == 'mark13', we need _all_
                     # TM parameters in the model
                     newptmdescription = []
 
@@ -3757,6 +3771,7 @@ class ptaLikelihood(object):
                 pmax = []
                 pwidth = []
                 pstart = []
+                interval = []
                 for jj, parid in enumerate(m2psr.ptmdescription):
                     if not parid in newptmdescription:
                         parids += [parid]
@@ -3774,6 +3789,7 @@ class ptaLikelihood(object):
                             pmax += [500.0 * tmperrs[jj] + tmpest[jj]]
                             pwidth += [(pmax[-1]-pmin[-1])/50.0]
                         pstart += [tmpest[jj]]
+                        interval += [False]
 
                 if nonLinear:
                     stype = 'nonlineartimingmodel'
@@ -3790,11 +3806,12 @@ class ptaLikelihood(object):
                     "pwidth":pwidth,
                     "pstart":pstart,
                     "parid":parids,
+                    "interval":interval,
                     "prior":'flat'
                     })
                 signals.append(newsignal)
 
-            if likfunc == 'mark11':
+            if likfunc in ['mark13', 'mark14']:
                 if 'design' in gibbsmodel:
                     nmodes = m2psr.Mmat.shape[1]
                     bvary = [True]*nmodes
@@ -3802,6 +3819,7 @@ class ptaLikelihood(object):
                     pmax = [1.0e6]*nmodes
                     pstart = [0.01]*nmodes
                     pwidth = [1.0e-1]*nmodes
+                    interval = [False]*nmodes
 
                     newsignal = OrderedDict({
                         "stype":'timingmodel_xi',
@@ -3814,6 +3832,7 @@ class ptaLikelihood(object):
                         "pmax":pmax,
                         "pwidth":pwidth,
                         "pstart":pstart,
+                        "interval":interval,
                         "prior":'flatlog'
                         })
                     signals.append(newsignal)
@@ -3825,6 +3844,7 @@ class ptaLikelihood(object):
                     pmax = [1.0e6]*nmodes
                     pstart = [0.01]*nmodes
                     pwidth = [1.0e-1]*nmodes
+                    interval = [False]*nmodes
 
                     newsignal = OrderedDict({
                         "stype":'fouriermode_xi',
@@ -3837,6 +3857,7 @@ class ptaLikelihood(object):
                         "pmax":pmax,
                         "pwidth":pwidth,
                         "pstart":pstart,
+                        "interval":interval,
                         "prior":'flatlog'
                         })
                     signals.append(newsignal)
@@ -3849,6 +3870,7 @@ class ptaLikelihood(object):
                     pmax = [1.0e6]*nmodes
                     pstart = [0.01]*nmodes
                     pwidth = [1.0e-1]*nmodes
+                    interval = [False]*nmodes
 
                     newsignal = OrderedDict({
                         "stype":'dmfouriermode_xi',
@@ -3861,6 +3883,7 @@ class ptaLikelihood(object):
                         "pmax":pmax,
                         "pwidth":pwidth,
                         "pstart":pstart,
+                        "interval":interval,
                         "prior":'flatlog'
                         })
                     signals.append(newsignal)
@@ -3874,6 +3897,7 @@ class ptaLikelihood(object):
                     pmax = [1.0e6]*nmodes
                     pstart = [0.01]*nmodes
                     pwidth = [1.0e-1]*nmodes
+                    interval = [False]*nmodes
 
                     newsignal = OrderedDict({
                         "stype":'jittermode_xi',
@@ -3886,6 +3910,7 @@ class ptaLikelihood(object):
                         "pmax":pmax,
                         "pwidth":pwidth,
                         "pstart":pstart,
+                        "interval":interval,
                         "prior":'flatlog'
                         })
                     signals.append(newsignal)
@@ -3904,12 +3929,14 @@ class ptaLikelihood(object):
                 pmax = [-7.0]*nfreqs
                 pstart = [-10.0]*nfreqs
                 pwidth = [0.1]*nfreqs
+                interval = [True]*nfreqs
             elif gwbModel=='powerlaw':
                 bvary = [True, gwbVarySi, False]
                 pmin = [-17.0, 1.02, 1.0e-11]
                 pmax = [-10.0, 6.98, 3.0e-9]
                 pstart = [-15.0, gwbSi, 1.0e-10]
                 pwidth = [0.3, 0.3, 5.0e-11]
+                interval = [True, True, True]
             else:
                 raise ValueError("ERROR: option {0} not known".
                         format(gwbModel))
@@ -3923,6 +3950,7 @@ class ptaLikelihood(object):
                 "pmax":pmax,
                 "pwidth":pwidth,
                 "pstart":pstart,
+                "interval":interval,
                 "prior":gwbPrior,
                 })
             signals.append(newsignal)
@@ -3941,12 +3969,14 @@ class ptaLikelihood(object):
                 pmax = [-7.0]*nfreqs
                 pstart = [-10.0]*nfreqs
                 pwidth = [0.1]*nfreqs
+                interval = [True]*nfreqs
             elif clockModel=='powerlaw':
                 bvary = [True, True, False]
                 pmin = [-17.0, 1.02, 1.0e-11]
                 pmax = [-10.0, 6.98, 3.0e-9]
                 pstart = [-15.0, 2.01, 1.0e-10]
                 pwidth = [0.3, 0.3, 5.0e-11]
+                interval = [True, True, True]
             else:
                 raise ValueError("ERROR: option {0} not known".
                         format(clockModel))
@@ -3960,6 +3990,7 @@ class ptaLikelihood(object):
                 "pmax":pmax,
                 "pwidth":pwidth,
                 "pstart":pstart,
+                "interval":interval,
                 "prior":'flatlog'
                 })
             signals.append(newsignal)
@@ -3978,12 +4009,14 @@ class ptaLikelihood(object):
                 pmax = [-7.0]*nfreqs
                 pstart = [-10.0]*nfreqs
                 pwidth = [0.1]*nfreqs
+                interval = [True]*nfreqs
             elif dipoleModel=='powerlaw':
                 bvary = [True, True, False]
                 pmin = [-17.0, 1.02, 1.0e-11]
                 pmax = [-10.0, 6.98, 3.0e-9]
                 pstart = [-15.0, 2.01, 1.0e-10]
                 pwidth = [0.3, 0.3, 5.0e-11]
+                interval = [True, True, True]
             else:
                 raise ValueError("ERROR: option {0} not known".
                         format(dipoleModel))
@@ -3997,6 +4030,7 @@ class ptaLikelihood(object):
                 "pmax":pmax,
                 "pwidth":pwidth,
                 "pstart":pstart,
+                "interval":interval,
                 "prior":'flatlog'
                 })
             signals.append(newsignal)
@@ -4014,6 +4048,7 @@ class ptaLikelihood(object):
             clmmax = [5.0]*nclm
             clmstart = [0.0]*nclm
             clmwidth = [0.2]*nclm
+            clminterval = [True]*nclm
             if anigwbModel=='spectrum':
                 nfreqs = np.max(numNoiseFreqs)
                 bvary = [True]*nfreqs + clmvary
@@ -4021,12 +4056,14 @@ class ptaLikelihood(object):
                 pmax = [-7.0]*nfreqs + clmmax
                 pstart = [-10.0]*nfreqs + clmstart
                 pwidth = [0.1]*nfreqs + clmwidth
+                interval = [True]*nfreqs + clminterval
             elif anigwbModel=='powerlaw':
                 bvary = [True, True, False] + clmvary
                 pmin = [-17.0, 1.02, 1.0e-11] + clmmin
                 pmax = [-10.0, 6.98, 3.0e-9] + clmmax
                 pstart = [-15.0, 2.01, 1.0e-10] + clmstart
                 pwidth = [0.3, 0.3, 5.0e-11] + clmwidth
+                interval = [True]*nfreqs + clminterval
             else:
                 raise ValueError("ERROR: option {0} not known".
                         format(anigwbModel))
@@ -4041,6 +4078,7 @@ class ptaLikelihood(object):
                 "pwidth":pwidth,
                 "pstart":pstart,
                 "lAniGWB":lAniGWB,
+                "interval":interval,
                 "prior":'flatlog'
                 })
             signals.append(newsignal)
@@ -4059,12 +4097,14 @@ class ptaLikelihood(object):
                 pmax = [-7.0]*nfreqs + [2*np.pi, 0.5*np.pi] * npixels
                 pstart = [-10.0]*nfreqs + [0.0, 0.0] * npixels
                 pwidth = [0.1]*nfreqs + [0.1, 0.1] * npixels
+                interval = [True]*(nfreqs+2)
             elif anigwbModel=='powerlaw':
                 bvary = [True, True, False] + [True, True] * npixels
                 pmin = [-17.0, 1.02, 1.0e-11] + [0.0, -0.5*np.pi] * npixels
                 pmax = [-10.0, 6.98, 3.0e-9] + [2*np.pi, 0.5*np.pi] * npixels
                 pstart = [-15.0, 2.01, 1.0e-10] + [0.0, 0.0] * npixels
                 pwidth = [0.3, 0.3, 5.0e-11] + [0.1, 0.1] * npixels
+                interval = [True]*(3+2*npixels)
             else:
                 raise ValueError("ERROR: option {0} not known".
                         format(anigwbModel))
@@ -4079,6 +4119,7 @@ class ptaLikelihood(object):
                 "pwidth":pwidth,
                 "pstart":pstart,
                 "npixels":npixels,
+                "interval":interval,
                 "prior":'flatlog'
                 })
             signals.append(newsignal)
@@ -4100,6 +4141,7 @@ class ptaLikelihood(object):
                 "pmax":[toamax, -10.0, 2*np.pi, np.pi, np.pi],
                 "pwidth":[30*24*3600.0, 0.1, 0.1, 0.1, 0.1],
                 "pstart":[0.5*(toamax+toamin), -15.0, 3.0, 1.0, 1.0],
+                "interval":[True]*5,
                 "prior":'flatlog'
                 })
             signals.append(newsignal)
@@ -4389,7 +4431,7 @@ class ptaLikelihood(object):
         else:
             separateEfacs = (numEfacs + numEquads + numJits) > 2
 
-        if self.likfunc in ['mark11', 'mark12', 'gibbs']:
+        if self.likfunc in ['mark14', 'mark13', 'mark12', 'gibbs']:
             # For now, only trim the quantization matrix Umat for Gibbs/mark12
             trimquant = True
         else:
@@ -4398,7 +4440,7 @@ class ptaLikelihood(object):
 
         # When doing Gibbs, we really do not want to separate this stuff
         # TODO: Why are we always separating efacs for Gibbs?
-        if likfunc in ['gibbs', 'mark11', 'mark12']:
+        if likfunc in ['gibbs', 'mark14', 'mark13', 'mark12']:
             separateEfacs[:] = True
 
         # Modify design matrices, and create pulsar Auxiliary quantities
@@ -4816,6 +4858,7 @@ class ptaLikelihood(object):
         self.pmax = np.zeros(self.dimensions)
         self.pstart = np.zeros(self.dimensions)
         self.pwidth = np.zeros(self.dimensions)
+        self.interval = np.zeros(self.dimensions, dtype=np.bool)
 
         index = 0
         for m2signal in self.ptasignals:
@@ -4825,6 +4868,7 @@ class ptaLikelihood(object):
                     self.pmax[index] = m2signal['pmax'][ii]
                     self.pwidth[index] = m2signal['pwidth'][ii]
                     self.pstart[index] = m2signal['pstart'][ii]
+                    self.interval[index] = m2signal['interval'][ii]
                     index += 1
 
     """
@@ -5512,7 +5556,7 @@ class ptaLikelihood(object):
                     psr = self.ptapsrs[pp]
 
                     if len(newdes) == psr.Mmat.shape[1]:
-                        # This is a speed hack, necessary for mark11
+                        # This is a speed hack, necessary for mark13
                         Mmat = psr.Mmat
                     else:
                         # Create slicing vector (select parameters actually in signal)
@@ -8174,7 +8218,8 @@ class ptaLikelihood(object):
                 # Have a red noise stingray transformation
                 findex = np.sum(self.npf[:ii])
                 nfs = self.npf[ii]
-                phivec = self.Phivec[findex:findex+nfs]
+                phivec = self.Phivec[findex:findex+nfs] + \
+                        self.Svec[findex:findex+nfs]
 
                 Sigmavec = 1.0/(psr.ZNZ_srvec[psr.Zmask_F_only] + 1.0 / phivec)
                 std = np.sqrt(Sigmavec)
@@ -8195,7 +8240,13 @@ class ptaLikelihood(object):
                     Sigmavec[:] = 0.0
 
                 if calc_gradient:
+                    # Red noise
                     for key, value in self.d_Phivec_d_param.iteritems():
+                        d_lj_d_phi = 0.5 * Sigmavec / phivec**2
+                        gradient[key] = np.sum(d_lj_d_phi * value)
+
+                    # GW signals
+                    for key, value in self.d_Svec_d_param.iteritems():
                         d_lj_d_phi = 0.5 * Sigmavec / phivec**2
                         gradient[key] = np.sum(d_lj_d_phi * value)
 
@@ -8287,239 +8338,6 @@ class ptaLikelihood(object):
 
         return parameters, log_jacob, gradient, d_b_d_xi, d_b_d_B
     
-
-
-    def mark11loglikelihood(self, sr_parameters, transform='backward'):
-        """
-        mark11 loglikelihood. Used for full hierarchical model, with
-        transformations
-        """
-        # The red signal hyper-parameters
-        self.constructPhiAndTheta(sr_parameters, make_matrix=False,
-                gibbs_expansion=True, calc_gradient=True)
-
-        # The white noise hyper parameters
-        self.setPsrNoise(sr_parameters, calc_gradient=True)
-
-        # Perform the stingray transformation
-        parameters, log_jacob, lj_gradient, d_b_d_xi, d_b_d_B = \
-                self.stingray_transformation(sr_parameters,
-                        transform=transform, calc_gradient=True)
-
-        # The deterministic sources
-        #print "The values:"
-        d_L_d_b, d_Pr_d_b = self.updateDetSources(parameters, calc_gradient=True)
-
-        # If other deterministic sources are included, we cannot just blindly
-        # multiply with d_b_d_xi, unless we set d_b_d_xi also for _all_
-        # deterministic parameters in updateDetSources --- RvH
-        gradient = lj_gradient + (d_L_d_b+d_Pr_d_b)*d_b_d_xi
-
-        for ii, psr in enumerate(self.ptapsrs):
-            self.rGr[ii] = np.sum(psr.detresiduals**2 / psr.Nvec)
-            self.GNGldet[ii] = np.sum(np.log(psr.Nvec))
-
-            # Gradient for Nvec hyper-parameters
-            for key, d_Nvec_d_p in psr.d_Nvec_d_param.iteritems():
-                # Inner product
-                gradient[key] += 0.5 * np.sum(psr.detresiduals**2 *
-                        d_Nvec_d_p / psr.Nvec**2)
-
-                # Determinant
-                gradient[key] += -0.5 * np.sum(d_Nvec_d_p / psr.Nvec)
-
-            if psr.fourierind is not None:
-                findex = np.sum(self.npf[:ii])
-                nfreq = self.npf[ii]
-                ind = psr.fourierind
-                fslc = slice(findex, findex+nfreq)
-                pslc = slice(ind, ind+nfreq)
-
-                bsqr = parameters[pslc]**2
-                phivec = self.Phivec[fslc]
-
-                self.rGr[ii] += np.sum(bsqr / phivec)
-                self.GNGldet[ii] += np.sum(np.log(phivec))
-
-                # Gradient for Phivec hyper-parameters
-                for key, d_Phivec_d_p in self.d_Phivec_d_param.iteritems():
-                    # Inner product
-                    gradient[key] += 0.5 * np.sum(bsqr * d_Phivec_d_p / phivec**2)
-
-                    # Determinant
-                    gradient[key] -= 0.5 * np.sum(d_Phivec_d_p / phivec)
-
-                    # Stingray partial (chain-rule)
-                    d_b_d_sig = sr_parameters[pslc]
-                    gradient[key] += np.sum(
-                            (d_L_d_b[pslc]+d_Pr_d_b[pslc]) *
-                            d_b_d_B[pslc] * d_Phivec_d_p )
-
-            if psr.dmfourierind is not None:
-                fdmindex = np.sum(self.npfdm[:ii])
-                nfreqdm = self.npfdm[ii]
-                ind = psr.dmfourierind
-                fslc = slice(fdmindex, fdmindex+nfreqdm)
-                pslc = slice(ind, ind+nfreqdm)
-
-                bsqr = parameters[pslc]**2
-                thetavec = self.Thetavec[fslc]
-
-                self.rGr[ii] += np.sum(bsqr / thetavec)
-                self.GNGldet[ii] += np.sum(np.log(thetavec))
-
-                # Gradient for Thetavec hyper-parameters
-                for key, d_Thetavec_d_p in self.d_Thetavec_d_param.iteritems():
-                    # Inner product
-                    gradient[key] += 0.5 * np.sum(bsqr * d_Thetavec_d_p / thetavec**2)
-
-                    # Determinant
-                    gradient[key] -= 0.5 * np.sum(d_Thetavec_d_p / thetavec)
-
-                    # Stingray partial
-                    d_b_d_sig = sr_parameters[pslc]
-                    gradient[key] += np.sum( (d_L_d_b[pslc]+d_Pr_d_b[pslc]) *
-                            d_b_d_B[pslc] * d_Thetavec_d_p )
-                    #gradient[key] += np.sum(
-                    #        det_gradient[pslc] * d_sig_d_B[pslc] * d_Thetavec_d_p)
-
-            if psr.jitterind is not None:
-                uindex = np.sum(self.npu[:ii])
-                npus = self.npu[ii]
-                ind = psr.jitterind
-                pslc = slice(ind, ind+npus)
-
-                bsqr = parameters[pslc]**2
-                jvec = psr.Jvec
-
-                self.rGr[ii] += np.sum(bsqr / jvec)
-                self.GNGldet[ii] += np.sum(np.log(jvec))
-
-                # Gradient for Thetavec hyper-parameters
-                for key, d_Jvec_d_p in psr.d_Jvec_d_param.iteritems():
-                    # Inner product
-                    gradient[key] += 0.5 * np.sum(bsqr * d_Jvec_d_p / jvec**2)
-
-                    # Determinant
-                    gradient[key] -= 0.5 * np.sum(d_Jvec_d_p / jvec)
-
-                    # Stingray partial
-                    d_b_d_sig = sr_parameters[pslc]
-                    gradient[key] += np.sum( (d_L_d_b[pslc]+d_Pr_d_b[pslc]) *
-                            d_b_d_B[pslc] * d_Jvec_d_p )
-                    #gradient[key] += np.sum(
-                    #        det_gradient[pslc] * d_sig_d_B[pslc] * d_Jvec_d_p)
-
-        #ll = -0.5*np.sum(self.npobs)*np.log(2*np.pi) \
-        ll = -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet)
-
-        #print("Loglik + logjac = {0} + {1}".format(ll, log_jacob))
-        #print("{0}, {1}".format(np.sum(self.rGr), np.sum(self.GNGldet)))
-
-        return ll + log_jacob, gradient
-
-
-    """
-    mark11 loglikelihood of the pta model/likelihood implementation
-
-    This likelihood evaluates all the Gaussian processes individually. All the
-    noise matrices are therefore diagonal
-    """
-    def test_loglikelihood(self, sr_parameters, transform='backward'):
-        # The red signal hyper-parameters
-        self.constructPhiAndTheta(sr_parameters, make_matrix=False,
-                gibbs_expansion=True, calc_gradient=True)
-
-        # The white noise hyper parameters
-        self.setPsrNoise(sr_parameters, calc_gradient=True)
-
-        # Perform the stingray transformation
-        parameters, log_jacob, lj_gradient, d_b_d_xi, d_sig_d_B = \
-                self.stingray_transformation(sr_parameters,
-                        transform=transform, calc_gradient=True)
-
-        # Do everything in-house, right here....
-        # Our likelihood is extremely simple:
-        # L = -0.5 * (x - Fa) N^{-1} (x - Fa)
-        # No timing model, no determinants, no jacobian, no nothing
-
-        # Set all the detresiduals equal to residuals
-        for pp, psr in enumerate(self.ptapsrs):
-            psr.detresiduals = psr.residuals.copy()
-
-        # Get d_L_d_b, and update residuals
-        d_L_d_b = np.zeros_like(parameters)
-        for ss, m2signal in enumerate(self.ptasignals):
-            if m2signal['stype'] == 'fouriermode_xi':
-                sparameters = m2signal['pstart'].copy()
-                sparameters[m2signal['bvary']] = \
-                        parameters[m2signal['parindex']:m2signal['parindex']+m2signal['npars']]
-                pp = m2signal['pulsarind']
-                psr = self.ptapsrs[pp]
-                psr.detresiduals -= np.dot(psr.Fmat, sparameters)
-
-                # Indices
-                parslice = slice(m2signal['parindex'],
-                        m2signal['parindex']+m2signal['npars'])
-                smask = m2signal['bvary']
-                findex = np.sum(self.npf[:pp])
-                nfs = self.npf[pp]
-                phislice = slice(findex, findex+nfs)
-
-                d_L_d_a = np.dot(psr.Fmat.T / psr.Nvec, psr.detresiduals)
-                d_L_d_b[parslice] = d_L_d_a[smask]
-
-        # Gradient to start with
-        gradient = d_L_d_b*d_b_d_xi
-
-        for ii, psr in enumerate(self.ptapsrs):
-            self.rGr[ii] = np.sum(psr.detresiduals**2 / psr.Nvec)
-            #self.GNGldet[ii] = np.sum(np.log(psr.Nvec))
-
-            # Gradient for Nvec hyper-parameters
-            for key, d_Nvec_d_p in psr.d_Nvec_d_param.iteritems():
-                # Inner product
-                gradient[key] += 0.5 * np.sum(psr.detresiduals**2 *
-                        d_Nvec_d_p / psr.Nvec**2)
-
-                # Determinant gradient
-                # gradient[key] += -0.5 * np.sum(d_Nvec_d_p / psr.Nvec)
-
-            if psr.fourierind is not None:
-                findex = np.sum(self.npf[:ii])
-                nfreq = self.npf[ii]
-                ind = psr.fourierind
-                fslc = slice(findex, findex+nfreq)
-                pslc = slice(ind, ind+nfreq)
-
-                bsqr = parameters[pslc]**2
-                phivec = self.Phivec[fslc]
-
-                #self.rGr[ii] += np.sum(bsqr / phivec)
-                #self.GNGldet[ii] += np.sum(np.log(phivec))
-
-                # Gradient for Phivec hyper-parameters
-                for key, d_Phivec_d_p in self.d_Phivec_d_param.iteritems():
-                    # Inner product
-                    #gradient[key] += 0.5 * np.sum(bsqr * d_Phivec_d_p / phivec**2)
-
-                    # Determinant
-                    #gradient[key] -= 0.5 * np.sum(d_Phivec_d_p / phivec)
-
-                    # Stingray partial (chain-rule)
-                    d_b_d_sig = sr_parameters[pslc]
-                    gradient[key] += np.sum(d_L_d_b[pslc] *
-                            d_b_d_sig * d_sig_d_B[pslc] * d_Phivec_d_p )
-
-
-        #ll = -0.5*np.sum(self.npobs)*np.log(2*np.pi) \
-        ll = -0.5*np.sum(self.rGr)
-
-        #print("Loglik + logjac = {0} + {1}".format(ll, log_jacob))
-        #print("{0}, {1}".format(np.sum(self.rGr), np.sum(self.GNGldet)))
-
-        return ll, gradient
-
 
 
     def mark12loglikelihood(self, parameters):
@@ -8692,6 +8510,333 @@ class ptaLikelihood(object):
         return -0.5*np.sum(self.npobs-self.npm)*np.log(2*np.pi) \
                 -0.5*np.sum(Jldet) - 0.5*np.sum(rGr) \
                 +0.5*rSr - 0.5*SigmaLD - 0.5*PhiLD - 0.5*ThetaLD - 0.5*BetaLD
+
+
+    def mark13loglikelihood(self, sr_parameters, transform='backward'):
+        """
+        mark13 loglikelihood. Used for full hierarchical model, with
+        transformations
+        """
+        # The red signal hyper-parameters
+        self.constructPhiAndTheta(sr_parameters, make_matrix=False,
+                gibbs_expansion=True, calc_gradient=True)
+
+        # The white noise hyper parameters
+        self.setPsrNoise(sr_parameters, calc_gradient=True)
+
+        # Perform the stingray transformation
+        parameters, log_jacob, lj_gradient, d_b_d_xi, d_b_d_B = \
+                self.stingray_transformation(sr_parameters,
+                        transform=transform, calc_gradient=True)
+
+        # The deterministic sources
+        #print "The values:"
+        d_L_d_b, d_Pr_d_b = self.updateDetSources(parameters, calc_gradient=True)
+
+        # If other deterministic sources are included, we cannot just blindly
+        # multiply with d_b_d_xi, unless we set d_b_d_xi also for _all_
+        # deterministic parameters in updateDetSources --- RvH
+        gradient = lj_gradient + (d_L_d_b+d_Pr_d_b)*d_b_d_xi
+
+        for ii, psr in enumerate(self.ptapsrs):
+            self.rGr[ii] = np.sum(psr.detresiduals**2 / psr.Nvec)
+            self.GNGldet[ii] = np.sum(np.log(psr.Nvec))
+
+            # Gradient for Nvec hyper-parameters
+            for key, d_Nvec_d_p in psr.d_Nvec_d_param.iteritems():
+                # Inner product
+                gradient[key] += 0.5 * np.sum(psr.detresiduals**2 *
+                        d_Nvec_d_p / psr.Nvec**2)
+
+                # Determinant
+                gradient[key] += -0.5 * np.sum(d_Nvec_d_p / psr.Nvec)
+
+            if psr.fourierind is not None:
+                findex = np.sum(self.npf[:ii])
+                nfreq = self.npf[ii]
+                ind = psr.fourierind
+                fslc = slice(findex, findex+nfreq)
+                pslc = slice(ind, ind+nfreq)
+
+                bsqr = parameters[pslc]**2
+                phivec = self.Phivec[fslc]
+
+                self.rGr[ii] += np.sum(bsqr / phivec)
+                self.GNGldet[ii] += np.sum(np.log(phivec))
+
+                # Gradient for Phivec hyper-parameters
+                for key, d_Phivec_d_p in self.d_Phivec_d_param.iteritems():
+                    # Inner product
+                    gradient[key] += 0.5 * np.sum(bsqr * d_Phivec_d_p / phivec**2)
+
+                    # Determinant
+                    gradient[key] -= 0.5 * np.sum(d_Phivec_d_p / phivec)
+
+                    # Stingray partial (chain-rule)
+                    gradient[key] += np.sum(
+                            (d_L_d_b[pslc]+d_Pr_d_b[pslc]) *
+                            d_b_d_B[pslc] * d_Phivec_d_p )
+
+            if psr.dmfourierind is not None:
+                fdmindex = np.sum(self.npfdm[:ii])
+                nfreqdm = self.npfdm[ii]
+                ind = psr.dmfourierind
+                fslc = slice(fdmindex, fdmindex+nfreqdm)
+                pslc = slice(ind, ind+nfreqdm)
+
+                bsqr = parameters[pslc]**2
+                thetavec = self.Thetavec[fslc]
+
+                self.rGr[ii] += np.sum(bsqr / thetavec)
+                self.GNGldet[ii] += np.sum(np.log(thetavec))
+
+                # Gradient for Thetavec hyper-parameters
+                for key, d_Thetavec_d_p in self.d_Thetavec_d_param.iteritems():
+                    # Inner product
+                    gradient[key] += 0.5 * np.sum(bsqr * d_Thetavec_d_p / thetavec**2)
+
+                    # Determinant
+                    gradient[key] -= 0.5 * np.sum(d_Thetavec_d_p / thetavec)
+
+                    # Stingray partial
+                    gradient[key] += np.sum( (d_L_d_b[pslc]+d_Pr_d_b[pslc]) *
+                            d_b_d_B[pslc] * d_Thetavec_d_p )
+
+            if psr.jitterind is not None:
+                uindex = np.sum(self.npu[:ii])
+                npus = self.npu[ii]
+                ind = psr.jitterind
+                pslc = slice(ind, ind+npus)
+
+                bsqr = parameters[pslc]**2
+                jvec = psr.Jvec
+
+                self.rGr[ii] += np.sum(bsqr / jvec)
+                self.GNGldet[ii] += np.sum(np.log(jvec))
+
+                # Gradient for Thetavec hyper-parameters
+                for key, d_Jvec_d_p in psr.d_Jvec_d_param.iteritems():
+                    # Inner product
+                    gradient[key] += 0.5 * np.sum(bsqr * d_Jvec_d_p / jvec**2)
+
+                    # Determinant
+                    gradient[key] -= 0.5 * np.sum(d_Jvec_d_p / jvec)
+
+                    # Stingray partial
+                    gradient[key] += np.sum( (d_L_d_b[pslc]+d_Pr_d_b[pslc]) *
+                            d_b_d_B[pslc] * d_Jvec_d_p )
+
+        #ll = -0.5*np.sum(self.npobs)*np.log(2*np.pi) \
+        ll = -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet)
+
+        return ll + log_jacob, gradient
+
+
+    def mark14loglikelihood(self, sr_parameters, transform='backward'):
+        """
+        mark14 loglikelihood. Used for full hierarchical model, with
+        transformations
+        """
+        # The red signal hyper-parameters
+        self.constructPhiAndTheta(sr_parameters, make_matrix=False,
+                gibbs_expansion=True, calc_gradient=True)
+
+        # The white noise hyper parameters
+        self.setPsrNoise(sr_parameters, calc_gradient=True)
+
+        # Perform the stingray transformation
+        parameters, log_jacob, lj_gradient, d_b_d_xi, d_b_d_B = \
+                self.stingray_transformation(sr_parameters,
+                        transform=transform, calc_gradient=True)
+
+        # The deterministic sources
+        #print "The values:"
+        d_L_d_b, d_Pr_d_b = self.updateDetSources(parameters, calc_gradient=True)
+
+        # If other deterministic sources are included, we cannot just blindly
+        # multiply with d_b_d_xi, unless we set d_b_d_xi also for _all_
+        # deterministic parameters in updateDetSources --- RvH
+        gradient = lj_gradient + (d_L_d_b+d_Pr_d_b)*d_b_d_xi
+
+        for ii, psr in enumerate(self.ptapsrs):
+            self.rGr[ii] = np.sum(psr.detresiduals**2 / psr.Nvec)
+            self.GNGldet[ii] = np.sum(np.log(psr.Nvec))
+
+            # Gradient for Nvec hyper-parameters
+            for key, d_Nvec_d_p in psr.d_Nvec_d_param.iteritems():
+                # Inner product
+                gradient[key] += 0.5 * np.sum(psr.detresiduals**2 *
+                        d_Nvec_d_p / psr.Nvec**2)
+
+                # Determinant
+                gradient[key] += -0.5 * np.sum(d_Nvec_d_p / psr.Nvec)
+
+            if psr.fourierind is not None and len(self.ptapsrs) == 1:
+                findex = np.sum(self.npf[:ii])
+                nfreq = self.npf[ii]
+                ind = psr.fourierind
+                fslc = slice(findex, findex+nfreq)
+                pslc = slice(ind, ind+nfreq)
+
+                bsqr = parameters[pslc]**2
+                phivec = self.Phivec[fslc] + self.Svec[fslc]
+
+                self.rGr[ii] += np.sum(bsqr / phivec)
+                self.GNGldet[ii] += np.sum(np.log(phivec))
+
+                # Gradient for Phivec hyper-parameters
+                for key, d_Phivec_d_p in self.d_Phivec_d_param.iteritems():
+                    # Inner product
+                    gradient[key] += 0.5 * np.sum(bsqr * d_Phivec_d_p / phivec**2)
+
+                    # Determinant
+                    gradient[key] -= 0.5 * np.sum(d_Phivec_d_p / phivec)
+
+                    # Stingray partial (chain-rule)
+                    gradient[key] += np.sum(
+                            (d_L_d_b[pslc]+d_Pr_d_b[pslc]) *
+                            d_b_d_B[pslc] * d_Phivec_d_p )
+
+                # Gradient for Svec hyper-parameters
+                for key, d_Svec_d_p in self.d_Svec_d_param.iteritems():
+                    # Inner product
+                    gradient[key] += 0.5 * np.sum(bsqr * d_Svec_d_p / phivec**2)
+
+                    # Determinant
+                    gradient[key] -= 0.5 * np.sum(d_Svec_d_p / phivec)
+
+                    # Stingray partial (chain-rule)
+                    gradient[key] += np.sum(
+                            (d_L_d_b[pslc]+d_Pr_d_b[pslc]) *
+                            d_b_d_B[pslc] * d_Svec_d_p )
+
+            if psr.dmfourierind is not None:
+                fdmindex = np.sum(self.npfdm[:ii])
+                nfreqdm = self.npfdm[ii]
+                ind = psr.dmfourierind
+                fslc = slice(fdmindex, fdmindex+nfreqdm)
+                pslc = slice(ind, ind+nfreqdm)
+
+                bsqr = parameters[pslc]**2
+                thetavec = self.Thetavec[fslc]
+
+                self.rGr[ii] += np.sum(bsqr / thetavec)
+                self.GNGldet[ii] += np.sum(np.log(thetavec))
+
+                # Gradient for Thetavec hyper-parameters
+                for key, d_Thetavec_d_p in self.d_Thetavec_d_param.iteritems():
+                    # Inner product
+                    gradient[key] += 0.5 * np.sum(bsqr * d_Thetavec_d_p / thetavec**2)
+
+                    # Determinant
+                    gradient[key] -= 0.5 * np.sum(d_Thetavec_d_p / thetavec)
+
+                    # Stingray partial
+                    gradient[key] += np.sum( (d_L_d_b[pslc]+d_Pr_d_b[pslc]) *
+                            d_b_d_B[pslc] * d_Thetavec_d_p )
+
+            if psr.jitterind is not None:
+                uindex = np.sum(self.npu[:ii])
+                npus = self.npu[ii]
+                ind = psr.jitterind
+                pslc = slice(ind, ind+npus)
+
+                bsqr = parameters[pslc]**2
+                jvec = psr.Jvec
+
+                self.rGr[ii] += np.sum(bsqr / jvec)
+                self.GNGldet[ii] += np.sum(np.log(jvec))
+
+                # Gradient for Thetavec hyper-parameters
+                for key, d_Jvec_d_p in psr.d_Jvec_d_param.iteritems():
+                    # Inner product
+                    gradient[key] += 0.5 * np.sum(bsqr * d_Jvec_d_p / jvec**2)
+
+                    # Determinant
+                    gradient[key] -= 0.5 * np.sum(d_Jvec_d_p / jvec)
+
+                    # Stingray partial
+                    gradient[key] += np.sum( (d_L_d_b[pslc]+d_Pr_d_b[pslc]) *
+                            d_b_d_B[pslc] * d_Jvec_d_p )
+
+        # Do correlated signals for the full array here
+        corr_xi2 = 0.0
+        corr_ldet = 0.0
+        if 'rednoise' in self.gibbsmodel and len(self.ptapsrs) > 1:
+            # Re-create the overlap reduction function Cholesky decomposition
+            # per frequency
+            self.gibbs_construct_all_freqcov()
+
+            # Set the freqb matrix (Fourier coefficients)
+            for pp, psr in enumerate(self.ptapsrs):
+                nfreq = self.npf[ii]
+                ind = psr.fourierind
+                pslc = slice(ind, ind+nfreq)
+                self.freqb[pp, self.freqmask[pp,:]] = parameters[pslc]
+
+            # Do some fancy stuff here per frequency
+            for ii in range(0, len(self.Svec), 2):
+                msk = self.freqmask[:, ii]
+
+                # The covariance between sin/cos modes is identical
+                cf = self.Scor_im_cf[int(ii / 2)]
+
+                # Cosine mode
+                bc = self.freqb[msk, ii]
+                Lx = sl.cho_solve(cf, bc)
+                corr_xi2 += np.sum(Lx**2)
+                corr_ldet += 2*np.sum(np.log(np.diag(cf[0])))
+
+                # Sine mode
+                bs = self.freqb[msk, ii+1]
+                Lx = sl.cho_solve(cf, bs)
+                corr_xi2 += np.sum(Lx**2)
+                corr_ldet += 2*np.sum(np.log(np.diag(cf[0])))
+
+                # Gradient for B hyper-parameters
+                # CONTINUE HERE!!!!
+                for key, d_Phivec_d_p in self.d_Phivec_d_param.iteritems():
+                    # Inner product
+                    # ..... check d_Phivec_d_p. Does not seem right for
+                    #       multiple pulsars...
+                    # Indeed, it is incorrect. d_plBpsd does not make vector
+                    # with the length of _all_ frequencies for _all_ pulsars.
+                    # Only works for a single pulsar. Change it to be more
+                    # general
+
+                    # Inner product
+                    gradient[key] += 0.5 * np.sum(bsqr * d_Phivec_d_p / phivec**2)
+
+                    # Determinant
+                    gradient[key] -= 0.5 * np.sum(d_Phivec_d_p / phivec)
+
+                    # Stingray partial (chain-rule)
+                    gradient[key] += np.sum(
+                            (d_L_d_b[pslc]+d_Pr_d_b[pslc]) *
+                            d_b_d_B[pslc] * d_Phivec_d_p )
+
+                # Gradient for Svec hyper-parameters
+                for key, d_Svec_d_p in self.d_Svec_d_param.iteritems():
+                    # Inner product
+                    gradient[key] += 0.5 * np.sum(bsqr * d_Svec_d_p / phivec**2)
+
+                    # Determinant
+                    gradient[key] -= 0.5 * np.sum(d_Svec_d_p / phivec)
+
+                    # Stingray partial (chain-rule)
+                    gradient[key] += np.sum(
+                            (d_L_d_b[pslc]+d_Pr_d_b[pslc]) *
+                            d_b_d_B[pslc] * d_Svec_d_p )
+
+
+
+        #ll = -0.5*np.sum(self.npobs)*np.log(2*np.pi) \
+        ll = -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) - \
+            0.5*corr_xi2 - 0.5*corr_ldet
+
+        return ll + log_jacob, gradient
+
+
 
 
     # Now we will define the Gibbs likelihood functions, all preceded with
@@ -9460,11 +9605,6 @@ class ptaLikelihood(object):
         return a
 
 
-
-
-
-
-
     def gibbs_full_loglikelihood(self, aparameters, resetCorInv=True, \
             which='all', pp=-1, updateResiduals=True):
         """
@@ -9990,8 +10130,11 @@ class ptaLikelihood(object):
                 ll = self.mark9loglikelihood(parameters)
             elif self.likfunc == 'mark10':
                 ll = self.mark10loglikelihood(parameters)
-            elif self.likfunc == 'mark11':
-                ll, _ = self.mark11loglikelihood(parameters)
+            elif self.likfunc == 'mark13':
+                ll, _ = self.mark13loglikelihood(parameters)
+                #print("WARNING: ignoring gradient information!")
+            elif self.likfunc == 'mark14':
+                ll, _ = self.mark14loglikelihood(parameters)
                 #print("WARNING: ignoring gradient information!")
             elif self.likfunc == 'mark12':
                 ll = self.mark12loglikelihood(parameters)
@@ -10007,9 +10150,14 @@ class ptaLikelihood(object):
 
     # TODO: the prior for the amplitude parameters is not yet normalised
     # TODO: this is a giant mess. Make this somewhat more structured
-    def mark11logprior(self, parameters):
+    def mark13logprior(self, parameters):
         lp = 0.0
         lp_grad = np.zeros_like(parameters)
+
+        msk = self.interval
+        if np.any(parameters[msk] < self.pmin[msk]) or \
+                np.any(parameters[msk] > self.pmax[msk]):
+            return -1e99, lp_grad
 
         # Loop over all signals
         for m2signal in self.ptasignals:
@@ -10068,7 +10216,7 @@ class ptaLikelihood(object):
         return lp, lp_grad
 
     def mark4logprior(self, parameters):
-        lp, _ = self.mark11logprior(parameters)
+        lp, _ = self.mark13logprior(parameters)
         return lp
 
 
@@ -10165,37 +10313,16 @@ class ptaLikelihood(object):
     def logprior(self, parameters):
         lp = 0.0
 
-        if(np.all(self.pmin <= parameters) and np.all(parameters <= self.pmax)):
-            if self.likfunc == 'mark1':
-                lp = self.mark4logprior(parameters)
-            elif self.likfunc == 'mark2':
-                lp = self.mark4logprior(parameters)
-            elif self.likfunc in ['mark3', 'mark3nc']:
-                lp = self.mark4logprior(parameters)
-            elif self.likfunc == 'mark3fa':
-                lp = self.mark4logprior(parameters)
-            elif self.likfunc == 'mark4':
-                lp = self.mark4logprior(parameters)
-            elif self.likfunc == 'mark4ln':
-                lp = self.mark9logprior(parameters)
-            elif self.likfunc == 'mark6':
-                lp = self.mark4logprior(parameters)
-            elif self.likfunc == 'mark6fa':
-                lp = self.mark4logprior(parameters)
-            elif self.likfunc == 'mark7':  # Mark7 should be called differently of course
-                lp = self.mark7logprior(parameters)
-            elif self.likfunc == 'mark8':  # Mark8 ''
-                lp = self.mark8logprior(parameters)
-            elif self.likfunc == 'mark9':  # Mark9 ''
-                lp = self.mark9logprior(parameters)
-            elif self.likfunc == 'mark10':  # Mark9 ''
-                lp = self.mark9logprior(parameters)
-            elif self.likfunc == 'mark11':
-                lp = self.mark4logprior(parameters)
-            elif self.likfunc == 'mark12':
-                lp = self.mark4logprior(parameters)
-            elif self.likfunc == 'gibbs':
-                lp = self.mark4logprior(parameters)
+        if self.likfunc in ['mark1', 'mark2', 'mark3', 'mark3nc', 'mark3fa',
+            'mark4', 'mark4ln', 'mark6', 'mark6fa', 'mark13', 'mark14',
+            'mark12', 'gibbs']:
+            lp = self.mark4logprior(parameters)
+        elif self.likfunc == 'mark7':
+            lp = self.mark7logprior(parameters)
+        elif self.likfunc == 'mark8':
+            lp = self.mark8logprior(parameters)
+        elif self.likfunc in ['mark9', 'mark10']:
+            lp = self.mark9logprior(parameters)
         else:
             lp = -1e99
 
@@ -10207,19 +10334,24 @@ class ptaLikelihood(object):
             lp += self.loglikelihood(parameters)
         return lp
 
-    def mark11logposterior(self, parameters):
-        lp, lp_grad = self.mark11logprior(parameters)
-        ll, ll_grad = self.mark11loglikelihood(parameters)
+    def mark13logposterior(self, parameters):
+        lp, lp_grad = self.mark13logprior(parameters)
+        ll, ll_grad = self.mark13loglikelihood(parameters)
+        return ll+lp, lp_grad + ll_grad
+
+    def mark14logposterior(self, parameters):
+        lp, lp_grad = self.mark13logprior(parameters)
+        ll, ll_grad = self.mark14loglikelihood(parameters)
         return ll+lp, lp_grad + ll_grad
     
     def logposterior_grad(self, parameters):
-        return self.mark11logposterior(parameters)
+        return self.mark13logposterior(parameters)
 
     def loglikelihood_grad(self, parameters):
-        return self.mark11loglikelihood(parameters)
+        return self.mark13loglikelihood(parameters)
 
     def logprior_grad(self, parameters):
-        return self.mark11logprior(parameters)
+        return self.mark13logprior(parameters)
 
     def nlogposterior(self, parameters):
         return -self.logposterior(parameters)
