@@ -4532,7 +4532,7 @@ class ptaLikelihood(object):
         self.registerModel()
 
         # Add the prior draws for when sampling with the PTSampler
-        if self.priorDraws:
+        if fullmodel['priorDraws']:
             self.addPriorDraws(which='hyper')
 
     def registerModel(self):
@@ -10466,17 +10466,17 @@ class ptaLikelihood(object):
             parind = signal['parindex']
             
             if signal['prior'] in ['linear', 'flat']:
-                # Flat/linear prior (even though this is in log
+                # Flat/linear prior (even though this is in log)
+                q[parind] = np.random.uniform(
+                        self.pmin[parind], self.pmax[parind])
+                qxy += np.log(10 ** parameters[parind] / 10 ** q[parind])
+            elif signal['prior'] in ['flatlog']:
                 q[parind] = np.log10(np.random.uniform(
                         10**self.pmin[parind],
                         10**self.pmax[parind]))
                 qxy += 0
-            elif signal['prior'] in ['flatlog']:
                 # Really just flat :s. Poor choice of wording, I know
                 # TODO: change above keyword to uniform, instead of flat
-                q[parind] = np.random.uniform(
-                        self.pmin[parind], self.pmax[parind])
-                qxy += np.log(10 ** parameters[parind] / 10 ** q[parind])
 
         return q, qxy
             
