@@ -121,7 +121,7 @@ class hmcLikelihood(object):
               does not include the jacobian transformation
         """
         x = self.backward(p)
-        lp, lp_grad = self.likob.mark13logprior(x)
+        lp, lp_grad = self.likob.mark13logprior_fast(x)
         return lp, lp_grad*self.dxdp(p)
 
     def logposterior(self, p):
@@ -145,7 +145,7 @@ class hmcLikelihood(object):
               does not include the jacobian transformation
         """
         x = self.backward(p)
-        lp, lp_grad = self.likob.mark13logprior(x)
+        lp, lp_grad = self.likob.mark13logprior_fast(x)
         return lp
     
     def addPriorDraws(self, which='hyper'):

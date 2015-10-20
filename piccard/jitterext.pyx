@@ -390,7 +390,8 @@ def cython_update_ea_residuals( \
 def cython_Uj(np.ndarray[np.double_t,ndim=1] j, \
         np.ndarray[np.int_t,ndim=2] Uinds, nobs):
     """
-    Given epoch-averaged residuals (j), get the residuals
+    Given epoch-averaged residuals (j), get the residuals.
+    Used in 'updateDetSources'
 
     @param j:                   epoch averaged residuals (k)
     @param Uinds:               The start/finish indices for the jitter blocks
@@ -411,6 +412,7 @@ def cython_UTx(np.ndarray[np.double_t,ndim=1] x, \
         np.ndarray[np.int_t,ndim=2] Uinds):
     """
     Given residuals (x), get np.dot(U.T, x)
+    Used in 'updateDetSources'
 
     @param j:                   epoch averaged residuals (k)
     @param Uinds:               The start/finish indices for the jitter blocks

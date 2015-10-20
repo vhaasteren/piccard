@@ -118,8 +118,18 @@ class ptaPulsar(object):
         # Temporary quantities for various Gibbs quantities
         self.gibbs_N_iter = 0
         self.gibbs_N_residuals = None
-        self.gibbs_N_sinds = []
-        self.gibbs_NJ_sinds = []
+
+        # Keep track of which indices belong to which types of signals
+        # Here it's for the pulsar (we also do it in the full likelihood)
+        self.sig_N_inds = []
+        self.sig_NJ_inds = []
+        self.sig_Phi_inds = []
+        self.sig_Theta_inds = []
+        self.sig_Beta_inds = []
+        self.sig_Det_inds = []
+
+        # Keep track of the priors (per parameter!)
+        self.prior_linear_inds = []
 
         # The auxiliary quantities
         self.Fmat = None
@@ -2510,6 +2520,15 @@ class ptaLikelihood(object):
         self.haveStochSources = False
         self.haveDetSources = False
 
+        # Keep track of which signals we have, and what they do
+        # Here it's for the full likelihood (we also do it per pulsar)
+        self.sig_N_inds = []
+        self.sig_NJ_inds = []
+        self.sig_Phi_inds = []
+        self.sig_Theta_inds = []
+        self.sig_Beta_inds = []
+        self.sig_Det_inds = []
+
         # Additional informative quantities (reset after RJMCMC jump)
         self.npf = None      # Number of frequencies per pulsar (red noise/signal)
         self.npff = None     # Number of frequencies per pulsar (single-freq components)
@@ -4540,7 +4559,7 @@ class ptaLikelihood(object):
         After changing the model, we re-set the number of dimensions, the prior,
         and all the model dictionaries.
         """
-        self.setPsrNoise_inds()
+        self.setPsrSignal_inds()
         self.setDimensions()
         self.initPrior()
         self.pardes = self.getModelParameterList()
@@ -4865,6 +4884,7 @@ class ptaLikelihood(object):
         self.pstart = np.zeros(self.dimensions)
         self.pwidth = np.zeros(self.dimensions)
         self.interval = np.zeros(self.dimensions, dtype=np.bool)
+        self.prior_linear_inds = []
 
         index = 0
         for m2signal in self.ptasignals:
@@ -4876,6 +4896,27 @@ class ptaLikelihood(object):
                     self.pstart[index] = m2signal['pstart'][ii]
                     self.interval[index] = m2signal['interval'][ii]
                     index += 1
+
+            # For much much faster prior evaluations, keep track of the prior
+            # stuff
+            if 'prior' in m2signal and m2signal['prior'] in ['flat', 'linear']:
+                if m2signal['stype'] in ['spectrum', 'dmspectrum']:
+                    for ii in range(m2signal['ntotpars']):
+                        npar = 0
+                        spind = m2signal['parindex']
+                        if m2signal['bvary'][ii]:
+                            self.prior_linear_inds.append(spind+npar)
+                            npar += 1
+                elif m2signal['bvary'][0]:
+                    self.prior_linear_inds.append(m2signal['parindex'])
+
+            if m2signal['corr'] == 'anisotropicgwb':
+                # Do something fancy with the prior here...
+                pass
+
+        # Make sure it's an integer numpy array (can be used for indexing)
+        self.prior_linear_inds = np.array(self.prior_linear_inds, dtype=np.int)
+
 
     """
     Return a list of all efac parameter numbers, their names, and the pulsar
@@ -4972,8 +5013,9 @@ class ptaLikelihood(object):
             selection = np.array([1]*len(self.ptasignals), dtype=np.bool)
 
         # Loop over all white noise signals, and fill the pulsar Nvec
-        for ss, m2signal in enumerate(self.ptasignals):
-            #m2signal = self.ptasignals[ss]
+        #for ss, m2signal in enumerate(self.ptasignals):
+        for ss in self.sig_NJ_inds:
+            m2signal = self.ptasignals[ss]
             psr = self.ptapsrs[m2signal['pulsarind']]
             if selection[ss]:
                 if m2signal['stype'] == 'efac':
@@ -5156,9 +5198,12 @@ class ptaLikelihood(object):
 
         # Loop over all signals, and fill the phi matrix
         #for m2signal in self.ptasignals:
-        for ss in range(len(self.ptasignals)):
-            m2signal = self.ptasignals[ss]
-            if selection[ss]:
+        #for ss in range(len(self.ptasignals)):
+        for ss in np.hstack((self.sig_Phi_inds,
+                            self.sig_Theta_inds,
+                            self.sig_Beta_inds)):
+            m2signal = self.ptasignals[int(ss)]
+            if selection[int(ss)]:
                 # Create a parameters array for this particular signal
                 sparameters = m2signal['pstart'].copy()
                 sparameters[m2signal['bvary']] = \
@@ -5548,7 +5593,9 @@ class ptaLikelihood(object):
             psr.detresiduals = psr.residuals.copy()
 
         # In the case we have numerical timing model (linear/nonlinear)
-        for ss, m2signal in enumerate(self.ptasignals):
+        #for ss, m2signal in enumerate(self.ptasignals):
+        for ss in self.sig_Det_inds:
+            m2signal = self.ptasignals[ss]
             if selection[ss]:
                 # Create a parameters array for this particular signal
                 sparameters = m2signal['pstart'].copy()
@@ -5806,9 +5853,9 @@ class ptaLikelihood(object):
         psr = self.ptapsrs[pp]
 
         if joinNJ:
-            inds = psr.gibbs_NJ_sinds
+            inds = psr.sig_NJ_inds
         else:
-            inds = psr.gibbs_N_sinds
+            inds = psr.sig_N_inds
 
         # Re-set all the pulsar noise vectors
         if psr.twoComponentNoise:
@@ -5853,29 +5900,66 @@ class ptaLikelihood(object):
 
                     psr.Jvec += m2signal['Jvec'] * pequadsqr
 
-    def setPsrNoise_inds(self):
+    def setPsrSignal_inds(self):
         """
-        Set the noise signal indices: gibbs_N_sinds. Used so that we don't have
+        Set the noise signal indices: sig_N_inds. Used so that we don't have
         to loop over all the signals everytime.
         """
+        self.sig_N_inds = []
+        self.sig_NJ_inds = []
+        self.sig_Phi_inds = []
+        self.sig_Theta_inds = []
+        self.sig_Beta_inds = []
+        self.sig_Det_inds = []
         for pp, psr in enumerate(self.ptapsrs):
-            psr.gibbs_N_sinds = []
-            psr.gibbs_NJ_sinds = []
+            psr.sig_N_inds = []
+            psr.sig_NJ_inds = []
+            psr.sig_Phi_inds = []
+            psr.sig_Theta_inds = []
+            psr.sig_Beta_inds = []
+            psr.sig_Det_inds = []
 
         slistNJ = ['efac', 'equad', 'jitter', 'cequad']
         slistN = ['efac', 'equad']
+        slistPhi = ['powerlaw', 'spectrum', 'spectralModel']
+        # frequencyline, dmfrequencyline, 
+        slistTheta = ['dmpowerlaw', 'dmspectrum']
+        slistBeta = ['freqspectrum', 'freqpowerlaw', 'freqspectralModel']
+        slistDet = ['lineartimingmodel', 'nonlineartimingmodel',
+                'timingmodel_xi', 'fouriermode_xi', 'dmfouriermode_xi',
+                'jittermode_xi']
 
         # Loop over all white noise signals, and fill the pulsar Nvec
         for ss, m2signal in enumerate(self.ptasignals):
             pp = m2signal['pulsarind']
             psr = self.ptapsrs[pp]
             if m2signal['stype'] in slistNJ:
-                psr.gibbs_NJ_sinds.append(ss)
+                if pp >= 0:
+                    psr.sig_NJ_inds.append(ss)
+                self.sig_NJ_inds.append(ss)
             if m2signal['stype'] in slistN:
-                psr.gibbs_N_sinds.append(ss)
+                if pp >= 0:
+                    psr.sig_N_inds.append(ss)
+                self.sig_N_inds.append(ss)
+            if m2signal['stype'] in slistPhi:
+                if pp >= 0:
+                    psr.sig_Phi_inds.append(ss)
+                self.sig_Phi_inds.append(ss)
+            if m2signal['stype'] in slistTheta:
+                if pp >= 0:
+                    psr.sig_Theta_inds.append(ss)
+                self.sig_Theta_inds.append(ss)
+            if m2signal['stype'] in slistBeta:
+                if pp >= 0:
+                    psr.sig_Beta_inds.append(ss)
+                self.sig_Beta_inds.append(ss)
+            if m2signal['stype'] in slistDet:
+                if pp >= 0:
+                    psr.sig_Det_inds.append(ss)
+                self.sig_Det_inds.append(ss)
 
-        psr.gibbs_N_sinds = np.array(psr.gibbs_N_sinds)
-        psr.gibbs_NJ_sinds = np.array(psr.gibbs_NJ_sinds)
+        psr.sig_N_inds = np.array(psr.sig_N_inds)
+        psr.sig_NJ_inds = np.array(psr.sig_NJ_inds)
 
 
     def setTheta(self, parameters, selection=None, pp=0):
@@ -5899,7 +5983,8 @@ class ptaLikelihood(object):
 
         # Loop over all signals, and fill the phi matrix
         #for m2signal in self.ptasignals:
-        for ss, m2signal in enumerate(self.ptasignals):
+        #for ss, m2signal in enumerate(self.ptasignals):
+        for ss in psr.sig_Theta_inds:
             if m2signal['pulsarind'] == pp and selection[ss]:
                 # Create a parameters array for this particular signal
                 sparameters = m2signal['pstart'].copy()
@@ -5958,7 +6043,8 @@ class ptaLikelihood(object):
 
         # Loop over all signals, and fill the phi matrix
         #for m2signal in self.ptasignals:
-        for ss in range(len(self.ptasignals)):
+        #for ss in range(len(self.ptasignals)):
+        for ss in self.sig_Phi_inds:
             m2signal = self.ptasignals[ss]
             if selection[ss]:
                 # Create a parameters array for this particular signal
@@ -6099,7 +6185,8 @@ class ptaLikelihood(object):
 
         # Loop over all signals, and fill the phi matrix
         #for m2signal in self.ptasignals:
-        for ss, m2signal in enumerate(self.ptasignals):
+        #for ss, m2signal in enumerate(self.ptasignals):
+        for ss in psr.sig_Beta_inds:
             if m2signal['pulsarind'] == pp and selection[ss]:
                 # Create a parameters array for this particular signal
                 sparameters = m2signal['pstart'].copy()
@@ -10219,13 +10306,34 @@ class ptaLikelihood(object):
             #elif m2signal['stype'] == 'spectrum' and m2signal['corr'] != 'single':
             #    lp += np.sum(parameters[m2signal['parindex']:m2signal['parindex']+m2signal['npars']])
 
-            # Divide by the prior range
+            # Divide by the prior range.
+            # Not right if we don't have a flatlog prior...
             if np.sum(m2signal['bvary']) > 0:
                 lp -= np.sum(np.log(m2signal['pmax'][m2signal['bvary']]-m2signal['pmin'][m2signal['bvary']]))
         return lp, lp_grad
 
+    # TODO: the prior for the amplitude parameters is not yet normalised
+    # TODO: this is a giant mess. Make this somewhat more structured
+    def mark13logprior_fast(self, parameters):
+        lp = 0.0
+        lp_grad = np.zeros_like(parameters)
+
+        msk = self.interval
+        if np.any(parameters[msk] < self.pmin[msk]) or \
+                np.any(parameters[msk] > self.pmax[msk]):
+            return -1e99, lp_grad
+
+        # Set the linear priors all at once
+        priorpars = parameters[self.prior_linear_inds]
+        npriorpars = len(priorpars)
+        lp += np.log(10)*np.sum(priorpars)
+        lp_grad[self.prior_linear_inds] += np.log(10)
+
+        return lp, lp_grad
+
+
     def mark4logprior(self, parameters):
-        lp, _ = self.mark13logprior(parameters)
+        lp, _ = self.mark13logprior_fast(parameters)
         return lp
 
 
@@ -10344,12 +10452,12 @@ class ptaLikelihood(object):
         return lp
 
     def mark13logposterior(self, parameters):
-        lp, lp_grad = self.mark13logprior(parameters)
+        lp, lp_grad = self.mark13logprior_fast(parameters)
         ll, ll_grad = self.mark13loglikelihood(parameters)
         return ll+lp, lp_grad + ll_grad
 
     def mark14logposterior(self, parameters):
-        lp, lp_grad = self.mark13logprior(parameters)
+        lp, lp_grad = self.mark13logprior_fast(parameters)
         ll, ll_grad = self.mark14loglikelihood(parameters)
         return ll+lp, lp_grad + ll_grad
     
@@ -10360,7 +10468,7 @@ class ptaLikelihood(object):
         return self.mark13loglikelihood(parameters)
 
     def logprior_grad(self, parameters):
-        return self.mark13logprior(parameters)
+        return self.mark13logprior_fast(parameters)
 
     def nlogposterior(self, parameters):
         return -self.logposterior(parameters)
