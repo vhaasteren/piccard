@@ -5640,7 +5640,9 @@ class ptaLikelihood(object):
                 elif m2signal['stype'] == 'jittermode_xi':
                     pp = m2signal['pulsarind']
                     self.ptapsrs[pp].detresiduals -= \
-                            np.dot(self.ptapsrs[pp].Umat, sparameters)
+                            cython_Uj(sparameters, self.ptapsrs[pp].Uinds,
+                                    len(self.ptapsrs[pp].detresiduals))
+                    #        np.dot(self.ptapsrs[pp].Umat, sparameters)
 
         if calc_gradient:
             # Loop over all signals, and construct the gradients
@@ -5716,7 +5718,8 @@ class ptaLikelihood(object):
                                 m2signal['parindex']+m2signal['npars'])
                         smask = m2signal['bvary']
 
-                        d_L_d_xi = np.dot(psr.Umat.T, psr.detresiduals / psr.Nvec)
+                        #d_L_d_xi = np.dot(psr.Umat.T, psr.detresiduals / psr.Nvec)
+                        d_L_d_xi = cython_UTx(psr.detresiduals / psr.Nvec, psr.Uinds)
                         d_Pr_d_xi = -sparameters / psr.Jvec
                         d_L_d_b[parslice] = d_L_d_xi[smask]
                         d_Pr_d_b[parslice] = d_Pr_d_xi[smask]

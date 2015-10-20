@@ -386,3 +386,43 @@ def cython_update_ea_residuals( \
 
     return gibbsresiduals, gibbssubresiduals
 
+
+def cython_Uj(np.ndarray[np.double_t,ndim=1] j, \
+        np.ndarray[np.int_t,ndim=2] Uinds, nobs):
+    """
+    Given epoch-averaged residuals (j), get the residuals
+
+    @param j:                   epoch averaged residuals (k)
+    @param Uinds:               The start/finish indices for the jitter blocks
+                                (k x 2)
+    @param nobs:                Number of observations (length return vector)
+
+    """
+    cdef unsigned int k = Uinds.shape[0], ii, cc
+    cdef np.ndarray[np.double_t,ndim=1] Uj = np.zeros(nobs, 'd')
+
+    for cc in range(k):
+        for ii in range(Uinds[cc,0],Uinds[cc,1]):
+            Uj[ii] += j[cc]
+
+    return Uj
+
+def cython_UTx(np.ndarray[np.double_t,ndim=1] x, \
+        np.ndarray[np.int_t,ndim=2] Uinds):
+    """
+    Given residuals (x), get np.dot(U.T, x)
+
+    @param j:                   epoch averaged residuals (k)
+    @param Uinds:               The start/finish indices for the jitter blocks
+                                (k x 2)
+
+    """
+    cdef unsigned int k = Uinds.shape[0], ii, cc
+    cdef np.ndarray[np.double_t,ndim=1] UTx = np.zeros(k, 'd')
+
+    for cc in range(k):
+        for ii in range(Uinds[cc,0],Uinds[cc,1]):
+            UTx[cc] += x[ii]
+
+    return UTx
+
