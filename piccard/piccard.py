@@ -1946,7 +1946,7 @@ class ptaPulsar(object):
                 h5df.addData(self.name, 'pic_tmpConv', self.tmpConv)
                 h5df.addData(self.name, 'pic_tmpConvi', self.tmpConvi)
 
-            # Create the stingray transformation (for EFAC = 1)
+            # Define the stingray transformation (for EFAC = 1)
             Nvec = self.toaerrs**2
             self.ZNZ_srvec = np.diag(np.dot(self.Zmat.T / Nvec, self.Zmat))
             self.ZNy_srvec = np.dot(self.Zmat.T / Nvec, self.residuals)
@@ -2357,7 +2357,7 @@ class ptaPulsar(object):
             self.Wvec = np.zeros(self.Mmat.shape[0]-self.Mmat.shape[1])
             self.Wovec = np.zeros(0)
 
-            # Create the stingray transformation (for EFAC = 1)
+            # Define the stingray transformation (for EFAC = 1)
             Nvec = self.toaerrs**2
             self.ZNZ_srvec = np.diag(np.dot(self.Zmat.T / Nvec, self.Zmat))
             self.ZNy_srvec = np.dot(self.Zmat.T / Nvec, self.residuals)
@@ -8320,7 +8320,6 @@ class ptaLikelihood(object):
                 Sigmavec = 1.0/(psr.ZNZ_srvec[psr.Zmask_F_only] + 1.0 / phivec)
                 std = np.sqrt(Sigmavec)
                 mean = Sigmavec * psr.ZNy_srvec[psr.Zmask_F_only]
-                # std[:] = 1.0 ; mean[:] = 0.0
                 index = psr.fourierind
                 npars = len(std)
                 slc = slice(index, index+npars)
@@ -8346,7 +8345,6 @@ class ptaLikelihood(object):
                         d_lj_d_phi = 0.5 * Sigmavec / phivec**2
                         gradient[key] = np.sum(d_lj_d_phi * value)
 
-                #d_sig_d_B[slc] = 0.5 * (Sigmavec ** 1.5) / phivec**2
                 d_std_d_B = 0.5 * (Sigmavec ** 1.5) / phivec**2
                 d_mean_d_B = mean * Sigmavec / phivec**2
                 d_b_d_std = sr_parameters[slc]
@@ -8384,7 +8382,6 @@ class ptaLikelihood(object):
                         d_lj_d_theta = 0.5 * Sigmavec / thetavec**2
                         gradient[key] = np.sum(d_lj_d_theta * value)
 
-                #d_sig_d_B[slc] = 0.5 * (Sigmavec ** 1.5) / thetavec**2
                 d_std_d_B = 0.5 * (Sigmavec ** 1.5) / thetavec**2
                 d_mean_d_B = mean * Sigmavec / thetavec**2
                 d_b_d_std = sr_parameters[slc]
@@ -8422,7 +8419,6 @@ class ptaLikelihood(object):
                         d_lj_d_J = 0.5 * Sigmavec / psr.Jvec**2
                         gradient[key] = np.sum(d_lj_d_J * value)
 
-                #d_sig_d_B[slc] = 0.5 * (Sigmavec ** 1.5) / psr.Jvec**2
                 d_std_d_B = 0.5 * (Sigmavec ** 1.5) / psr.Jvec**2
                 d_mean_d_B = mean * Sigmavec / psr.Jvec**2
                 d_b_d_std = sr_parameters[slc]
@@ -8450,8 +8446,6 @@ class ptaLikelihood(object):
 
         # The red signals (don't form matrices (slow); use the Gibbs expansion)
         # Is this faster: ?
-        #self.setPhi(parameters, gibbs_expansion=True) 
-        #self.setTheta(parameters, pp=pp)
         self.constructPhiAndTheta(parameters, make_matrix=False, \
                 gibbs_expansion=True)
         self.gibbs_construct_all_freqcov()
@@ -8626,7 +8620,6 @@ class ptaLikelihood(object):
                         transform=transform, calc_gradient=True)
 
         # The deterministic sources
-        #print "The values:"
         d_L_d_b, d_Pr_d_b = self.updateDetSources(parameters, calc_gradient=True)
 
         # If other deterministic sources are included, we cannot just blindly
@@ -8746,7 +8739,6 @@ class ptaLikelihood(object):
                         transform=transform, calc_gradient=True)
 
         # The deterministic sources
-        #print "The values:"
         d_L_d_b, d_Pr_d_b = self.updateDetSources(parameters, calc_gradient=True)
 
         # If other deterministic sources are included, we cannot just blindly
