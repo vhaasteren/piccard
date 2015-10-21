@@ -8266,172 +8266,6 @@ class ptaLikelihood(object):
                 +0.5*rGSigmaGr - 0.5*PhiLD - 0.5*SigmaLD - 0.5*ThetaLD
 
 
-    def stingray_transformation(self, sr_parameters, transform='backward',
-            calc_gradient=True):
-        """Perform the stingray transformation
-
-        :param sr_parameters:
-            Stingray parameters, to be transformed (full array)
-
-        :param transform:
-            'forward', 'backward', 'none'
-            What direction to perfomr the transform in
-
-        :param calc_gradient:
-            When True, calculate the gradients
-        """
-        parameters = sr_parameters.copy()
-
-        log_jacob = 0.0
-        gradient = np.zeros_like(sr_parameters)
-        d_b_d_xi = np.zeros_like(sr_parameters)
-        #d_sig_d_B = np.zeros_like(sr_parameters)
-        d_b_d_B = np.zeros_like(sr_parameters)
-
-        for ii, psr in enumerate(self.ptapsrs):
-            if psr.timingmodelind is not None:
-                # Have a timing model parameter stingray transformation
-                Sigmavec = 1.0/psr.ZNZ_srvec[psr.Zmask_M_only]  # No hyper pars
-                std = np.sqrt(Sigmavec)
-                mean = Sigmavec * psr.ZNy_srvec[psr.Zmask_M_only]
-                index = psr.timingmodelind
-                npars = len(std)
-                slc = slice(index, index+npars)
-
-                if transform == 'forward':
-                    parameters[slc] = (sr_parameters[slc]-mean)/std
-                elif transform == 'backward':
-                    parameters[slc] = sr_parameters[slc]*std+mean
-                else:
-                    parameters[slc] = sr_parameters[slc]
-                    std[:] = 1.0
-                    mean[:] = 0.0
-
-                log_jacob += np.sum(np.log(std))
-                d_b_d_xi[slc] = std
-
-            if psr.fourierind is not None:
-                # Have a red noise stingray transformation
-                findex = np.sum(self.npf[:ii])
-                nfs = self.npf[ii]
-                phivec = self.Phivec[findex:findex+nfs] + \
-                        self.Svec[findex:findex+nfs]
-
-                Sigmavec = 1.0/(psr.ZNZ_srvec[psr.Zmask_F_only] + 1.0 / phivec)
-                std = np.sqrt(Sigmavec)
-                mean = Sigmavec * psr.ZNy_srvec[psr.Zmask_F_only]
-                index = psr.fourierind
-                npars = len(std)
-                slc = slice(index, index+npars)
-
-                if transform == 'forward':
-                    parameters[slc] = (sr_parameters[slc]-mean)/std
-                elif transform == 'backward':
-                    parameters[slc] = sr_parameters[slc]*std+mean
-                else:
-                    parameters[slc] = sr_parameters[slc]
-                    std[:] = 1.0
-                    mean[:] = 0.0
-                    Sigmavec[:] = 0.0
-
-                if calc_gradient:
-                    # Red noise
-                    for key, value in self.d_Phivec_d_param.iteritems():
-                        d_lj_d_phi = 0.5 * Sigmavec / phivec**2
-                        gradient[key] = np.sum(d_lj_d_phi * value)
-
-                    # GW signals
-                    for key, value in self.d_Svec_d_param.iteritems():
-                        d_lj_d_phi = 0.5 * Sigmavec / phivec**2
-                        gradient[key] = np.sum(d_lj_d_phi * value)
-
-                d_std_d_B = 0.5 * (Sigmavec ** 1.5) / phivec**2
-                d_mean_d_B = mean * Sigmavec / phivec**2
-                d_b_d_std = sr_parameters[slc]
-                d_b_d_mean = 1.0
-                d_b_d_B[slc] = d_b_d_std * d_std_d_B + d_b_d_mean * d_mean_d_B
-
-                d_b_d_xi[slc] = std
-                log_jacob += np.sum(np.log(std))
-
-            if psr.dmfourierind is not None:
-                # Have a dm noise stingray transformation
-                fdmindex = np.sum(self.npfdm[:ii])
-                nfdms = self.npfdm[ii]
-                thetavec = self.Thetavec[fdmindex:fdmindex+nfdms]
-
-                Sigmavec = 1.0/(psr.ZNZ_srvec[psr.Zmask_D_only] + 1.0 / thetavec)
-                std = np.sqrt(Sigmavec)
-                mean = Sigmavec * psr.ZNy_srvec[psr.Zmask_D_only]
-                index = psr.dmfourierind
-                npars = len(std)
-                slc = slice(index, index+npars)
-
-                if transform == 'forward':
-                    parameters[slc] = (sr_parameters[slc]-mean)/std
-                elif transform == 'backward':
-                    parameters[slc] = sr_parameters[slc]*std+mean
-                else:
-                    parameters[slc] = sr_parameters[slc]
-                    std[:] = 1.0
-                    mean[:] = 0.0
-                    Sigmavec[:] = 0.0
-
-                if calc_gradient:
-                    for key, value in self.d_Thetavec_d_param.iteritems():
-                        d_lj_d_theta = 0.5 * Sigmavec / thetavec**2
-                        gradient[key] = np.sum(d_lj_d_theta * value)
-
-                d_std_d_B = 0.5 * (Sigmavec ** 1.5) / thetavec**2
-                d_mean_d_B = mean * Sigmavec / thetavec**2
-                d_b_d_std = sr_parameters[slc]
-                d_b_d_mean = 1.0
-                d_b_d_B[slc] = d_b_d_std * d_std_d_B + d_b_d_mean * d_mean_d_B
-
-                d_b_d_xi[slc] = std
-                log_jacob += np.sum(np.log(std))
-
-            if psr.jitterind is not None:
-                # Have an ecor stingray transformation
-                uindex = np.sum(self.npu[:ii])
-                nus = self.npu[ii]
-
-                Sigmavec = 1.0/(psr.ZNZ_srvec[psr.Zmask_U_only] + \
-                        1.0 / psr.Jvec)
-                std = np.sqrt(Sigmavec)        # No hyper pars
-                mean = Sigmavec * psr.ZNy_srvec[psr.Zmask_U_only]
-                index = psr.jitterind
-                npars = len(std)
-                slc = slice(index, index+npars)
-
-                if transform == 'forward':
-                    parameters[slc] = (sr_parameters[slc]-mean)/std
-                elif transform == 'backward':
-                    parameters[slc] = sr_parameters[slc]*std+mean
-                else:
-                    parameters[slc] = sr_parameters[slc]
-                    std[:] = 1.0
-                    mean[:] = 0.0
-                    Sigmavec[:] = 0.0
-
-                if calc_gradient:
-                    for key, value in psr.d_Jvec_d_param.iteritems():
-                        d_lj_d_J = 0.5 * Sigmavec / psr.Jvec**2
-                        gradient[key] = np.sum(d_lj_d_J * value)
-
-                d_std_d_B = 0.5 * (Sigmavec ** 1.5) / psr.Jvec**2
-                d_mean_d_B = mean * Sigmavec / psr.Jvec**2
-                d_b_d_std = sr_parameters[slc]
-                d_b_d_mean = 1.0
-                d_b_d_B[slc] = d_b_d_std * d_std_d_B + d_b_d_mean * d_mean_d_B
-
-                d_b_d_xi[slc] = std
-                log_jacob += np.sum(np.log(std))
-
-        return parameters, log_jacob, gradient, d_b_d_xi, d_b_d_B
-    
-
-
     def mark12loglikelihood(self, parameters):
         """
         mark12 loglikelihood of the pta model/likelihood implementation
@@ -8600,6 +8434,173 @@ class ptaLikelihood(object):
         return -0.5*np.sum(self.npobs-self.npm)*np.log(2*np.pi) \
                 -0.5*np.sum(Jldet) - 0.5*np.sum(rGr) \
                 +0.5*rSr - 0.5*SigmaLD - 0.5*PhiLD - 0.5*ThetaLD - 0.5*BetaLD
+
+
+    def stingray_transformation(self, sr_parameters, transform='backward',
+            calc_gradient=True):
+        """Perform the stingray transformation
+
+        :param sr_parameters:
+            Stingray parameters, to be transformed (full array)
+
+        :param transform:
+            'forward', 'backward', 'none'
+            What direction to perfomr the transform in
+
+        :param calc_gradient:
+            When True, calculate the gradients
+        """
+        parameters = sr_parameters.copy()
+
+        log_jacob = 0.0
+        gradient = np.zeros_like(sr_parameters)
+        d_b_d_xi = np.zeros_like(sr_parameters)
+        #d_sig_d_B = np.zeros_like(sr_parameters)
+        d_b_d_B = np.zeros_like(sr_parameters)
+
+        for ii, psr in enumerate(self.ptapsrs):
+            if psr.timingmodelind is not None:
+                # Have a timing model parameter stingray transformation
+                Sigmavec = 1.0/psr.ZNZ_srvec[psr.Zmask_M_only]  # No hyper pars
+                std = np.sqrt(Sigmavec)
+                mean = Sigmavec * psr.ZNy_srvec[psr.Zmask_M_only]
+                index = psr.timingmodelind
+                npars = len(std)
+                slc = slice(index, index+npars)
+
+                if transform == 'forward':
+                    parameters[slc] = (sr_parameters[slc]-mean)/std
+                elif transform == 'backward':
+                    parameters[slc] = sr_parameters[slc]*std+mean
+                else:
+                    parameters[slc] = sr_parameters[slc]
+                    std[:] = 1.0
+                    mean[:] = 0.0
+
+                log_jacob += np.sum(np.log(std))
+                d_b_d_xi[slc] = std
+
+            if psr.fourierind is not None:
+                # Have a red noise stingray transformation
+                findex = np.sum(self.npf[:ii])
+                nfs = self.npf[ii]
+                phivec = self.Phivec[findex:findex+nfs] + \
+                        self.Svec[findex:findex+nfs]
+
+                Sigmavec = 1.0/(psr.ZNZ_srvec[psr.Zmask_F_only] + 1.0 / phivec)
+                std = np.sqrt(Sigmavec)
+                mean = Sigmavec * psr.ZNy_srvec[psr.Zmask_F_only]
+                index = psr.fourierind
+                npars = len(std)
+                slc = slice(index, index+npars)
+
+                if transform == 'forward':
+                    parameters[slc] = (sr_parameters[slc]-mean)/std
+                elif transform == 'backward':
+                    parameters[slc] = sr_parameters[slc]*std+mean
+                else:
+                    parameters[slc] = sr_parameters[slc]
+                    std[:] = 1.0
+                    mean[:] = 0.0
+                    Sigmavec[:] = 0.0
+
+                if calc_gradient:
+                    # Red noise
+                    for key, value in self.d_Phivec_d_param.iteritems():
+                        d_lj_d_phi = 0.5 * Sigmavec / phivec**2
+                        gradient[key] = np.sum(d_lj_d_phi * value)
+
+                    # GW signals
+                    for key, value in self.d_Svec_d_param.iteritems():
+                        d_lj_d_phi = 0.5 * Sigmavec / phivec**2
+                        gradient[key] = np.sum(d_lj_d_phi * value)
+
+                d_std_d_B = 0.5 * (Sigmavec ** 1.5) / phivec**2
+                d_mean_d_B = mean * Sigmavec / phivec**2
+                d_b_d_std = sr_parameters[slc]
+                d_b_d_mean = 1.0
+                d_b_d_B[slc] = d_b_d_std * d_std_d_B + d_b_d_mean * d_mean_d_B
+
+                d_b_d_xi[slc] = std
+                log_jacob += np.sum(np.log(std))
+
+            if psr.dmfourierind is not None:
+                # Have a dm noise stingray transformation
+                fdmindex = np.sum(self.npfdm[:ii])
+                nfdms = self.npfdm[ii]
+                thetavec = self.Thetavec[fdmindex:fdmindex+nfdms]
+
+                Sigmavec = 1.0/(psr.ZNZ_srvec[psr.Zmask_D_only] + 1.0 / thetavec)
+                std = np.sqrt(Sigmavec)
+                mean = Sigmavec * psr.ZNy_srvec[psr.Zmask_D_only]
+                index = psr.dmfourierind
+                npars = len(std)
+                slc = slice(index, index+npars)
+
+                if transform == 'forward':
+                    parameters[slc] = (sr_parameters[slc]-mean)/std
+                elif transform == 'backward':
+                    parameters[slc] = sr_parameters[slc]*std+mean
+                else:
+                    parameters[slc] = sr_parameters[slc]
+                    std[:] = 1.0
+                    mean[:] = 0.0
+                    Sigmavec[:] = 0.0
+
+                if calc_gradient:
+                    for key, value in self.d_Thetavec_d_param.iteritems():
+                        d_lj_d_theta = 0.5 * Sigmavec / thetavec**2
+                        gradient[key] = np.sum(d_lj_d_theta * value)
+
+                d_std_d_B = 0.5 * (Sigmavec ** 1.5) / thetavec**2
+                d_mean_d_B = mean * Sigmavec / thetavec**2
+                d_b_d_std = sr_parameters[slc]
+                d_b_d_mean = 1.0
+                d_b_d_B[slc] = d_b_d_std * d_std_d_B + d_b_d_mean * d_mean_d_B
+
+                d_b_d_xi[slc] = std
+                log_jacob += np.sum(np.log(std))
+
+            if psr.jitterind is not None:
+                # Have an ecor stingray transformation
+                uindex = np.sum(self.npu[:ii])
+                nus = self.npu[ii]
+
+                Sigmavec = 1.0/(psr.ZNZ_srvec[psr.Zmask_U_only] + \
+                        1.0 / psr.Jvec)
+                std = np.sqrt(Sigmavec)        # No hyper pars
+                mean = Sigmavec * psr.ZNy_srvec[psr.Zmask_U_only]
+                index = psr.jitterind
+                npars = len(std)
+                slc = slice(index, index+npars)
+
+                if transform == 'forward':
+                    parameters[slc] = (sr_parameters[slc]-mean)/std
+                elif transform == 'backward':
+                    parameters[slc] = sr_parameters[slc]*std+mean
+                else:
+                    parameters[slc] = sr_parameters[slc]
+                    std[:] = 1.0
+                    mean[:] = 0.0
+                    Sigmavec[:] = 0.0
+
+                if calc_gradient:
+                    for key, value in psr.d_Jvec_d_param.iteritems():
+                        d_lj_d_J = 0.5 * Sigmavec / psr.Jvec**2
+                        gradient[key] = np.sum(d_lj_d_J * value)
+
+                d_std_d_B = 0.5 * (Sigmavec ** 1.5) / psr.Jvec**2
+                d_mean_d_B = mean * Sigmavec / psr.Jvec**2
+                d_b_d_std = sr_parameters[slc]
+                d_b_d_mean = 1.0
+                d_b_d_B[slc] = d_b_d_std * d_std_d_B + d_b_d_mean * d_mean_d_B
+
+                d_b_d_xi[slc] = std
+                log_jacob += np.sum(np.log(std))
+
+        return parameters, log_jacob, gradient, d_b_d_xi, d_b_d_B
+    
+
 
 
     def mark13loglikelihood(self, sr_parameters, transform='backward'):
