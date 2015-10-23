@@ -3462,7 +3462,7 @@ class ptaLikelihood(object):
                             "pmin":[-10.0],
                             "pmax":[-4.0],
                             "pwidth":[0.2],
-                            "pstart":[-8.0],
+                            "pstart":[-7.0],
                             "interval":[True],
                             "prior":'flatlog'
                             })
@@ -3478,7 +3478,7 @@ class ptaLikelihood(object):
                         "pmin":[-10.0],
                         "pmax":[-4.0],
                         "pwidth":[0.2],
-                        "pstart":[-8.0],
+                        "pstart":[-7.0],
                         "interval":[True],
                         "prior":'flatlog'
                         })
@@ -3501,7 +3501,7 @@ class ptaLikelihood(object):
                             "pmin":[-10.0],
                             "pmax":[-4.0],
                             "pwidth":[0.3],
-                            "pstart":[-8.0],
+                            "pstart":[-7.0],
                             "interval":[True],
                             "prior":'flatlog'
                             })
@@ -3529,7 +3529,7 @@ class ptaLikelihood(object):
                             "pmin":[-10.0],
                             "pmax":[-4.0],
                             "pwidth":[0.3],
-                            "pstart":[-8.0],
+                            "pstart":[-7.0],
                             "interval":[True],
                             "prior":'flatlog'
                             })
@@ -3546,7 +3546,7 @@ class ptaLikelihood(object):
                         "pmin":[-10.0],
                         "pmax":[-4.0],
                         "pwidth":[0.3],
-                        "pstart":[-8.0],
+                        "pstart":[-7.0],
                         "interval":[True],
                         "prior":'flatlog'
                         })
@@ -3560,21 +3560,21 @@ class ptaLikelihood(object):
                     bvary = [True]*nfreqs
                     pmin = [noisePSDMin[0]]*nfreqs
                     pmax = [noisePSDMax[0]]*nfreqs
-                    pstart = [-10.0]*nfreqs
+                    pstart = [-7.3]*nfreqs
                     pwidth = [0.1]*nfreqs
                     interval = [True]*nfreqs
                 elif noiseModel=='powerlaw':
                     bvary = [True, True, False]
                     pmin = noisePLMin
                     pmax = noisePLMax
-                    pstart = [-15.0, 2.01, 1.0e-10]
+                    pstart = [-14.5, 3.51, 1.0e-10]
                     pwidth = [0.3, 0.3, 5.0e-11]
                     interval = [True, True, True]
                 elif noiseModel=='spectralModel':
                     bvary = [True, True, True]
                     pmin = [-28.0, 0.0, -8.0]
                     pmax = [15.0, 12.0, 2.0]
-                    pstart = [-22.0, 2.0, -1.0]
+                    pstart = [-21.0, 2.0, -1.0]
                     pwidth = [-0.2, 0.1, 0.1]
                     interval = [True, True, True]
                 else:
@@ -3610,21 +3610,21 @@ class ptaLikelihood(object):
                         bvary = [True]*nfreqs
                         pmin = [-18.0]*nfreqs
                         pmax = [-7.0]*nfreqs
-                        pstart = [-10.0]*nfreqs
+                        pstart = [-7.3]*nfreqs
                         pwidth = [0.1]*nfreqs
                         interval = [True]*nfreqs
                     elif bandNoiseModel=='blpowerlaw':
                         bvary = [True, True, False]
                         pmin = [-20.0, 0.02, 1.0e-11]
                         pmax = [-10.0, 6.98, 3.0e-9]
-                        pstart = [-15.0, 2.01, 1.0e-10]
+                        pstart = [-14.5, 3.51, 1.0e-10]
                         pwidth = [0.3, 0.3, 5.0e-11]
                         interval = [True, True, True]
                     elif bandNoiseModel=='blspectralModel':
                         bvary = [True, True, True]
                         pmin = [-28.0, 0.0, -8.0]
                         pmax = [15.0, 12.0, 2.0]
-                        pstart = [-22.0, 2.0, -1.0]
+                        pstart = [-21.0, 2.0, -1.0]
                         pwidth = [-0.2, 0.1, 0.1]
                         interval = [True, True, True]
                     else:
@@ -3664,7 +3664,7 @@ class ptaLikelihood(object):
                     bvary = [True, True, False]
                     pmin = [-14.0, 0.02, 1.0e-11]
                     pmax = [-6.5, 6.98, 3.0e-9]
-                    pstart = [-13.0, 2.01, 1.0e-10]
+                    pstart = [-12.0, 2.51, 1.0e-10]
                     pwidth = [0.3, 0.3, 5.0e-11]
                     interval = [True, True, True]
                     #dmModel = 'dmpowerlaw'
@@ -3837,8 +3837,8 @@ class ptaLikelihood(object):
                     bvary = [True]*nmodes
                     pmin = [-1.0e6]*nmodes
                     pmax = [1.0e6]*nmodes
-                    pstart = [0.01]*nmodes
-                    pwidth = [1.0e-1]*nmodes
+                    pstart = [1.0e-10]*nmodes
+                    pwidth = [1.0e-7]*nmodes
                     interval = [False]*nmodes
 
                     newsignal = OrderedDict({
@@ -3862,8 +3862,8 @@ class ptaLikelihood(object):
                     bvary = [True]*nmodes
                     pmin = [-1.0e6]*nmodes
                     pmax = [1.0e6]*nmodes
-                    pstart = [0.01]*nmodes
-                    pwidth = [1.0e-1]*nmodes
+                    pstart = [1.0e-10]*nmodes
+                    pwidth = [1.0e-7]*nmodes
                     interval = [False]*nmodes
 
                     newsignal = OrderedDict({
@@ -3888,8 +3888,8 @@ class ptaLikelihood(object):
                     bvary = [True]*nmodes
                     pmin = [-1.0e6]*nmodes
                     pmax = [1.0e6]*nmodes
-                    pstart = [0.01]*nmodes
-                    pwidth = [1.0e-1]*nmodes
+                    pstart = [1.0e-10]*nmodes
+                    pwidth = [1.0e-7]*nmodes
                     interval = [False]*nmodes
 
                     newsignal = OrderedDict({
@@ -3915,8 +3915,8 @@ class ptaLikelihood(object):
                     bvary = [True]*nmodes
                     pmin = [-1.0e6]*nmodes
                     pmax = [1.0e6]*nmodes
-                    pstart = [0.01]*nmodes
-                    pwidth = [1.0e-1]*nmodes
+                    pstart = [1.0e-10]*nmodes
+                    pwidth = [1.0e-7]*nmodes
                     interval = [False]*nmodes
 
                     newsignal = OrderedDict({
@@ -3947,14 +3947,14 @@ class ptaLikelihood(object):
                 bvary = [True]*nfreqs
                 pmin = [-18.0]*nfreqs
                 pmax = [-7.0]*nfreqs
-                pstart = [-10.0]*nfreqs
+                pstart = [-7.3]*nfreqs
                 pwidth = [0.1]*nfreqs
                 interval = [True]*nfreqs
             elif gwbModel=='powerlaw':
                 bvary = [True, gwbVarySi, False]
                 pmin = [-17.0, 1.02, 1.0e-11]
                 pmax = [-10.0, 6.98, 3.0e-9]
-                pstart = [-15.0, gwbSi, 1.0e-10]
+                pstart = [-14.5, gwbSi, 1.0e-10]
                 pwidth = [0.3, 0.3, 5.0e-11]
                 interval = [True, True, True]
             else:
@@ -3987,14 +3987,14 @@ class ptaLikelihood(object):
                 bvary = [True]*nfreqs
                 pmin = [-18.0]*nfreqs
                 pmax = [-7.0]*nfreqs
-                pstart = [-10.0]*nfreqs
+                pstart = [-7.3]*nfreqs
                 pwidth = [0.1]*nfreqs
                 interval = [True]*nfreqs
             elif clockModel=='powerlaw':
                 bvary = [True, True, False]
                 pmin = [-17.0, 1.02, 1.0e-11]
                 pmax = [-10.0, 6.98, 3.0e-9]
-                pstart = [-15.0, 2.01, 1.0e-10]
+                pstart = [-14.5, 3.51, 1.0e-10]
                 pwidth = [0.3, 0.3, 5.0e-11]
                 interval = [True, True, True]
             else:
@@ -4027,14 +4027,14 @@ class ptaLikelihood(object):
                 bvary = [True]*nfreqs
                 pmin = [-18.0]*nfreqs
                 pmax = [-7.0]*nfreqs
-                pstart = [-10.0]*nfreqs
+                pstart = [-7.3]*nfreqs
                 pwidth = [0.1]*nfreqs
                 interval = [True]*nfreqs
             elif dipoleModel=='powerlaw':
                 bvary = [True, True, False]
                 pmin = [-17.0, 1.02, 1.0e-11]
                 pmax = [-10.0, 6.98, 3.0e-9]
-                pstart = [-15.0, 2.01, 1.0e-10]
+                pstart = [-14.5, 3.51, 1.0e-10]
                 pwidth = [0.3, 0.3, 5.0e-11]
                 interval = [True, True, True]
             else:
@@ -4074,14 +4074,14 @@ class ptaLikelihood(object):
                 bvary = [True]*nfreqs + clmvary
                 pmin = [-18.0]*nfreqs + clmmin
                 pmax = [-7.0]*nfreqs + clmmax
-                pstart = [-10.0]*nfreqs + clmstart
+                pstart = [-7.3]*nfreqs + clmstart
                 pwidth = [0.1]*nfreqs + clmwidth
                 interval = [True]*nfreqs + clminterval
             elif anigwbModel=='powerlaw':
                 bvary = [True, True, False] + clmvary
                 pmin = [-17.0, 1.02, 1.0e-11] + clmmin
                 pmax = [-10.0, 6.98, 3.0e-9] + clmmax
-                pstart = [-15.0, 2.01, 1.0e-10] + clmstart
+                pstart = [-14.5, 3.51, 1.0e-10] + clmstart
                 pwidth = [0.3, 0.3, 5.0e-11] + clmwidth
                 interval = [True]*nfreqs + clminterval
             else:
@@ -4115,14 +4115,14 @@ class ptaLikelihood(object):
                 bvary = [True]*(nfreqs + 2*npixels)
                 pmin = [-18.0]*nfreqs + [0, -0.5*np.pi] * npixels
                 pmax = [-7.0]*nfreqs + [2*np.pi, 0.5*np.pi] * npixels
-                pstart = [-10.0]*nfreqs + [0.0, 0.0] * npixels
+                pstart = [-7.3]*nfreqs + [0.0, 0.0] * npixels
                 pwidth = [0.1]*nfreqs + [0.1, 0.1] * npixels
                 interval = [True]*(nfreqs+2)
             elif anigwbModel=='powerlaw':
                 bvary = [True, True, False] + [True, True] * npixels
                 pmin = [-17.0, 1.02, 1.0e-11] + [0.0, -0.5*np.pi] * npixels
                 pmax = [-10.0, 6.98, 3.0e-9] + [2*np.pi, 0.5*np.pi] * npixels
-                pstart = [-15.0, 2.01, 1.0e-10] + [0.0, 0.0] * npixels
+                pstart = [-14.5, 3.51, 1.0e-10] + [0.0, 0.0] * npixels
                 pwidth = [0.3, 0.3, 5.0e-11] + [0.1, 0.1] * npixels
                 interval = [True]*(3+2*npixels)
             else:
@@ -8621,7 +8621,7 @@ class ptaLikelihood(object):
         return parameters, log_jacob, gradient, d_b_d_xi, d_b_d_B
 
 
-    def mark13loglikelihood(self, sr_parameters, transform='backward'):
+    def mark13loglikelihood_old(self, sr_parameters, transform='backward'):
         """
         mark13 loglikelihood. Used for full hierarchical model, with
         transformations
@@ -8779,56 +8779,57 @@ class ptaLikelihood(object):
         self._d_L_d_b, self._d_Pr_d_b = \
                 self.updateDetSources(parameters, calc_gradient=True)
 
-        return self._d_L_d_b, self._d_Pr_d_b
 
-
-    def mark13loglikelihood_new(self, parameters, set_hyper_pars=True):
+    def mark13loglikelihood(self, parameters, set_hyper_pars=True):
         """
-        mark13 loglikelihood. Used for full hierarchical model, with
-        transformations
-        """
-
-        # No longer do this stuff explicitly here
-        """
-        # The red signal hyper-parameters
-        self.constructPhiAndTheta(sr_parameters, make_matrix=False,
-                gibbs_expansion=True, calc_gradient=True)
-
-        # The white noise hyper parameters
-        self.setPsrNoise(sr_parameters, calc_gradient=True)
-
-        # Perform the stingray transformation
-        parameters, log_jacob, lj_gradient, d_b_d_xi, d_b_d_B = \
-                self.stingray_transformation(sr_parameters,
-                        transform=transform, calc_gradient=True)
-
-        # The deterministic sources
-        d_L_d_b, d_Pr_d_b = self.updateDetSources(parameters, calc_gradient=True)
-
-        # If other deterministic sources are included, we cannot just blindly
-        # multiply with d_b_d_xi, unless we set d_b_d_xi also for _all_
-        # deterministic parameters in updateDetSources --- RvH
-        gradient = lj_gradient + (d_L_d_b+d_Pr_d_b)*d_b_d_xi
+        mark13 loglikelihood. Used for full hierarchical model, no
+        transformations included
         """
         if set_hyper_pars:
-            d_L_d_b, d_Pr_d_b = self.set_hyper_pars(parameters, calc_gradient=True)
-        else:
-            d_L_d_b, d_Pr_d_b = self._d_L_d_b, self._d_Pr_d_b
+            self.set_hyper_pars(parameters, calc_gradient=True)
 
-        gradient = np.zeros_like(parameters)
+        d_L_d_b, d_Pr_d_b = self._d_L_d_b, self._d_Pr_d_b
+
+        gradient = (d_L_d_b+d_Pr_d_b)
 
         for ii, psr in enumerate(self.ptapsrs):
-            self.rGr[ii] = np.sum(psr.detresiduals**2 / psr.Nvec)
-            self.GNGldet[ii] = np.sum(np.log(psr.Nvec))
-
             # Gradient for Nvec hyper-parameters
-            for key, d_Nvec_d_p in psr.d_Nvec_d_param.iteritems():
-                # Inner product
-                gradient[key] += 0.5 * np.sum(psr.detresiduals**2 *
-                        d_Nvec_d_p / psr.Nvec**2)
+            if 'jitter' in self.gibbsmodel or np.sum(psr.Jvec) == 0:
+                self.rGr[ii] = np.sum(psr.detresiduals**2 / psr.Nvec)
+                self.GNGldet[ii] = np.sum(np.log(psr.Nvec))
 
-                # Determinant
-                gradient[key] += -0.5 * np.sum(d_Nvec_d_p / psr.Nvec)
+                for key, d_Nvec_d_p in psr.d_Nvec_d_param.iteritems():
+                    # Inner product
+                    gradient[key] += 0.5 * np.sum(psr.detresiduals**2 *
+                            d_Nvec_d_p / psr.Nvec**2)
+
+                    # Determinant
+                    gradient[key] += -0.5 * np.sum(d_Nvec_d_p / psr.Nvec)
+            else:
+                Jldet, Nr = cython_block_shermor_0D_ld(psr.detresiduals,
+                                psr.Nvec, psr.Jvec, psr.Uinds)
+
+                self.rGr[ii] = np.sum(psr.detresiduals*Nr)
+                self.GNGldet[ii] = Jldet
+
+                for key, d_Nvec_d_p in psr.d_Nvec_d_param.iteritems():
+                    # Inner product
+                    gradient[key] += 0.5 * np.sum(Nr**2 * d_Nvec_d_p)
+
+                    # Determinant
+                    gradient[key] -= 0.5 * cython_logdet_dNNi(psr.Nvec, psr.Jvec,
+                            d_Nvec_d_p, psr.Uinds)
+
+                for key, d_Jvec_d_p in psr.d_Jvec_d_param.iteritems():
+                    UNr = cython_UTx(Nr, psr.Uinds)
+
+                    # Inner product
+                    gradient[key] += 0.5 * np.sum(UNr**2 * d_Jvec_d_p)
+
+                    # Determinant
+                    gradient[key] += -0.5 * cython_logdet_dJNi(
+                            psr.Nvec, psr.Jvec, d_Jvec_d_p, psr.Uinds)
+
 
             if psr.fourierind is not None:
                 findex = np.sum(self.npf[:ii])
@@ -8908,7 +8909,6 @@ class ptaLikelihood(object):
         #ll = -0.5*np.sum(self.npobs)*np.log(2*np.pi) \
         ll = -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet)
 
-        #return ll + log_jacob, gradient
         return ll, gradient
 
 
