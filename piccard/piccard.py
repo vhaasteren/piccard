@@ -3383,10 +3383,10 @@ class ptaLikelihood(object):
                 compression == "None":
             compression = 'dont'
 
-        if likfunc in ['mark14', 'mark13'] and not (expandJitter and expandCEquad):
-            print("WARNING: mark13 needs explicit jitter/ecorr. Turned on")
-            expandJitter = True
-            expandCEquad = True
+        #if likfunc in ['mark14', 'mark13'] and not (expandJitter and expandCEquad):
+        #    print("WARNING: mark13 needs explicit jitter/ecorr. Turned on")
+        #    expandJitter = True
+        #    expandCEquad = True
 
         # Figure out what the frequencies per pulsar are
         for pindex, m2psr in enumerate(self.ptapsrs):
@@ -5716,11 +5716,20 @@ class ptaLikelihood(object):
 
                         pp = m2signal['pulsarind']
                         psr = self.ptapsrs[pp]
-                        d_L_d_a = np.dot(psr.Mmat_g.T, psr.detresiduals / psr.Nvec)
+
+                        if 'jitter' in self.gibbsmodel or np.sum(psr.Jvec) == 0.0:
+                            d_L_d_xi = np.dot(psr.Mmat_g.T, psr.detresiduals / psr.Nvec)
+                        else:
+                            # TODO: speed-update. This cython-piece is present
+                            #       below for Red noise and DM as well!
+                            d_L_d_xi = np.dot(psr.Mmat_g.T,
+                                    cython_block_shermor_0D(psr.detresiduals,
+                                            psr.Nvec, psr.Jvec, psr.Uinds))
+
                         parslice = slice(m2signal['parindex'],
                                 m2signal['parindex']+m2signal['npars'])
                         smask = m2signal['bvary']
-                        d_L_d_b[parslice] = d_L_d_a[smask]
+                        d_L_d_b[parslice] = d_L_d_xi[smask]
                     elif m2signal['stype'] == 'fouriermode_xi':
                         if not np.all(m2signal['bvary']):
                             raise ValueError("Fixing xi-parameters not allowed")
@@ -5734,7 +5743,13 @@ class ptaLikelihood(object):
                         nfs = self.npf[pp]
                         phislice = slice(findex, findex+nfs)
 
-                        d_L_d_xi = np.dot(psr.Fmat.T, psr.detresiduals / psr.Nvec)
+                        if 'jitter' in self.gibbsmodel or np.sum(psr.Jvec) == 0.0:
+                            d_L_d_xi = np.dot(psr.Fmat.T, psr.detresiduals / psr.Nvec)
+                        else:
+                            d_L_d_xi = np.dot(psr.Fmat.T,
+                                    cython_block_shermor_0D(psr.detresiduals,
+                                            psr.Nvec, psr.Jvec, psr.Uinds))
+
                         d_Pr_d_xi = - sparameters / self.Phivec[phislice]
                         d_L_d_b[parslice] = d_L_d_xi[smask]
                         d_Pr_d_b[parslice] = d_Pr_d_xi[smask]
@@ -5751,7 +5766,13 @@ class ptaLikelihood(object):
                         nfdms = self.npfdm[pp]
                         thetaslice = slice(fdmindex, fdmindex+nfdms)
 
-                        d_L_d_xi = np.dot(psr.DF.T, psr.detresiduals / psr.Nvec)
+                        if 'jitter' in self.gibbsmodel or np.sum(psr.Jvec) == 0.0:
+                            d_L_d_xi = np.dot(psr.DF.T, psr.detresiduals / psr.Nvec)
+                        else:
+                            d_L_d_xi = np.dot(psr.DF.T,
+                                    cython_block_shermor_0D(psr.detresiduals,
+                                            psr.Nvec, psr.Jvec, psr.Uinds))
+
                         d_Pr_d_xi = -sparameters / self.Thetavec[thetaslice]
                         d_L_d_b[parslice] = d_L_d_xi[smask]
                         d_Pr_d_b[parslice] = d_Pr_d_xi[smask]
@@ -5765,7 +5786,6 @@ class ptaLikelihood(object):
                                 m2signal['parindex']+m2signal['npars'])
                         smask = m2signal['bvary']
 
-                        #d_L_d_xi = np.dot(psr.Umat.T, psr.detresiduals / psr.Nvec)
                         d_L_d_xi = cython_UTx(psr.detresiduals / psr.Nvec, psr.Uinds)
                         d_Pr_d_xi = -sparameters / psr.Jvec
                         d_L_d_b[parslice] = d_L_d_xi[smask]
@@ -8599,8 +8619,6 @@ class ptaLikelihood(object):
                 log_jacob += np.sum(np.log(std))
 
         return parameters, log_jacob, gradient, d_b_d_xi, d_b_d_B
-    
-
 
 
     def mark13loglikelihood(self, sr_parameters, transform='backward'):
@@ -8608,6 +8626,7 @@ class ptaLikelihood(object):
         mark13 loglikelihood. Used for full hierarchical model, with
         transformations
         """
+
         # The red signal hyper-parameters
         self.constructPhiAndTheta(sr_parameters, make_matrix=False,
                 gibbs_expansion=True, calc_gradient=True)
@@ -8629,17 +8648,43 @@ class ptaLikelihood(object):
         gradient = lj_gradient + (d_L_d_b+d_Pr_d_b)*d_b_d_xi
 
         for ii, psr in enumerate(self.ptapsrs):
-            self.rGr[ii] = np.sum(psr.detresiduals**2 / psr.Nvec)
-            self.GNGldet[ii] = np.sum(np.log(psr.Nvec))
-
             # Gradient for Nvec hyper-parameters
-            for key, d_Nvec_d_p in psr.d_Nvec_d_param.iteritems():
-                # Inner product
-                gradient[key] += 0.5 * np.sum(psr.detresiduals**2 *
-                        d_Nvec_d_p / psr.Nvec**2)
+            if 'jitter' in self.gibbsmodel or np.sum(psr.Jvec) == 0:
+                self.rGr[ii] = np.sum(psr.detresiduals**2 / psr.Nvec)
+                self.GNGldet[ii] = np.sum(np.log(psr.Nvec))
 
-                # Determinant
-                gradient[key] += -0.5 * np.sum(d_Nvec_d_p / psr.Nvec)
+                for key, d_Nvec_d_p in psr.d_Nvec_d_param.iteritems():
+                    # Inner product
+                    gradient[key] += 0.5 * np.sum(psr.detresiduals**2 *
+                            d_Nvec_d_p / psr.Nvec**2)
+
+                    # Determinant
+                    gradient[key] += -0.5 * np.sum(d_Nvec_d_p / psr.Nvec)
+            else:
+                Jldet, Nr = cython_block_shermor_0D_ld(psr.detresiduals,
+                                psr.Nvec, psr.Jvec, psr.Uinds)
+
+                self.rGr[ii] = np.sum(psr.detresiduals*Nr)
+                self.GNGldet[ii] = Jldet
+
+                for key, d_Nvec_d_p in psr.d_Nvec_d_param.iteritems():
+                    # Inner product
+                    gradient[key] += 0.5 * np.sum(Nr**2 * d_Nvec_d_p)
+
+                    # Determinant
+                    gradient[key] -= 0.5 * cython_logdet_dNNi(psr.Nvec, psr.Jvec,
+                            d_Nvec_d_p, psr.Uinds)
+
+                for key, d_Jvec_d_p in psr.d_Jvec_d_param.iteritems():
+                    UNr = cython_UTx(Nr, psr.Uinds)
+
+                    # Inner product
+                    gradient[key] += 0.5 * np.sum(UNr**2 * d_Jvec_d_p)
+
+                    # Determinant
+                    gradient[key] += -0.5 * cython_logdet_dJNi(
+                            psr.Nvec, psr.Jvec, d_Jvec_d_p, psr.Uinds)
+
 
             if psr.fourierind is not None:
                 findex = np.sum(self.npf[:ii])
@@ -8720,6 +8765,151 @@ class ptaLikelihood(object):
         ll = -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet)
 
         return ll + log_jacob, gradient
+
+
+
+    def set_hyper_pars(self, parameters, calc_gradient=True):
+        # The red signal hyper-parameters
+        self.constructPhiAndTheta(parameters, make_matrix=False,
+                gibbs_expansion=True, calc_gradient=calc_gradient)
+
+        # The white noise hyper parameters
+        self.setPsrNoise(parameters, calc_gradient=True)
+
+        self._d_L_d_b, self._d_Pr_d_b = \
+                self.updateDetSources(parameters, calc_gradient=True)
+
+        return self._d_L_d_b, self._d_Pr_d_b
+
+
+    def mark13loglikelihood_new(self, parameters, set_hyper_pars=True):
+        """
+        mark13 loglikelihood. Used for full hierarchical model, with
+        transformations
+        """
+
+        # No longer do this stuff explicitly here
+        """
+        # The red signal hyper-parameters
+        self.constructPhiAndTheta(sr_parameters, make_matrix=False,
+                gibbs_expansion=True, calc_gradient=True)
+
+        # The white noise hyper parameters
+        self.setPsrNoise(sr_parameters, calc_gradient=True)
+
+        # Perform the stingray transformation
+        parameters, log_jacob, lj_gradient, d_b_d_xi, d_b_d_B = \
+                self.stingray_transformation(sr_parameters,
+                        transform=transform, calc_gradient=True)
+
+        # The deterministic sources
+        d_L_d_b, d_Pr_d_b = self.updateDetSources(parameters, calc_gradient=True)
+
+        # If other deterministic sources are included, we cannot just blindly
+        # multiply with d_b_d_xi, unless we set d_b_d_xi also for _all_
+        # deterministic parameters in updateDetSources --- RvH
+        gradient = lj_gradient + (d_L_d_b+d_Pr_d_b)*d_b_d_xi
+        """
+        if set_hyper_pars:
+            d_L_d_b, d_Pr_d_b = self.set_hyper_pars(parameters, calc_gradient=True)
+        else:
+            d_L_d_b, d_Pr_d_b = self._d_L_d_b, self._d_Pr_d_b
+
+        gradient = np.zeros_like(parameters)
+
+        for ii, psr in enumerate(self.ptapsrs):
+            self.rGr[ii] = np.sum(psr.detresiduals**2 / psr.Nvec)
+            self.GNGldet[ii] = np.sum(np.log(psr.Nvec))
+
+            # Gradient for Nvec hyper-parameters
+            for key, d_Nvec_d_p in psr.d_Nvec_d_param.iteritems():
+                # Inner product
+                gradient[key] += 0.5 * np.sum(psr.detresiduals**2 *
+                        d_Nvec_d_p / psr.Nvec**2)
+
+                # Determinant
+                gradient[key] += -0.5 * np.sum(d_Nvec_d_p / psr.Nvec)
+
+            if psr.fourierind is not None:
+                findex = np.sum(self.npf[:ii])
+                nfreq = self.npf[ii]
+                ind = psr.fourierind
+                fslc = slice(findex, findex+nfreq)
+                pslc = slice(ind, ind+nfreq)
+
+                bsqr = parameters[pslc]**2
+                phivec = self.Phivec[fslc]
+
+                self.rGr[ii] += np.sum(bsqr / phivec)
+                self.GNGldet[ii] += np.sum(np.log(phivec))
+
+                # Gradient for Phivec hyper-parameters
+                for key, d_Phivec_d_p in self.d_Phivec_d_param.iteritems():
+                    # Inner product
+                    gradient[key] += 0.5 * np.sum(bsqr * d_Phivec_d_p / phivec**2)
+
+                    # Determinant
+                    gradient[key] -= 0.5 * np.sum(d_Phivec_d_p / phivec)
+
+                    # Stingray partial (chain-rule)
+                    #gradient[key] += np.sum(
+                    #        (d_L_d_b[pslc]+d_Pr_d_b[pslc]) *
+                    #        d_b_d_B[pslc] * d_Phivec_d_p )
+
+            if psr.dmfourierind is not None:
+                fdmindex = np.sum(self.npfdm[:ii])
+                nfreqdm = self.npfdm[ii]
+                ind = psr.dmfourierind
+                fslc = slice(fdmindex, fdmindex+nfreqdm)
+                pslc = slice(ind, ind+nfreqdm)
+
+                bsqr = parameters[pslc]**2
+                thetavec = self.Thetavec[fslc]
+
+                self.rGr[ii] += np.sum(bsqr / thetavec)
+                self.GNGldet[ii] += np.sum(np.log(thetavec))
+
+                # Gradient for Thetavec hyper-parameters
+                for key, d_Thetavec_d_p in self.d_Thetavec_d_param.iteritems():
+                    # Inner product
+                    gradient[key] += 0.5 * np.sum(bsqr * d_Thetavec_d_p / thetavec**2)
+
+                    # Determinant
+                    gradient[key] -= 0.5 * np.sum(d_Thetavec_d_p / thetavec)
+
+                    # Stingray partial
+                    #gradient[key] += np.sum( (d_L_d_b[pslc]+d_Pr_d_b[pslc]) *
+                    #        d_b_d_B[pslc] * d_Thetavec_d_p )
+
+            if psr.jitterind is not None:
+                uindex = np.sum(self.npu[:ii])
+                npus = self.npu[ii]
+                ind = psr.jitterind
+                pslc = slice(ind, ind+npus)
+
+                bsqr = parameters[pslc]**2
+                jvec = psr.Jvec
+
+                self.rGr[ii] += np.sum(bsqr / jvec)
+                self.GNGldet[ii] += np.sum(np.log(jvec))
+
+                # Gradient for Thetavec hyper-parameters
+                for key, d_Jvec_d_p in psr.d_Jvec_d_param.iteritems():
+                    # Inner product
+                    gradient[key] += 0.5 * np.sum(bsqr * d_Jvec_d_p / jvec**2)
+
+                    # Determinant
+                    gradient[key] -= 0.5 * np.sum(d_Jvec_d_p / jvec)
+
+                    # Stingray partial
+                    #gradient[key] += np.sum( (d_L_d_b[pslc]+d_Pr_d_b[pslc]) *
+                    #        d_b_d_B[pslc] * d_Jvec_d_p )
+
+        #ll = -0.5*np.sum(self.npobs)*np.log(2*np.pi) \
+        ll = -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet)
+
+        #return ll + log_jacob, gradient
+        return ll, gradient
 
 
     def mark14loglikelihood(self, sr_parameters, transform='backward'):
@@ -10545,7 +10735,7 @@ class ptaLikelihood(object):
             for s in signums:
                 self._prior_draw_signal.append(s)
 
-        self._prior_draw_signal = np.unique(self._prior_draw_signal)
+        self._prior_draw_signal = list(np.unique(self._prior_draw_signal))
 
 
     def drawFromPrior(self, parameters, iter, beta):

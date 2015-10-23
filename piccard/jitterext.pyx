@@ -44,6 +44,51 @@ def cython_block_shermor_0D( \
 
     return Nx
 
+def cython_block_shermor_0D_ld( \
+        np.ndarray[np.double_t,ndim=1] r, \
+        np.ndarray[np.double_t,ndim=1] Nvec, \
+        np.ndarray[np.double_t,ndim=1] Jvec, \
+        np.ndarray[np.int_t,ndim=2] Uinds):
+    """
+    Sherman-Morrison block-inversion for Jitter (Cythonized)
+
+    @param r:       The timing residuals, array (n)
+    @param Nvec:    The white noise amplitude, array (n)
+    @param Jvec:    The jitter amplitude, array (k)
+    @param Uinds:   The start/finish indices for the jitter blocks (k x 2)
+
+    For this version, the residuals need to be sorted properly so that all the
+    blocks are continuous in memory. Here, there are n residuals, and k jitter
+    parameters.
+    """
+    cdef unsigned int cc, ii, rows = len(r), cols = len(Jvec)
+    cdef double Jldet=0.0, ji, beta, nir, nisum
+    cdef np.ndarray[np.double_t,ndim=1] ni = np.empty(len(r), 'd')
+    cdef np.ndarray[np.double_t,ndim=1] Nx = r / Nvec
+
+    ni = 1.0 / Nvec
+
+    for cc in range(rows):
+        Jldet += log(Nvec[cc])
+
+    for cc in range(cols):
+        if Jvec[cc] > 0.0:
+            ji = 1.0 / Jvec[cc]
+
+            nir = 0.0
+            nisum = 0.0
+            for ii in range(Uinds[cc,0],Uinds[cc,1]):
+                nisum += ni[ii]
+                nir += r[ii]*ni[ii]
+
+            beta = 1.0 / (nisum + ji)
+            Jldet += log(Jvec[cc]) - log(beta)
+            
+            for ii in range(Uinds[cc,0],Uinds[cc,1]):
+                Nx[ii] -= beta * nir * ni[ii]
+
+    return Jldet, Nx
+
 
 def python_block_shermor_1D(r, Nvec, Jvec, Uinds):
     """
@@ -115,6 +160,96 @@ def cython_block_shermor_1D( \
             xNx -= beta * nir * nir
     
     return Jldet, xNx
+
+
+def cython_logdet_dJNi( \
+        np.ndarray[np.double_t,ndim=1] Nvec, \
+        np.ndarray[np.double_t,ndim=1] Jvec, \
+        np.ndarray[np.double_t,ndim=1] dJvec, \
+        np.ndarray[np.int_t,ndim=2] Uinds):
+    """
+    Sherman-Morrison block-inversion for Jitter (Cythonized)
+
+    @param r:       The timing residuals, array (n)
+    @param Nvec:    The white noise amplitude, array (n)
+    @param Jvec:    The jitter amplitude, array (k)
+    @param dJvec:   The jitter derivative, array (k)
+    @param Uinds:   The start/finish indices for the jitter blocks (k x 2)
+
+    For this version, the residuals need to be sorted properly so that all the
+    blocks are continuous in memory. Here, there are n residuals, and k jitter
+    parameters.
+    """
+    cdef unsigned int cc, ii, rows = len(Nvec), cols = len(Jvec)
+    cdef double dJldet=0.0, ji, beta, nisum
+    cdef np.ndarray[np.double_t,ndim=1] ni = np.empty(rows, 'd')
+
+    ni = 1.0 / Nvec
+
+    #for cc in range(rows):
+    #    Jldet += log(Nvec[cc])
+    #    xNx += r[cc]*r[cc]*ni[cc]
+
+    for cc in range(cols):
+        if Jvec[cc] > 0.0:
+            ji = 1.0 / Jvec[cc]
+
+            #nir = 0.0
+            nisum = 0.0
+            for ii in range(Uinds[cc,0],Uinds[cc,1]):
+                nisum += ni[ii]
+                #nir += r[ii]*ni[ii]
+
+            beta = 1.0 / (nisum + ji)
+            #Jldet += log(Jvec[cc]) - log(beta)
+            #xNx -= beta * nir * nir
+
+            dJldet += dJvec[cc]*(nisum - beta*nisum**2)
+    
+    return dJldet
+
+def cython_logdet_dNNi( \
+        np.ndarray[np.double_t,ndim=1] Nvec, \
+        np.ndarray[np.double_t,ndim=1] Jvec, \
+        np.ndarray[np.double_t,ndim=1] dNvec, \
+        np.ndarray[np.int_t,ndim=2] Uinds):
+    """
+    Sherman-Morrison block-inversion for Jitter (Cythonized)
+
+    @param r:       The timing residuals, array (n)
+    @param Nvec:    The white noise amplitude, array (n)
+    @param Jvec:    The jitter amplitude, array (k)
+    @param dNvec:   The white noise derivative, array (n)
+    @param Uinds:   The start/finish indices for the jitter blocks (k x 2)
+
+    For this version, the residuals need to be sorted properly so that all the
+    blocks are continuous in memory. Here, there are n residuals, and k jitter
+    parameters.
+    """
+    cdef unsigned int cc, ii, rows = len(Nvec), cols = len(Jvec)
+    cdef double tr=0.0, ji, nisum, Nnisum
+    cdef np.ndarray[np.double_t,ndim=1] ni = np.empty(rows, 'd')
+    cdef np.ndarray[np.double_t,ndim=1] Nni = np.empty(rows, 'd')
+
+    ni = 1.0 / Nvec
+    Nni = dNvec / Nvec**2
+
+    for cc in range(rows):
+        tr += dNvec[cc] * ni[cc]
+
+    for cc in range(cols):
+        if Jvec[cc] > 0.0:
+            ji = 1.0 / Jvec[cc]
+
+            nisum = 0.0
+            Nnisum = 0.0
+            for ii in range(Uinds[cc,0],Uinds[cc,1]):
+                nisum += ni[ii]
+                Nnisum += Nni[ii]
+
+            tr -= Nnisum / (nisum + ji)
+    
+    return tr
 
 
 # Proposals for calculating the Z.T * N^-1 * Z combinations

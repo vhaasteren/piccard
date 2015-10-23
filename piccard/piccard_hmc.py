@@ -193,6 +193,42 @@ class likelihoodWrapper(object):
     def likfunc(self):
         return self.likob.likfunc
 
+    @property
+    def ptapsrs(self):
+        return self.likob.ptapsrs
+
+    @property
+    def npf(self):
+        return self.likob.npf
+
+    @property
+    def npfdm(self):
+        return self.likob.npfdm
+
+    @property
+    def npu(self):
+        return self.likob.npu
+
+    @property
+    def Phivec(self):
+        return self.likob.Phivec
+
+    @property
+    def Svec(self):
+        return self.likob.Svec
+
+    @property
+    def d_Phivec_d_param(self):
+        return self.likob.d_Phivec_d_param
+
+    @property
+    def d_Svec_d_param(self):
+        return self.likob.d_Svec_d_param
+
+    @property
+    def d_Thetavec_d_param(self):
+        return self.likob.d_Thetavec_d_param
+
 
 class hmcLikelihood(likelihoodWrapper):
     """
@@ -483,3 +519,39 @@ class hmcLikelihood_old(object):
     @property
     def likfunc(self):
         return self.likob.likfunc
+
+    @property
+    def ptapsrs(self):
+        return self.likob.ptapsrs
+
+    @property
+    def npf(self):
+        return self.likob.npf
+
+    @property
+    def npfdm(self):
+        return self.likob.npfdm
+
+    @property
+    def npu(self):
+        return self.likob.npu
+
+    @property
+    def Phivec(self):
+        return self.likob.Phivec
+
+    @property
+    def Svec(self):
+        return self.likob.Svec
+
+    @property
+    def d_Phivec_d_param(self):
+        return self.likob.d_Phivec_d_param
+
+    @property
+    def d_Svec_d_param(self):
+        return self.likob.d_Svec_d_param
+
+    @property
+    def d_Thetavec_d_param(self):
+        return self.likob.d_Thetavec_d_param
