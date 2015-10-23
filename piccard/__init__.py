@@ -5,7 +5,7 @@ from piccard_samplers import *
 from piccard_pso import *
 from piccard_freqstat import *
 from piccard_gibbs import *
-from piccard_transforms import *
+from transformations import *
 from piccard_hmc import *
 from resampler import *
 from distsampling import *
