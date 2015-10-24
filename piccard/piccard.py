@@ -5068,19 +5068,55 @@ class ptaLikelihood(object):
     def spBpsd(self, pars):
         """given the signal parameters, return the PSD as placed on the diagonal
         of the prior covariance
+
+        :param pars:
+            log10 of the PSD amplitudes
+
+        :return:
+            The diagonal elements of the prior covariance B (2*len(pars))
         """
         return 10**sparameters.repeat(2)
 
-    def d_spBpsd(self, pars):
+    def d_spBpsd(self, pars, ntotfreqs=None, nfreqind=None):
         """given the signal parameters, return the PSD as placed on the diagonal
         of the prior covariance
+
+        :param pars:
+            log10 of the PSD amplitudes
+
+        :return:
+            Derivatives of diagonal elements of B
         """
+        if ntotfreqs is None:
+            ntotfreqs = 2*len(pars)
+        if nfreqind is None:
+            nfreqind = 0
+
+        d_mat = np.zeros((ntotfreqs, len(pars)))        # 3 indices, because there is
         d_psd = np.log(10)*10**sparameters
-        return np.diag(d_psd).repeat(2, axis=0)
+
+        d_mat[nfreqind:nfreqind+2*len(pars), len(pars)] = \
+                np.diag(d_psd).repeat(2, axis=0)
+        return d_mat
     
     def plBpsd(self, lAmp, Si, T, freqs):
         """given the signal parameters, return the PSD as placed on the diagonal
         of the prior covariance
+
+        :param lAmp:
+            log10(Amp) with Amp the power-law amplitude
+
+        :param Si:
+            Powerlaw spectral index
+
+        :param T:
+            1/fbin with fbin the frequency-bin size
+
+        :param freqs:
+            The frequencies of all bins
+
+        :return:
+            The diagonal elements of the prior covariance B (2*len(pars))
         """
         freqpy = freqs * pic_spy
         return (10**(2*lAmp) * pic_spy**3 / (12*np.pi*np.pi * T)) * freqpy ** (-Si)
@@ -5096,10 +5132,13 @@ class ptaLikelihood(object):
             nfreqind = 0
 
         freqpy = freqs * pic_spy
-        d_mat = np.zeros((ntotfreqs, 3))
+        d_mat = np.zeros((ntotfreqs, 3))        # 3 indices, because there is
+                                                # actually also a low-frequency
+                                                # cut-off
 
         d_mat[nfreqind:nfreqind+len(freqs),0] = (2*np.log(10)*10**(2*lAmp) * pic_spy**3 / (12*np.pi*np.pi * T)) * freqpy ** (-Si)
         d_mat[nfreqind:nfreqind+len(freqs),1] = -np.log(freqpy)*(10**(2*lAmp) * pic_spy**3 / (12*np.pi*np.pi * T)) * freqpy ** (-Si)
+        d_mat[nfreqind:nfreqind+len(freqs),2] = 0.0
 
         return d_mat
     
@@ -5224,7 +5263,9 @@ class ptaLikelihood(object):
                         self.Phivec[findex:findex+2*nfreq] += pcd
 
                         if calc_gradient:
-                            d_mat = self.d_spBpsd(sparameters)
+                            ntotfreqs = np.sum(self.npff)
+                            d_mat = self.d_spBpsd(sparameters,
+                                    ntotfreqs=ntotfreqs, nfreqind=findex)
                             self.add_d_Phivec(d_mat, m2signal['parindex'],
                                     m2signal['bvary'])
 
@@ -5277,9 +5318,12 @@ class ptaLikelihood(object):
                             self.Scor = corrmat.copy()     # Yes, well, there can be only one
 
                         if calc_gradient:
-                            d_mat = self.d_spBpsd(sparameters)
+                            ntotfreqs = np.sum(self.npff)
+                            d_mat = self.d_spBpsd(sparameters,
+                                    ntotfreqs=ntotfreqs, nfreqind=findex)
                             self.add_d_Svec(d_mat, m2signal['parindex'],
                                     m2signal['bvary'])
+
                 elif m2signal['stype'] == 'blspectrum':
                     pp = m2signal['pulsarind']
                     psr = self.ptapsrs[pp]
@@ -5344,7 +5388,9 @@ class ptaLikelihood(object):
                         self.Phivec[findex:findex+2*nfreq] += pcd
 
                         if calc_gradient:
-                            d_mat = self.d_plBpsd(lAmp, Si, sTmax, sfreqs)
+                            ntotfreqs = np.sum(self.npff)
+                            d_mat = self.d_plBpsd(lAmp, Si, sTmax, sfreqs,
+                                    ntotfreqs=ntotfreqs, nfreqind=findex)
                             self.add_d_Phivec(d_mat, m2signal['parindex'],
                                     m2signal['bvary'])
                     elif m2signal['corr'] in ['gr', 'uniform', 'dipole', \
@@ -5390,7 +5436,9 @@ class ptaLikelihood(object):
                             self.Scor = corrmat.copy()
 
                         if calc_gradient:
-                            d_mat = self.d_plBpsd(lAmp, Si, sTmax, sfreqs)
+                            ntotfreqs = np.sum(self.npff)
+                            d_mat = self.d_plBpsd(lAmp, Si, sTmax, sfreqs,
+                                    ntotfreqs=ntotfreqs, nfreqind=findex)
                             self.add_d_Svec(d_mat, m2signal['parindex'],
                                     m2signal['bvary'])
                 elif m2signal['stype'] == 'spectralModel':
@@ -5421,7 +5469,9 @@ class ptaLikelihood(object):
                         self.Phivec[findex:findex+2*nfreq] += pcd
 
                         if calc_gradient:
-                            d_mat = self.d_smBpsd(lAmp, alpha, lfc, sTmax, sfreqs)
+                            ntotfreqs = np.sum(self.npff)
+                            d_mat = self.d_smBpsd(lAmp, alpha, lfc, sTmax, sfreqs,
+                                    ntotfreqs=ntotfreqs, nfreqind=findex)
                             self.add_d_Phivec(d_mat, m2signal['parindex'],
                                     m2signal['bvary'])
                     elif m2signal['corr'] in ['gr', 'uniform', 'dipole', \
@@ -5469,7 +5519,9 @@ class ptaLikelihood(object):
                             self.Scor = corrmat.copy()     # Yes, well, there can be only one
 
                         if calc_gradient:
-                            d_mat = self.d_smBpsd(sparameters)
+                            ntotfreqs = np.sum(self.npff)
+                            d_mat = self.d_smBpsd(lAmp, alpha, lfc, sTmax, sfreqs,
+                                    ntotfreqs=ntotfreqs, nfreqind=findex)
                             self.add_d_Svec(d_mat, m2signal['parindex'],
                                     m2signal['bvary'])
                 elif m2signal['stype'] == 'blpowerlaw':
