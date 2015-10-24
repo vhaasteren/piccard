@@ -3462,7 +3462,7 @@ class ptaLikelihood(object):
                             "pmin":[-10.0],
                             "pmax":[-4.0],
                             "pwidth":[0.2],
-                            "pstart":[-7.0],
+                            "pstart":[-6.5],
                             "interval":[True],
                             "prior":'flatlog'
                             })
@@ -3478,7 +3478,7 @@ class ptaLikelihood(object):
                         "pmin":[-10.0],
                         "pmax":[-4.0],
                         "pwidth":[0.2],
-                        "pstart":[-7.0],
+                        "pstart":[-6.5],
                         "interval":[True],
                         "prior":'flatlog'
                         })
@@ -3501,7 +3501,7 @@ class ptaLikelihood(object):
                             "pmin":[-10.0],
                             "pmax":[-4.0],
                             "pwidth":[0.3],
-                            "pstart":[-7.0],
+                            "pstart":[-6.5],
                             "interval":[True],
                             "prior":'flatlog'
                             })
@@ -3529,7 +3529,7 @@ class ptaLikelihood(object):
                             "pmin":[-10.0],
                             "pmax":[-4.0],
                             "pwidth":[0.3],
-                            "pstart":[-7.0],
+                            "pstart":[-6.5],
                             "interval":[True],
                             "prior":'flatlog'
                             })
@@ -3546,7 +3546,7 @@ class ptaLikelihood(object):
                         "pmin":[-10.0],
                         "pmax":[-4.0],
                         "pwidth":[0.3],
-                        "pstart":[-7.0],
+                        "pstart":[-6.5],
                         "interval":[True],
                         "prior":'flatlog'
                         })
@@ -10639,6 +10639,11 @@ class ptaLikelihood(object):
         ll, ll_grad = self.mark13loglikelihood(parameters)
         return ll+lp, lp_grad + ll_grad
 
+    def mark13logposterior_old(self, parameters):
+        lp, lp_grad = self.mark13logprior_fast(parameters)
+        ll, ll_grad = self.mark13loglikelihood_old(parameters)
+        return ll+lp, lp_grad + ll_grad
+
     def mark14logposterior(self, parameters):
         lp, lp_grad = self.mark13logprior_fast(parameters)
         ll, ll_grad = self.mark14loglikelihood(parameters)
@@ -10647,8 +10652,8 @@ class ptaLikelihood(object):
     def logposterior_grad(self, parameters):
         return self.mark13logposterior(parameters)
 
-    def loglikelihood_grad(self, parameters):
-        return self.mark13loglikelihood(parameters)
+    def loglikelihood_grad(self, parameters, **kwargs):
+        return self.mark13loglikelihood(parameters, **kwargs)
 
     def logprior_grad(self, parameters):
         return self.mark13logprior_fast(parameters)

@@ -11,7 +11,7 @@ import scipy.linalg as sl, scipy.special as ss
 from piccard import *
 
 
-class likelihoodWrapper(object):
+class likelihoodWrapper_old(object):
     """
     Wrapper class of the likelihood for Hamiltonian samplers. This is an
     abstract class that gives the basic functionality for any likelihood wrapper
@@ -107,7 +107,7 @@ class likelihoodWrapper(object):
     def loglikelihood_grad(self, p):
         """The log-likelihood in the new coordinates"""
         x = self.backward(p)
-        ll, ll_grad = self.likob.loglikelihood_grad(x)
+        ll, ll_grad = self.likob.mark13loglikelihood_old(x)
         lj, lj_grad = self.logjacobian_grad(p)
         return ll+lj, ll_grad*self.dxdp(p)+lj_grad
 
@@ -118,7 +118,7 @@ class likelihoodWrapper(object):
               does not include the jacobian transformation
         """
         x = self.backward(p)
-        lp, lp_grad = self.likob.logprior_grad(x)
+        lp, lp_grad = self.likob.mark13logprior_fast(x)
         return lp, lp_grad*self.dxdp(p)
 
     def logposterior(self, p):
@@ -131,7 +131,7 @@ class likelihoodWrapper(object):
         """The log-likelihood in the new coordinates"""
         x = self.backward(p)
 
-        ll, ll_grad = self.likob.loglikelihood_grad(x)
+        ll, ll_grad = self.likob.mark13loglikelihood_old(x)
         lj, lj_grad = self.logjacobian_grad(p)
         return ll+lj
 
@@ -142,7 +142,7 @@ class likelihoodWrapper(object):
               does not include the jacobian transformation
         """
         x = self.backward(p)
-        lp, lp_grad = self.likob.logprior_grad(x)
+        lp, lp_grad = self.likob.mark13logprior_fast(x)
         return lp
     
     def addPriorDraws(self, which='hyper'):
@@ -253,19 +253,19 @@ class likelihoodWrapper(object):
         return self.likob.d_Thetavec_d_param
 
 
-class hmcLikelihood(likelihoodWrapper):
+class hmcLikelihood_old(likelihoodWrapper_old):
     """
     Wrapper class of the likelihood for Hamiltonian samplers. This implements a
     coordinate transformation for some/all parameters from an interval to all
     real numbers.
     """
     def __init__(self, h5filename=None, jsonfilename=None, **kwargs):
-        """Initialize the hmcLikelihood with a ptaLikelihood object"""
-        super(hmcLikelihood, self).__init__(h5filename, jsonfilename, **kwargs)
+        """Initialize the hmcLikelihood_old with a ptaLikelihood object"""
+        super(hmcLikelihood_old, self).__init__(h5filename, jsonfilename, **kwargs)
 
     def initBounds(self):
         """Initialize the parameter bounds"""
-        super(hmcLikelihood, self).initBounds()
+        super(hmcLikelihood_old, self).initBounds()
         self.msk = self.likob.interval
 
         self.setLowLevelStart()

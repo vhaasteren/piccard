@@ -36,7 +36,10 @@ class likelihoodWrapper(object):
             self.likob = wc(h5filename, jsonfilename, **kwargs)
         
         self.initBounds()
-        self._cached = False        # We'll use a simple type of caching
+
+        # We use a simplistic form of caching in stingrayLikeli8hood
+        # TODO: use descriptor decorators
+        self._cachefunc = None      # For caching tracking
         self._p = None              # Cached values for coordinates
         self._x = None              # Cached values for coordinates
 
@@ -110,9 +113,16 @@ class likelihoodWrapper(object):
 
     def logposterior_grad(self, p):
         """The log-posterior in the new coordinates"""
+        """ # Old version:
         lpr, lpr_grad = self.logprior_grad(p)
         ll, ll_grad = self.loglikelihood_grad(p)
         return ll+lpr, ll_grad+lpr_grad
+        """
+        # We need the prior, and the likelihood, but all from one function
+        x = self.backward(p)
+        lp, lp_grad = self.likob.logposterior_grad(x)
+        lj, lj_grad = self.logjacobian_grad(p)
+        return lp+lj, lp_grad*self.dxdp(p)+lj_grad+self.dxdp_nondiag(p, lp_grad)
 
     def loglikelihood_grad(self, p):
         """The log-likelihood in the new coordinates"""
@@ -133,9 +143,11 @@ class likelihoodWrapper(object):
 
     def logposterior(self, p):
         """The log-posterior in the new coordinates"""
-        lpr, lpr_grad = self.logprior_grad(p)
-        ll, ll_grad = self.loglikelihood_grad(p)
-        return ll+lpr
+        #lpr, lpr_grad = self.logprior_grad(p)
+        #ll, ll_grad = self.loglikelihood_grad(p)
+        #return ll+lpr
+        lp, lp_grad = self.logposterior_grad(p)
+        return lp
 
     def loglikelihood(self, p):
         """The log-likelihood in the new coordinates"""
@@ -364,14 +376,48 @@ class stingrayLikelihood(likelihoodWrapper):
                 #sigstart = m2signal['pstart'][msk]  # Original pars
 
                 # We use random starting positions, close to zero
-                sigstart = np.ones(npars) * (0.1+0.05*np.random.randn(npars))
+                #sigstart = np.ones(npars) * (0.1+0.05*np.random.randn(npars))
+                sigstart = np.ones(npars) * 0.1
 
                 pstart[sind:sind+npars] = sigstart
 
         # We cannot do in-place because of possible lower-level transformations
         # Need to set the hyper parameters in some way
-        # def set_hyper_pars(self, parameters, calc_gradient=True):
         self.pstart = pstart
+
+    def cache(self, pars, func, direction='backward', calc_gradient=True):
+        """Perform the forward coordinate transformation, and cache the result
+        
+        TODO: Make this functionality into a descriptor decorator
+        TODO: Keep track of whether or not we have gradients
+        """
+        if self._cachefunc is None:
+            self._cachefunc = func
+
+            self.stingray_transformation(pars, calc_gradient=calc_gradient)
+
+            if direction == 'forward':
+                self._x = np.copy(pars)
+                self._p = self.forward(self._x)
+            elif direction == 'backward':
+                self._p = np.copy(pars)
+                self._x = self.backward(self._p)
+            else:
+                raise ValueError("Direction of transformation unknown")
+
+    def uncache(self, func):
+        """Perform the forward coordinate transformation, and cache the result
+        
+        TODO: Make this functionality into a descriptor decorator
+        """
+        if self._cachefunc == func:
+            self._cachefunc = None
+            #self._x = None
+            #self._p = None
+
+    def have_cache(self):
+        """Whether or not we have values cache already"""
+        return self._cachefunc is not None
 
     def stingray_transformation(self, p, calc_gradient=True, set_hyper_pars=True):
         """Perform the stingray transformation
@@ -574,9 +620,20 @@ class stingrayLikelihood(likelihoodWrapper):
         """
         p = np.atleast_2d(x.copy())
 
-        for ii, pc in enumerate(p):
-            self.stingray_transformation(pc, calc_gradient=False)
-            p[ii,:] = (pc - self._mu) / self._sigma
+        if p.shape[0] == 1:
+            self.cache(p[0,:], self.forward, 
+                    direction='forward', calc_gradient=False)
+            p[0,:] = (p[0,:] - self._mu) / self._sigma
+            self.uncache(self.forward)
+        else:
+            if self.have_cache():
+                raise RuntimeError("Invalid transform from caching function")
+
+            for ii, pc in enumerate(p):
+                self.cache(pc, self.forward, 
+                        direction='forward', calc_gradient=False)
+                p[ii,:] = (pc - self._mu) / self._sigma
+                self.uncache(self.forward)
 
         return p.reshape(x.shape)
 
@@ -590,41 +647,65 @@ class stingrayLikelihood(likelihoodWrapper):
         """
         x = np.atleast_2d(p.copy())
 
-        for ii, xc in enumerate(x):
-            self.stingray_transformation(xc, calc_gradient=False)
-            x[ii,:] = self._mu + self._sigma * xc
+        if x.shape[0] == 1:
+            self.cache(x[0,:], self.backward, 
+                    direction='backward', calc_gradient=False)
+            x[0,:] = x[0,:] * self._sigma +  self._mu
+            self.uncache(self.backward)
+        else:
+            if self.have_cache():
+                raise RuntimeError("Invalid transform from caching function")
 
-        return x.reshape(p.shape)
+            for ii, xc in enumerate(x):
+                self.cache(xc, self.backward, 
+                        direction='backward', calc_gradient=False)
+                x[ii,:] = xc * self._sigma + self._mu
+                self.uncache(self.backward)
 
-        x = np.atleast_2d(p.copy())
-        m = self.msk
-        x[:,m] = (self.b[m] - self.a[m]) * np.exp(x[:,m]) / (1 +
-                np.exp(x[:,m])) + self.a[m]
         return x.reshape(p.shape)
     
     def logjacobian_grad(self, p):
         """Return the log of the Jacobian at point p"""
-        self.stingray_transformation(p, calc_gradient=True)
+        #self.stingray_transformation(p, calc_gradient=True)
+        self.cache(p, self.logjacobian_grad, direction='backward',
+                calc_gradient=True)
+        self.uncache(self.logjacobian_grad)
 
         return self._log_jacob, self._gradient
 
     def dxdp(self, p):
-        self.stingray_transformation(p, calc_gradient=False)
+        #self.stingray_transformation(p, calc_gradient=False)
+        self.cache(p, self.dxdp, direction='backward',
+                calc_gradient=False)
+        self.uncache(self.dxdp)
 
         return self._d_b_d_xi
 
     def logposterior_grad(self, p):
         """The log-posterior in the new coordinates"""
-        lpr, lpr_grad = self.logprior_grad(p)
-        ll, ll_grad = self.loglikelihood_grad(p)
+        self.cache(p, self.logposterior_grad, direction='backward',
+                calc_gradient=True)
+        lpr, lpr_grad = self.logprior_grad(self._p)
+        ll, ll_grad = self.loglikelihood_grad(self._p)
+        self.uncache(self.logposterior_grad)
         return ll+lpr, ll_grad+lpr_grad
 
     def loglikelihood_grad(self, p):
         """The log-likelihood in the new coordinates"""
-        x = self.backward(p)
-        ll, ll_grad = self.likob.loglikelihood_grad(x)
-        lj, lj_grad = self.logjacobian_grad(p)
-        return ll+lj, ll_grad*self.dxdp(p)+lj_grad+self.dxdp_nondiag(p, ll_grad)
+        #x = self.backward(p)
+        self.cache(p, self.loglikelihood_grad, direction='backward',
+                calc_gradient=True)
+
+        ll, ll_grad = self.likob.loglikelihood_grad(self._x, set_hyper_pars=False)
+        lj, lj_grad = self.logjacobian_grad(self._p)
+
+        lp = ll+lj
+        lp_grad = ll_grad*self.dxdp(self._p) + \
+                lj_grad + self.dxdp_nondiag(self._p, ll_grad)
+
+        self.uncache(self.loglikelihood_grad)
+        #return ll+lj, ll_grad*self.dxdp(p)+lj_grad+self.dxdp_nondiag(p, ll_grad)
+        return lp, lp_grad
 
     def logprior_grad(self, p):
         """The log-prior in the new coordinates
@@ -632,22 +713,40 @@ class stingrayLikelihood(likelihoodWrapper):
         Note: to preserve logposterior = loglikelihood + logprior, this term
               does not include the jacobian transformation
         """
-        x = self.backward(p)
-        lp, lp_grad = self.likob.logprior_grad(x)
-        return lp, lp_grad*self.dxdp(p)+self.dxdp_nondiag(p, lp_grad)
+        self.cache(p, self.logprior_grad, direction='backward',
+                calc_gradient=True)
+        #x = self.backward(p)
+
+        lp, lp_grad = self.likob.logprior_grad(self._x)
+        lpt = lp
+        lpt_grad = lp_grad*self.dxdp(self._p) + \
+                self.dxdp_nondiag(self._p, lp_grad)
+
+        self.uncache(self.logprior_grad)
+        #return lp, lp_grad*self.dxdp(p)+self.dxdp_nondiag(p, lp_grad)
+        return lpt, lpt_grad
 
     def logposterior(self, p):
         """The log-posterior in the new coordinates"""
-        lpr, lpr_grad = self.logprior_grad(p)
-        ll, ll_grad = self.loglikelihood_grad(p)
+        self.cache(p, self.logposterior, direction='backward',
+                calc_gradient=False)
+
+        lpr, lpr_grad = self.logprior_grad(self._p)
+        ll, ll_grad = self.loglikelihood_grad(self._p)
+
+        self.uncache(self.logposterior)
         return ll+lpr
 
     def loglikelihood(self, p):
         """The log-likelihood in the new coordinates"""
-        x = self.backward(p)
+        #x = self.backward(p)
+        self.cache(p, self.loglikelihood, direction='backward',
+                calc_gradient=False)
 
-        ll, ll_grad = self.likob.loglikelihood_grad(x)
-        lj, lj_grad = self.logjacobian_grad(p)
+        ll, ll_grad = self.likob.loglikelihood_grad(self._x)
+        lj, lj_grad = self.logjacobian_grad(self._p)
+
+        self.uncache(self.loglikelihood)
         return ll+lj
 
     def logprior(self, p):
@@ -656,8 +755,24 @@ class stingrayLikelihood(likelihoodWrapper):
         Note: to preserve logposterior = loglikelihood + logprior, this term
               does not include the jacobian transformation
         """
-        x = self.backward(p)
-        lp, lp_grad = self.likob.logprior_grad(x)
+        #x = self.backward(p)
+        self.cache(p, self.logprior, direction='backward', calc_gradient=False)
+
+        lp, lp_grad = self.likob.logprior_grad(self._x)
+
+        self.uncache(self.logprior)
         return lp
     
 
+def hmcLikelihood(h5filename=None, jsonfilename=None, **kwargs):
+    """Wrapper for the compound of the stingray transformation and the interval
+    transformation
+    """
+    if 'wrapperclass' in kwargs:
+        raise ValueError("hmcLikelihood already pre-sets wrapperclass")
+
+    return intervalLikelihood(h5filename=h5filename,
+            jsonfilename=jsonfilename,
+            wrapperclass=stingrayLikelihood,
+            **kwargs)
+    
