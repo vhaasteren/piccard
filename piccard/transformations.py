@@ -170,6 +170,10 @@ class likelihoodWrapper(object):
     def set_hyper_pars(self, p, calc_gradient=True):
         """Set all the hyper-parameter dependents"""
         self.likob.set_hyper_pars(p, calc_gradient=calc_gradient)
+
+    def set_det_sources(self, p, calc_gradient=True):
+        """Set all the deterministic source dependents"""
+        self.likob.set_det_sources(p, calc_gradient=calc_gradient)
     
     def addPriorDraws(self, which='hyper'):
         self.likob.addPriorDraws(which=which)
@@ -394,7 +398,9 @@ class stingrayLikelihood(likelihoodWrapper):
         if self._cachefunc is None:
             self._cachefunc = func
 
-            self.stingray_transformation(pars, calc_gradient=calc_gradient)
+            # Set hyper parameters
+            self.stingray_transformation(pars, calc_gradient=calc_gradient,
+                    set_hyper_pars=True)
 
             if direction == 'forward':
                 self._x = np.copy(pars)
@@ -404,6 +410,9 @@ class stingrayLikelihood(likelihoodWrapper):
                 self._x = self.backward(self._p)
             else:
                 raise ValueError("Direction of transformation unknown")
+
+            # Update all the deterministic sources
+            self.set_det_sources(self._x)
 
     def uncache(self, func):
         """Perform the forward coordinate transformation, and cache the result

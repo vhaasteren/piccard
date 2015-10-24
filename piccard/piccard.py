@@ -8769,16 +8769,24 @@ class ptaLikelihood(object):
 
 
     def set_hyper_pars(self, parameters, calc_gradient=True):
+        """Set the hyper parameter dependents
+        
+        Low-level parameters not used
+        """
         # The red signal hyper-parameters
         self.constructPhiAndTheta(parameters, make_matrix=False,
                 gibbs_expansion=True, calc_gradient=calc_gradient)
 
         # The white noise hyper parameters
-        self.setPsrNoise(parameters, calc_gradient=True)
+        self.setPsrNoise(parameters, calc_gradient=calc_gradient)
 
+    def set_det_sources(self, parameters, calc_gradient=True):
+        """Update the deterministic-source dependents
+        
+        Low-level parameters need to be set to their real values
+        """
         self._d_L_d_b, self._d_Pr_d_b = \
-                self.updateDetSources(parameters, calc_gradient=True)
-
+                self.updateDetSources(parameters, calc_gradient=calc_gradient)
 
     def mark13loglikelihood(self, parameters, set_hyper_pars=True):
         """
@@ -8786,7 +8794,8 @@ class ptaLikelihood(object):
         transformations included
         """
         if set_hyper_pars:
-            self.set_hyper_pars(parameters, calc_gradient=True)
+            self.set_hyper_pars(parameters, calc_gradient=calc_gradient)
+            self.set_det_sources(parameters, calc_gradient=calc_gradient)
 
         d_L_d_b, d_Pr_d_b = self._d_L_d_b, self._d_Pr_d_b
 
