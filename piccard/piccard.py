@@ -2547,8 +2547,10 @@ class ptaLikelihood(object):
         self.Tmax = None     # One Tmax to rule them all...
 
         # Which pulsars have which red noise frequencies...
-        self.freqmask = None     # Mask which have which
-        self.freqb = None        # Quadratic Fourier coefficients, in a 2D-array
+        self.freqmask = None    # Mask which have which
+        self.freqb = None       # Quadratic Fourier coefficients, in a 2D-array
+        self.freqpinds = None    # Which parameter indices belong to the modes
+        self.freqpfnds = None    # Which frequency indices belong to the modes
 
         # The Phi, Theta, and Sigma matrices
         self.Phi = None          # mark1, mark3, mark?, mark6                (Noise & corr)
@@ -3187,10 +3189,20 @@ class ptaLikelihood(object):
         # for when we are numerically dealing with the quadratic coefficients.
         maxfreqs = np.max(self.npf)
         self.freqmask = np.zeros((npsrs, maxfreqs), dtype=np.bool)
+        self.freqpinds = np.zeros((npsrs, maxfreqs), dtype=np.int)
+        self.freqfinds = np.zeros((npsrs, maxfreqs), dtype=np.int)
         self.freqb = np.zeros((npsrs, maxfreqs))
 
         for jj, psr in enumerate(self.ptapsrs):
-            self.freqmask[jj, :self.npf[jj]] = True  # No npff here?
+            pind = psr.fourierind
+            find = np.sum(self.npf[:jj])
+            nfreq = self.npf[jj]
+
+            self.freqmask[jj, :nfreq] = True  # No npff here?
+            self.freqfinds[jj, :nfreq] = np.arange(find, find+nfreq)
+
+            if pind is not None:
+                self.freqpinds[jj, :nfreq] = np.arange(pind, pind+nfreq)
 
         # Prepare the hyper-parameter covariance quantities
         self.Phi = np.zeros((np.sum(self.npf), np.sum(self.npf)))
@@ -3343,7 +3355,7 @@ class ptaLikelihood(object):
             incDM=False, dmModel='powerlaw', \
             incClock=False, clockModel='powerlaw', \
             incGWB=False, gwbModel='powerlaw', \
-            gwbSi=2.01, gwbVarySi=True, gwbPrior='flat', \
+            gwbSi=4.33, gwbVarySi=True, gwbPrior='flat', \
             incDipole=False, dipoleModel='powerlaw', \
             incAniGWB=False, anigwbModel='powerlaw', lAniGWB=1, \
             incPixelGWB=False, pixelgwbModel='powerlaw', npixels=4, \
@@ -3862,7 +3874,7 @@ class ptaLikelihood(object):
                     bvary = [True]*nmodes
                     pmin = [-1.0e6]*nmodes
                     pmax = [1.0e6]*nmodes
-                    pstart = [1.0e-10]*nmodes
+                    pstart = [1.0e-9]*nmodes
                     pwidth = [1.0e-7]*nmodes
                     interval = [False]*nmodes
 
@@ -3888,7 +3900,7 @@ class ptaLikelihood(object):
                     bvary = [True]*nmodes
                     pmin = [-1.0e6]*nmodes
                     pmax = [1.0e6]*nmodes
-                    pstart = [1.0e-10]*nmodes
+                    pstart = [1.0e-9]*nmodes
                     pwidth = [1.0e-7]*nmodes
                     interval = [False]*nmodes
 
@@ -3915,7 +3927,7 @@ class ptaLikelihood(object):
                     bvary = [True]*nmodes
                     pmin = [-1.0e6]*nmodes
                     pmax = [1.0e6]*nmodes
-                    pstart = [1.0e-10]*nmodes
+                    pstart = [1.0e-9]*nmodes
                     pwidth = [1.0e-7]*nmodes
                     interval = [False]*nmodes
 
@@ -5075,7 +5087,7 @@ class ptaLikelihood(object):
         :return:
             The diagonal elements of the prior covariance B (2*len(pars))
         """
-        return 10**sparameters.repeat(2)
+        return 10**pars.repeat(2)
 
     def d_spBpsd(self, pars, ntotfreqs=None, nfreqind=None):
         """given the signal parameters, return the PSD as placed on the diagonal
@@ -5093,9 +5105,9 @@ class ptaLikelihood(object):
             nfreqind = 0
 
         d_mat = np.zeros((ntotfreqs, len(pars)))        # 3 indices, because there is
-        d_psd = np.log(10)*10**sparameters
+        d_psd = np.log(10)*10**pars
 
-        d_mat[nfreqind:nfreqind+2*len(pars), len(pars)] = \
+        d_mat[nfreqind:nfreqind+2*len(pars), :len(pars)] = \
                 np.diag(d_psd).repeat(2, axis=0)
         return d_mat
     
@@ -5139,6 +5151,28 @@ class ptaLikelihood(object):
         d_mat[nfreqind:nfreqind+len(freqs),0] = (2*np.log(10)*10**(2*lAmp) * pic_spy**3 / (12*np.pi*np.pi * T)) * freqpy ** (-Si)
         d_mat[nfreqind:nfreqind+len(freqs),1] = -np.log(freqpy)*(10**(2*lAmp) * pic_spy**3 / (12*np.pi*np.pi * T)) * freqpy ** (-Si)
         d_mat[nfreqind:nfreqind+len(freqs),2] = 0.0
+
+        return d_mat
+
+    def d_gwplBpsd(self, lAmp, Si, T, freqs):
+        """given the signal parameters, return the PSD as placed in
+        the prior covariance. For GWs, so also include derivative for all
+        pulsars
+        """
+        freqpy = freqs * pic_spy
+        d_mat = np.zeros((np.sum(self.npff), 3))        # 3 indices, because there is
+                                                        # also a low-frequency
+                                                        # cut-off
+
+        for pp, nfreq in enumerate(self.npff):
+            findex = np.sum(self.npff[:pp])
+            nf = np.min([nfreq, len(freqs)])
+
+            d_mat[findex:findex+nf,0] = (2*np.log(10)*10**(2*lAmp) * pic_spy**3
+                    / (12*np.pi*np.pi * T)) * freqpy[:nf] ** (-Si)
+            d_mat[findex:findex+nf,1] = -np.log(freqpy)*(10**(2*lAmp) *
+                    pic_spy**3 / (12*np.pi*np.pi * T)) * freqpy[:nf] ** (-Si)
+            d_mat[findex:findex+nf,2] = 0.0
 
         return d_mat
     
@@ -5398,7 +5432,7 @@ class ptaLikelihood(object):
                         #freqpy = m2signal['Ffreqs'] * pic_spy
                         #pcdoubled = (Amp**2 * pic_spy**3 / (12*np.pi*np.pi * m2signal['Tmax'])) * freqpy ** (-Si)
                         pcd = self.plBpsd(lAmp, Si, sTmax, sfreqs)
-                        nfreq = len(freqpy)
+                        nfreq = len(sfreqs)
 
                         if m2signal['corr'] in ['gr', 'uniform', 'dipole']:
                             corrmat = m2signal['corrmat']
@@ -5436,9 +5470,7 @@ class ptaLikelihood(object):
                             self.Scor = corrmat.copy()
 
                         if calc_gradient:
-                            ntotfreqs = np.sum(self.npff)
-                            d_mat = self.d_plBpsd(lAmp, Si, sTmax, sfreqs,
-                                    ntotfreqs=ntotfreqs, nfreqind=findex)
+                            d_mat = self.d_gwplBpsd(lAmp, Si, sTmax, sfreqs)
                             self.add_d_Svec(d_mat, m2signal['parindex'],
                                     m2signal['bvary'])
                 elif m2signal['stype'] == 'spectralModel':
@@ -5794,6 +5826,7 @@ class ptaLikelihood(object):
                         findex = np.sum(self.npf[:pp])
                         nfs = self.npf[pp]
                         phislice = slice(findex, findex+nfs)
+                        phivec = self.Phivec[phislice] + self.Svec[:nfs]
 
                         if 'jitter' in self.gibbsmodel or np.sum(psr.Jvec) == 0.0:
                             d_L_d_xi = np.dot(psr.Fmat.T, psr.detresiduals / psr.Nvec)
@@ -5802,7 +5835,7 @@ class ptaLikelihood(object):
                                     cython_block_shermor_0D(psr.detresiduals,
                                             psr.Nvec, psr.Jvec, psr.Uinds))
 
-                        d_Pr_d_xi = - sparameters / self.Phivec[phislice]
+                        d_Pr_d_xi = - sparameters / phivec
                         d_L_d_b[parslice] = d_L_d_xi[smask]
                         d_Pr_d_b[parslice] = d_Pr_d_xi[smask]
                     elif m2signal['stype'] == 'dmfouriermode_xi':
@@ -8557,7 +8590,7 @@ class ptaLikelihood(object):
                 findex = np.sum(self.npf[:ii])
                 nfs = self.npf[ii]
                 phivec = self.Phivec[findex:findex+nfs] + \
-                        self.Svec[findex:findex+nfs]
+                        self.Svec[:nfs]
 
                 Sigmavec = 1.0/(psr.ZNZ_srvec[psr.Zmask_F_only] + 1.0 / phivec)
                 std = np.sqrt(Sigmavec)
@@ -8580,12 +8613,12 @@ class ptaLikelihood(object):
                     # Red noise
                     for key, value in self.d_Phivec_d_param.iteritems():
                         d_lj_d_phi = 0.5 * Sigmavec / phivec**2
-                        gradient[key] = np.sum(d_lj_d_phi * value)
+                        gradient[key] += np.sum(d_lj_d_phi * value)
 
                     # GW signals
                     for key, value in self.d_Svec_d_param.iteritems():
                         d_lj_d_phi = 0.5 * Sigmavec / phivec**2
-                        gradient[key] = np.sum(d_lj_d_phi * value)
+                        gradient[key] += np.sum(d_lj_d_phi * value)
 
                 d_std_d_B = 0.5 * (Sigmavec ** 1.5) / phivec**2
                 d_mean_d_B = mean * Sigmavec / phivec**2
@@ -8622,7 +8655,7 @@ class ptaLikelihood(object):
                 if calc_gradient:
                     for key, value in self.d_Thetavec_d_param.iteritems():
                         d_lj_d_theta = 0.5 * Sigmavec / thetavec**2
-                        gradient[key] = np.sum(d_lj_d_theta * value)
+                        gradient[key] += np.sum(d_lj_d_theta * value)
 
                 d_std_d_B = 0.5 * (Sigmavec ** 1.5) / thetavec**2
                 d_mean_d_B = mean * Sigmavec / thetavec**2
@@ -8659,7 +8692,7 @@ class ptaLikelihood(object):
                 if calc_gradient:
                     for key, value in psr.d_Jvec_d_param.iteritems():
                         d_lj_d_J = 0.5 * Sigmavec / psr.Jvec**2
-                        gradient[key] = np.sum(d_lj_d_J * value)
+                        gradient[key] += np.sum(d_lj_d_J * value)
 
                 d_std_d_B = 0.5 * (Sigmavec ** 1.5) / psr.Jvec**2
                 d_mean_d_B = mean * Sigmavec / psr.Jvec**2
@@ -8846,8 +8879,8 @@ class ptaLikelihood(object):
         transformations included
         """
         if set_hyper_pars:
-            self.set_hyper_pars(parameters, calc_gradient=calc_gradient)
-            self.set_det_sources(parameters, calc_gradient=calc_gradient)
+            self.set_hyper_pars(parameters, calc_gradient=True)
+            self.set_det_sources(parameters, calc_gradient=True)
 
         d_L_d_b, d_Pr_d_b = self._d_L_d_b, self._d_Pr_d_b
 
@@ -8899,8 +8932,9 @@ class ptaLikelihood(object):
                 fslc = slice(findex, findex+nfreq)
                 pslc = slice(ind, ind+nfreq)
 
+                # We include Svec, but not correlations...
                 bsqr = parameters[pslc]**2
-                phivec = self.Phivec[fslc]
+                phivec = self.Phivec[fslc] + self.Svec[:nfreq]
 
                 self.rGr[ii] += np.sum(bsqr / phivec)
                 self.GNGldet[ii] += np.sum(np.log(phivec))
@@ -8908,15 +8942,18 @@ class ptaLikelihood(object):
                 # Gradient for Phivec hyper-parameters
                 for key, d_Phivec_d_p in self.d_Phivec_d_param.iteritems():
                     # Inner product
-                    gradient[key] += 0.5 * np.sum(bsqr * d_Phivec_d_p / phivec**2)
+                    gradient[key] += 0.5 * np.sum(bsqr * d_Phivec_d_p[fslc] / phivec**2)
 
                     # Determinant
-                    gradient[key] -= 0.5 * np.sum(d_Phivec_d_p / phivec)
+                    gradient[key] -= 0.5 * np.sum(d_Phivec_d_p[fslc] / phivec)
 
-                    # Stingray partial (chain-rule)
-                    #gradient[key] += np.sum(
-                    #        (d_L_d_b[pslc]+d_Pr_d_b[pslc]) *
-                    #        d_b_d_B[pslc] * d_Phivec_d_p )
+                # Gradient for Svec hyper-parameters
+                for key, d_Svec_d_p in self.d_Svec_d_param.iteritems():
+                    # Inner product
+                    gradient[key] += 0.5 * np.sum(bsqr * d_Svec_d_p[fslc] / phivec**2)
+
+                    # Determinant
+                    gradient[key] -= 0.5 * np.sum(d_Svec_d_p[fslc] / phivec)
 
             if psr.dmfourierind is not None:
                 fdmindex = np.sum(self.npfdm[:ii])
@@ -8939,10 +8976,6 @@ class ptaLikelihood(object):
                     # Determinant
                     gradient[key] -= 0.5 * np.sum(d_Thetavec_d_p / thetavec)
 
-                    # Stingray partial
-                    #gradient[key] += np.sum( (d_L_d_b[pslc]+d_Pr_d_b[pslc]) *
-                    #        d_b_d_B[pslc] * d_Thetavec_d_p )
-
             if psr.jitterind is not None:
                 uindex = np.sum(self.npu[:ii])
                 npus = self.npu[ii]
@@ -8963,53 +8996,64 @@ class ptaLikelihood(object):
                     # Determinant
                     gradient[key] -= 0.5 * np.sum(d_Jvec_d_p / jvec)
 
-                    # Stingray partial
-                    #gradient[key] += np.sum( (d_L_d_b[pslc]+d_Pr_d_b[pslc]) *
-                    #        d_b_d_B[pslc] * d_Jvec_d_p )
-
         #ll = -0.5*np.sum(self.npobs)*np.log(2*np.pi) \
         ll = -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet)
 
         return ll, gradient
 
 
-    def mark14loglikelihood(self, sr_parameters, transform='backward'):
+    def mark14loglikelihood(self, parameters, set_hyper_pars=True):
         """
         mark14 loglikelihood. Used for full hierarchical model, with
         transformations
         """
-        # The red signal hyper-parameters
-        self.constructPhiAndTheta(sr_parameters, make_matrix=False,
-                gibbs_expansion=True, calc_gradient=True)
+        if set_hyper_pars:
+            self.set_hyper_pars(parameters, calc_gradient=False)
+            self.set_det_sources(parameters, calc_gradient=False)
 
-        # The white noise hyper parameters
-        self.setPsrNoise(sr_parameters, calc_gradient=True)
+        # We will have to do the d_Pr_d_b ourselves here in the likelihood
+        d_L_d_b, d_Pr_d_b = self._d_L_d_b, self._d_Pr_d_b
 
-        # Perform the stingray transformation
-        parameters, log_jacob, lj_gradient, d_b_d_xi, d_b_d_B = \
-                self.stingray_transformation(sr_parameters,
-                        transform=transform, calc_gradient=True)
-
-        # The deterministic sources
-        d_L_d_b, d_Pr_d_b = self.updateDetSources(parameters, calc_gradient=True)
-
-        # If other deterministic sources are included, we cannot just blindly
-        # multiply with d_b_d_xi, unless we set d_b_d_xi also for _all_
-        # deterministic parameters in updateDetSources --- RvH
-        gradient = lj_gradient + (d_L_d_b+d_Pr_d_b)*d_b_d_xi
+        gradient = d_L_d_b      #+d_Pr_d_b)
 
         for ii, psr in enumerate(self.ptapsrs):
-            self.rGr[ii] = np.sum(psr.detresiduals**2 / psr.Nvec)
-            self.GNGldet[ii] = np.sum(np.log(psr.Nvec))
-
             # Gradient for Nvec hyper-parameters
-            for key, d_Nvec_d_p in psr.d_Nvec_d_param.iteritems():
-                # Inner product
-                gradient[key] += 0.5 * np.sum(psr.detresiduals**2 *
-                        d_Nvec_d_p / psr.Nvec**2)
+            if 'jitter' in self.gibbsmodel or np.sum(psr.Jvec) == 0:
+                self.rGr[ii] = np.sum(psr.detresiduals**2 / psr.Nvec)
+                self.GNGldet[ii] = np.sum(np.log(psr.Nvec))
 
-                # Determinant
-                gradient[key] += -0.5 * np.sum(d_Nvec_d_p / psr.Nvec)
+                for key, d_Nvec_d_p in psr.d_Nvec_d_param.iteritems():
+                    # Inner product
+                    gradient[key] += 0.5 * np.sum(psr.detresiduals**2 *
+                            d_Nvec_d_p / psr.Nvec**2)
+
+                    # Determinant
+                    gradient[key] += -0.5 * np.sum(d_Nvec_d_p / psr.Nvec)
+            else:
+                Jldet, Nr = cython_block_shermor_0D_ld(psr.detresiduals,
+                                psr.Nvec, psr.Jvec, psr.Uinds)
+
+                self.rGr[ii] = np.sum(psr.detresiduals*Nr)
+                self.GNGldet[ii] = Jldet
+
+                for key, d_Nvec_d_p in psr.d_Nvec_d_param.iteritems():
+                    # Inner product
+                    gradient[key] += 0.5 * np.sum(Nr**2 * d_Nvec_d_p)
+
+                    # Determinant
+                    gradient[key] -= 0.5 * cython_logdet_dNNi(psr.Nvec, psr.Jvec,
+                            d_Nvec_d_p, psr.Uinds)
+
+                for key, d_Jvec_d_p in psr.d_Jvec_d_param.iteritems():
+                    UNr = cython_UTx(Nr, psr.Uinds)
+
+                    # Inner product
+                    gradient[key] += 0.5 * np.sum(UNr**2 * d_Jvec_d_p)
+
+                    # Determinant
+                    gradient[key] += -0.5 * cython_logdet_dJNi(
+                            psr.Nvec, psr.Jvec, d_Jvec_d_p, psr.Uinds)
+
 
             if psr.fourierind is not None and len(self.ptapsrs) == 1:
                 findex = np.sum(self.npf[:ii])
@@ -9024,6 +9068,9 @@ class ptaLikelihood(object):
                 self.rGr[ii] += np.sum(bsqr / phivec)
                 self.GNGldet[ii] += np.sum(np.log(phivec))
 
+                # Explicitly do the gradient wrt b of the prior
+                gradient[pslc] += d_Pr_d_b[pslc]
+
                 # Gradient for Phivec hyper-parameters
                 for key, d_Phivec_d_p in self.d_Phivec_d_param.iteritems():
                     # Inner product
@@ -9032,11 +9079,6 @@ class ptaLikelihood(object):
                     # Determinant
                     gradient[key] -= 0.5 * np.sum(d_Phivec_d_p / phivec)
 
-                    # Stingray partial (chain-rule)
-                    gradient[key] += np.sum(
-                            (d_L_d_b[pslc]+d_Pr_d_b[pslc]) *
-                            d_b_d_B[pslc] * d_Phivec_d_p )
-
                 # Gradient for Svec hyper-parameters
                 for key, d_Svec_d_p in self.d_Svec_d_param.iteritems():
                     # Inner product
@@ -9044,11 +9086,6 @@ class ptaLikelihood(object):
 
                     # Determinant
                     gradient[key] -= 0.5 * np.sum(d_Svec_d_p / phivec)
-
-                    # Stingray partial (chain-rule)
-                    gradient[key] += np.sum(
-                            (d_L_d_b[pslc]+d_Pr_d_b[pslc]) *
-                            d_b_d_B[pslc] * d_Svec_d_p )
 
             if psr.dmfourierind is not None:
                 fdmindex = np.sum(self.npfdm[:ii])
@@ -9063,6 +9100,9 @@ class ptaLikelihood(object):
                 self.rGr[ii] += np.sum(bsqr / thetavec)
                 self.GNGldet[ii] += np.sum(np.log(thetavec))
 
+                # Explicitly do the gradient wrt b of the prior
+                gradient[pslc] += d_Pr_d_b[pslc]
+
                 # Gradient for Thetavec hyper-parameters
                 for key, d_Thetavec_d_p in self.d_Thetavec_d_param.iteritems():
                     # Inner product
@@ -9070,10 +9110,6 @@ class ptaLikelihood(object):
 
                     # Determinant
                     gradient[key] -= 0.5 * np.sum(d_Thetavec_d_p / thetavec)
-
-                    # Stingray partial
-                    gradient[key] += np.sum( (d_L_d_b[pslc]+d_Pr_d_b[pslc]) *
-                            d_b_d_B[pslc] * d_Thetavec_d_p )
 
             if psr.jitterind is not None:
                 uindex = np.sum(self.npu[:ii])
@@ -9087,6 +9123,9 @@ class ptaLikelihood(object):
                 self.rGr[ii] += np.sum(bsqr / jvec)
                 self.GNGldet[ii] += np.sum(np.log(jvec))
 
+                # Explicitly do the gradient wrt b of the prior
+                gradient[pslc] += d_Pr_d_b[pslc]
+
                 # Gradient for Thetavec hyper-parameters
                 for key, d_Jvec_d_p in psr.d_Jvec_d_param.iteritems():
                     # Inner product
@@ -9094,10 +9133,6 @@ class ptaLikelihood(object):
 
                     # Determinant
                     gradient[key] -= 0.5 * np.sum(d_Jvec_d_p / jvec)
-
-                    # Stingray partial
-                    gradient[key] += np.sum( (d_L_d_b[pslc]+d_Pr_d_b[pslc]) *
-                            d_b_d_B[pslc] * d_Jvec_d_p )
 
         # Do correlated signals for the full array here
         corr_xi2 = 0.0
@@ -9117,66 +9152,70 @@ class ptaLikelihood(object):
             # Do some fancy stuff here per frequency
             for ii in range(0, len(self.Svec), 2):
                 msk = self.freqmask[:, ii]
+                pinds_cos = self.freqpinds[msk, ii]
+                pinds_sin = self.freqpinds[msk, ii+1]
+                finds_cos = self.freqfinds[msk, ii]
+                finds_sin = self.freqfinds[msk, ii+1]
 
                 # The covariance between sin/cos modes is identical
                 cf = self.Scor_im_cf[int(ii / 2)]
+                c_inv = self.Scor_im_inv[int(ii / 2)]
 
-                # Cosine mode
+                # Cosine mode loglik
                 bc = self.freqb[msk, ii]
-                Lx = sl.cho_solve(cf, bc)
-                corr_xi2 += np.sum(Lx**2)
+                Lx_c = sl.cho_solve(cf, bc)
+                corr_xi2 += np.sum(Lx_c*bc)
                 corr_ldet += 2*np.sum(np.log(np.diag(cf[0])))
+
+                # Cosine mode gradient
+                gradient[pinds_cos] -= sl.cho_solve(cf, bc)
 
                 # Sine mode
                 bs = self.freqb[msk, ii+1]
-                Lx = sl.cho_solve(cf, bs)
-                corr_xi2 += np.sum(Lx**2)
+                Lx_s = sl.cho_solve(cf, bs)
+                corr_xi2 += np.sum(Lx_s*bs)
                 corr_ldet += 2*np.sum(np.log(np.diag(cf[0])))
 
+                # Sine mode gradient
+                gradient[pinds_sin] -= sl.cho_solve(cf, bs)
+
                 # Gradient for B hyper-parameters
-                # CONTINUE HERE!!!!
                 for key, d_Phivec_d_p in self.d_Phivec_d_param.iteritems():
-                    # Inner product
-                    # ..... check d_Phivec_d_p. Does not seem right for
-                    #       multiple pulsars...
-                    # Indeed, it is incorrect. d_plBpsd does not make vector
-                    # with the length of _all_ frequencies for _all_ pulsars.
-                    # Only works for a single pulsar. Change it to be more
-                    # general
+                    d_phivec_cos = d_Phivec_d_p[finds_cos]    # Sin & Cos the same
+                    d_phivec_sin = d_Phivec_d_p[finds_sin]    # Sin & Cos the same
 
-                    # Inner product
-                    gradient[key] += 0.5 * np.sum(bsqr * d_Phivec_d_p / phivec**2)
+                    # Inner-product of the prior
+                    gradient[key] += 0.5 * np.sum(Lx_c**2 * d_phivec_cos)
+                    gradient[key] += 0.5 * np.sum(Lx_s**2 * d_phivec_sin)
 
-                    # Determinant
-                    gradient[key] -= 0.5 * np.sum(d_Phivec_d_p / phivec)
-
-                    # Stingray partial (chain-rule)
-                    gradient[key] += np.sum(
-                            (d_L_d_b[pslc]+d_Pr_d_b[pslc]) *
-                            d_b_d_B[pslc] * d_Phivec_d_p )
+                    # Determinant of the prior
+                    gradient[key] -= 0.5 * np.sum(np.diag(c_inv) * d_phivec_cos)
+                    gradient[key] -= 0.5 * np.sum(np.diag(c_inv) * d_phivec_sin)
 
                 # Gradient for Svec hyper-parameters
                 for key, d_Svec_d_p in self.d_Svec_d_param.iteritems():
-                    # Inner product
-                    gradient[key] += 0.5 * np.sum(bsqr * d_Svec_d_p / phivec**2)
+                    d_phivec_cos = d_Svec_d_p[finds_cos]    # Sin & Cos the same
+                    d_phivec_sin = d_Svec_d_p[finds_sin]    # Sin & Cos the same
+                    scor_cos = self.Scor[msk,:][:,msk] * d_phivec_cos
+                    scor_sin = self.Scor[msk,:][:,msk] * d_phivec_sin
 
-                    # Determinant
-                    gradient[key] -= 0.5 * np.sum(d_Svec_d_p / phivec)
+                    # Inner-product of the prior
+                    #gradient[key] += 0.5 * np.sum(Lx_c**2 * d_phivec_cos)
+                    #gradient[key] += 0.5 * np.sum(Lx_s**2 * d_phivec_sin)
+                    gradient[key] += 0.5 * np.sum(Lx_c * np.dot(scor_cos, Lx_c))
+                    gradient[key] += 0.5 * np.sum(Lx_s * np.dot(scor_sin, Lx_s))
 
-                    # Stingray partial (chain-rule)
-                    gradient[key] += np.sum(
-                            (d_L_d_b[pslc]+d_Pr_d_b[pslc]) *
-                            d_b_d_B[pslc] * d_Svec_d_p )
-
-
+                    # Determinant of the prior
+                    #gradient[key] -= 0.5 * np.sum(np.diag(c_inv) * d_phivec_cos)
+                    #gradient[key] -= 0.5 * np.sum(np.diag(c_inv) * d_phivec_sin)
+                    gradient[key] -= 0.5 * np.trace(np.dot(c_inv, scor_cos))
+                    gradient[key] -= 0.5 * np.trace(np.dot(c_inv, scor_sin))
 
         #ll = -0.5*np.sum(self.npobs)*np.log(2*np.pi) \
         ll = -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) - \
             0.5*corr_xi2 - 0.5*corr_ldet
 
-        return ll + log_jacob, gradient
-
-
+        return ll, gradient
 
 
     # Now we will define the Gibbs likelihood functions, all preceded with
@@ -9205,9 +9244,6 @@ class ptaLikelihood(object):
         correlated signal in the model (for now).
 
         @param mode:    The Fourier mode number
-        @param calcInv: Whether we need the inverse matrix, too
-
-        NOTE: Only use Cholesky for now. Do we need mor
         """
         gw_pcdoubled = self.Svec
         msk = self.freqmask[:, mode]
@@ -10711,10 +10747,20 @@ class ptaLikelihood(object):
         return ll+lp, lp_grad + ll_grad
     
     def logposterior_grad(self, parameters):
-        return self.mark13logposterior(parameters)
+        if self.likfunc == 'mark13':
+            return self.mark13logposterior(parameters)
+        elif self.likfunc == 'mark14':
+            return self.mark14logposterior(parameters)
+        else:
+            raise ValueError("Gradient only supported in mark13/mark14")
 
     def loglikelihood_grad(self, parameters, **kwargs):
-        return self.mark13loglikelihood(parameters, **kwargs)
+        if self.likfunc == 'mark13':
+            return self.mark13loglikelihood(parameters, **kwargs)
+        elif self.likfunc == 'mark14':
+            return self.mark14loglikelihood(parameters, **kwargs)
+        else:
+            raise ValueError("Gradient only supported in mark13/mark14")
 
     def logprior_grad(self, parameters):
         return self.mark13logprior_fast(parameters)

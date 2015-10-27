@@ -86,6 +86,36 @@ class likelihoodWrapper(object):
         raise NotImplementedError("Create this method in derived class!")
         return None
 
+    def fullforward(self, x):
+        """Assume these are 'original' parameters, and transform them to this
+        level of transformation by applying all the transformations in the
+        chain"""
+        curob = self
+        obj_list = []
+        p = x.copy()
+
+        while isinstance(curob, likelihoodWrapper):
+            obj_list.append(curob)
+            curob = curob.likob
+
+        while len(obj_list):
+            curob = obj_list.pop()
+            p = curob.forward(p)
+
+        return p
+
+    def fullbackward(self, p):
+        """Transform these parameters to 'original' parameters, all the way down
+        the transformation chain"""
+        curob = self
+        x = p.copy()
+
+        while isinstance(curob, likelihoodWrapper):
+            x = curob.backward(x)
+            curob = curob.likob
+
+        return x
+
     def backward(self, p):
         """Backward transform
         """
@@ -349,6 +379,9 @@ class stingrayLikelihood(likelihoodWrapper):
     Wrapper class of the likelihood for Hamiltonian samplers. This implements a
     coordinate transformation for all low-level parameters that gets rid of the
     stingray continuous phase transition
+
+    NOTE: this transformation automagically sets the start position of the
+          low-level parameters to 0.1. Nonzero, but close enough to be decent
     """
     def __init__(self, h5filename=None, jsonfilename=None, **kwargs):
         """Initialize the stingrayLikelihood with a ptaLikelihood object"""
@@ -474,8 +507,8 @@ class stingrayLikelihood(likelihoodWrapper):
                 # Have a red noise stingray transformation
                 findex = np.sum(self.npf[:ii])
                 nfs = self.npf[ii]
-                phivec = self.Phivec[findex:findex+nfs] + \
-                        self.Svec[findex:findex+nfs]
+                fslc = slice(findex, findex+nfs)
+                phivec = self.Phivec[fslc] + self.Svec[:nfs]
 
                 Sigmavec = 1.0/(psr.ZNZ_srvec[psr.Zmask_F_only] + 1.0 / phivec)
                 std = np.sqrt(Sigmavec)
@@ -491,13 +524,16 @@ class stingrayLikelihood(likelihoodWrapper):
                 if calc_gradient:
                     # Red noise
                     for key, value in self.d_Phivec_d_param.iteritems():
+                        # Problem here is that value is length of full Phivec.
+                        # The rest is shorter.
+                        # Should we slice value, or just store less?
                         d_lj_d_phi = 0.5 * Sigmavec / phivec**2
-                        gradient[key] = np.sum(d_lj_d_phi * value)
+                        gradient[key] += np.sum(d_lj_d_phi * value[fslc])
 
                     # GW signals
                     for key, value in self.d_Svec_d_param.iteritems():
                         d_lj_d_phi = 0.5 * Sigmavec / phivec**2
-                        gradient[key] = np.sum(d_lj_d_phi * value)
+                        gradient[key] += np.sum(d_lj_d_phi * value[fslc])
 
                 d_std_d_B = 0.5 * (Sigmavec ** 1.5) / phivec**2
                 d_mean_d_B = mean * Sigmavec / phivec**2
@@ -528,7 +564,7 @@ class stingrayLikelihood(likelihoodWrapper):
                 if calc_gradient:
                     for key, value in self.d_Thetavec_d_param.iteritems():
                         d_lj_d_theta = 0.5 * Sigmavec / thetavec**2
-                        gradient[key] = np.sum(d_lj_d_theta * value)
+                        gradient[key] += np.sum(d_lj_d_theta * value)
 
                 d_std_d_B = 0.5 * (Sigmavec ** 1.5) / thetavec**2
                 d_mean_d_B = mean * Sigmavec / thetavec**2
@@ -559,7 +595,7 @@ class stingrayLikelihood(likelihoodWrapper):
                 if calc_gradient:
                     for key, value in psr.d_Jvec_d_param.iteritems():
                         d_lj_d_J = 0.5 * Sigmavec / psr.Jvec**2
-                        gradient[key] = np.sum(d_lj_d_J * value)
+                        gradient[key] += np.sum(d_lj_d_J * value)
 
                 d_std_d_B = 0.5 * (Sigmavec ** 1.5) / psr.Jvec**2
                 d_mean_d_B = mean * Sigmavec / psr.Jvec**2
@@ -577,8 +613,6 @@ class stingrayLikelihood(likelihoodWrapper):
         self._d_b_d_xi = d_b_d_xi       # d_x_d_p
         self._d_b_d_B = d_b_d_B         # d_x_d_B, with B hyper-pars
 
-        #return mu, sigma, log_jacob, gradient, d_b_d_xi, d_b_d_B
-
     def dxdp_nondiag(self, p, ll_grad):
         """Non-diagonal derivative of x wrt p (jacobian for chain-rule)
 
@@ -591,13 +625,20 @@ class stingrayLikelihood(likelihoodWrapper):
 
         for ii, psr in enumerate(self.ptapsrs):
             if psr.fourierind is not None:
+                findex = np.sum(self.npf[:ii])
                 ind = psr.fourierind
                 nfreq = self.npf[ii]
                 pslc = slice(ind, ind+nfreq)
+                fslc = slice(findex, findex+nfreq)
+
                 # Hyper parameters on Phi
                 for key, d_Phivec_d_p in self.d_Phivec_d_param.iteritems():
                     extra_grad[key] += np.sum(ll_grad[pslc] * 
-                            self._d_b_d_B[pslc] * d_Phivec_d_p)
+                            self._d_b_d_B[pslc] * d_Phivec_d_p[fslc])
+
+                for key, d_Svec_d_p in self.d_Svec_d_param.iteritems():
+                    extra_grad[key] += np.sum(ll_grad[pslc] * 
+                            self._d_b_d_B[pslc] * d_Svec_d_p[fslc])
 
             if psr.dmfourierind is not None:
                 ind = psr.dmfourierind
