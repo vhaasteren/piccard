@@ -9132,17 +9132,19 @@ class ptaLikelihood(object):
 
 
 
-    def set_hyper_pars(self, parameters, calc_gradient=True):
+    def set_hyper_pars(self, parameters, calc_gradient=True, calc_hessian=False):
         """Set the hyper parameter dependents
         
         Low-level parameters not used
         """
         # The red signal hyper-parameters
         self.constructPhiAndTheta(parameters, make_matrix=False,
-                gibbs_expansion=True, calc_gradient=calc_gradient)
+                gibbs_expansion=True, calc_gradient=calc_gradient,
+                calc_hessian=calc_hessian)
 
         # The white noise hyper parameters
-        self.setPsrNoise(parameters, calc_gradient=calc_gradient)
+        self.setPsrNoise(parameters, calc_gradient=calc_gradient,
+                calc_hessian=calc_hessian)
 
     def set_det_sources(self, parameters, calc_gradient=True):
         """Update the deterministic-source dependents
@@ -9501,14 +9503,14 @@ class ptaLikelihood(object):
         if set_hyper_pars:
             self.set_hyper_pars(parameters, calc_gradient=True,
                     calc_hessian=True)
-            self.set_det_sources(parameters, calc_gradient=True,
-                    calc_hessian=True)
+            self.set_det_sources(parameters, calc_gradient=True)
 
         # We will have to do the d_Pr_d_b ourselves here in the likelihood
         d_L_d_b, d_Pr_d_b = self._d_L_d_b, self._d_Pr_d_b
 
         #gradient = d_L_d_b      #+d_Pr_d_b)
         npars = len(parameters)
+        npsrs = len(self.ptapsrs)
         hessian = np.zeros((npars, npars))
 
         # Hessian d^2 N  (both with and without ecorr)
@@ -9520,6 +9522,8 @@ class ptaLikelihood(object):
 
             # TODO: this can definitely be placed in some function...
             #       don't we even have the T-matrix somewhere?
+            #       Yes, Tmat = psr.Zmat_N...  if ecor in N.
+            #       Oh, well, just do the whole lot here...
             if psri.fourierind is not None:
                 findex = np.sum(self.npf[:ii])
                 nfreq = self.npf[ii]
@@ -9572,13 +9576,13 @@ class ptaLikelihood(object):
 
                     # Combinations of dNdb
                     NdNNr = psri.detresiduals * d_Nvec_d_p1 / psri.Nvec**2
-                    hessian[key1, pinds] -= 0.5*np.dot(Tmat.T, NdNNr)
-                    hessian[pinds, key1] -= 0.5*np.dot(Tmat.T, NdNNr)
+                    hessian[key1, pinds] -= np.dot(Tmat.T, NdNNr)
+                    hessian[pinds, key1] -= np.dot(Tmat.T, NdNNr)
 
             else:   # Have jitter/ecorr in N-matrix. Use Cython shizzle
-                Nr = cython_block_shermor_0D(psr.detresiduals,
-                                psr.Nvec, psr.Jvec, psr.Uinds)
-                UTNr = cython_UTx(Nr, psr.Uinds)
+                Nr = cython_block_shermor_0D(psri.detresiduals,
+                                psri.Nvec, psri.Jvec, psri.Uinds)
+                UTNr = cython_UTx(Nr, psri.Uinds)
 
                 for key1, d_Nvec_d_p1 in psri.d_Nvec_d_param.iteritems():
                     for key2, d_Nvec_d_p2 in psri.d_Nvec_d_param.iteritems():
@@ -9589,33 +9593,33 @@ class ptaLikelihood(object):
                             # r Ni dN Ni dN Ni r
                             dNNr = d_Nvec_d_p1 * Nr
                             NdNNr = cython_block_shermor_0D(dNNr,
-                                psr.Nvec, psr.Jvec, psr.Uinds)
-                            hessian[key1, key1] += -np.sum(dNNr, NdNNr)
+                                psri.Nvec, psri.Jvec, psri.Uinds)
+                            hessian[key1, key1] += -np.sum(dNNr * NdNNr)
 
                             # r Ni d2N Ni r
                             d2Nr = d2_Nvec_d2_p * Nr
-                            hessian[key1, key1] += 0.5 * np.sum(d2Nr, Nr)
+                            hessian[key1, key1] += 0.5 * np.sum(d2Nr * Nr)
 
                             # Trace Ni dN Ni dN
                             hessian[key1, key1] += 0.5 * cython_logdet_dN_dN(
-                                    psr.Nvec, psr.Jvec, d_Nvec_d_p1,
-                                    d_Nvec_d_p1, psr.Uinds)
+                                    psri.Nvec, psri.Jvec, d_Nvec_d_p1,
+                                    d_Nvec_d_p1, psri.Uinds)
 
                             # Trace Ni d2N
                             hessian[key1, key1] += -0.5 * cython_logdet_dN(
-                                    psr.Nvec, psr.Jvec, d2_Nvec_d2_p, psr.Uinds)
+                                    psri.Nvec, psri.Jvec, d2_Nvec_d2_p, psri.Uinds)
                         else: # Only cross terms
                             # r Ni dN1 Ni dN2 Ni r
                             dN1Nr = d_Nvec_d_p1 * Nr
                             dN2Nr = d_Nvec_d_p2 * Nr
                             NdN1Nr = cython_block_shermor_0D(dN1Nr,
-                                psr.Nvec, psr.Jvec, psr.Uinds)
-                            hessian[key1, key2] += -np.sum(dN2Nr, NdN1Nr)
+                                psri.Nvec, psri.Jvec, psri.Uinds)
+                            hessian[key1, key2] += -np.sum(dN2Nr * NdN1Nr)
 
                             # Trace Ni dN1 Ni dN2
                             hessian[key1, key2] += 0.5 * cython_logdet_dN_dN(
-                                    psr.Nvec, psr.Jvec, d_Nvec_d_p1,
-                                    d_Nvec_d_p2, psr.Uinds)
+                                    psri.Nvec, psri.Jvec, d_Nvec_d_p1,
+                                    d_Nvec_d_p2, psri.Uinds)
 
                             # Symmetric
                             hessian[key2, key1] = hessian[key1, key2]
@@ -9625,15 +9629,15 @@ class ptaLikelihood(object):
 
                         # r Ni dN1 Ni dJ2 Ni r
                         dN1Nr = d_Nvec_d_p1 * Nr
-                        dJ2Nr = cython_Uj(d_Jvec_d_p2 * UTNr, psr.Uinds, len(Nr))
+                        dJ2Nr = cython_Uj(d_Jvec_d_p2 * UTNr, psri.Uinds, len(Nr))
                         NdN1Nr = cython_block_shermor_0D(dN1Nr,
-                            psr.Nvec, psr.Jvec, psr.Uinds)
-                        hessian[key1, key2] += -np.sum(dJ2Nr, NdN1Nr)
+                            psri.Nvec, psri.Jvec, psri.Uinds)
+                        hessian[key1, key2] += -np.sum(dJ2Nr * NdN1Nr)
 
                         # Trace Ni dN1 Ni dJ2
                         hessian[key1, key2] += 0.5 * cython_logdet_dN_dJ(
-                                psr.Nvec, psr.Jvec, d_Nvec_d_p1,
-                                d_Jvec_d_p2, psr.Uinds)
+                                psri.Nvec, psri.Jvec, d_Nvec_d_p1,
+                                d_Jvec_d_p2, psri.Uinds)
 
                         # Symmetric
                         hessian[key2, key1] = hessian[key1, key2]
@@ -9646,36 +9650,36 @@ class ptaLikelihood(object):
                             d2_Jvec_d2_p = psri.d2_Jvec_d2_param[key1]
 
                             # r Ni dJ Ni dJ Ni r
-                            dJ1Nr = cython_Uj(d_Jvec_d_p1 * UTNr, psr.Uinds, len(Nr))
+                            dJ1Nr = cython_Uj(d_Jvec_d_p1 * UTNr, psri.Uinds, len(Nr))
                             NdJ1Nr = cython_block_shermor_0D(dJ1Nr,
-                                psr.Nvec, psr.Jvec, psr.Uinds)
-                            hessian[key1, key1] += -np.sum(dJ1Nr, NdJ1Nr)
+                                psri.Nvec, psri.Jvec, psri.Uinds)
+                            hessian[key1, key1] += -np.sum(dJ1Nr * NdJ1Nr)
 
                             # r Ni d2J Ni r
                             d2Jr = d2_Jvec_d2_p * UTNr
-                            hessian[key1, key1] += 0.5 * np.sum(d2Jr, UTNr)
+                            hessian[key1, key1] += 0.5 * np.sum(d2Jr * UTNr)
 
                             # Trace Ni dJ Ni dJ
                             hessian[key1, key1] += 0.5 * cython_logdet_dJ_dJ(
-                                    psr.Nvec, psr.Jvec, d_Jvec_d_p1,
-                                    d_Jvec_d_p1, psr.Uinds)
+                                    psri.Nvec, psri.Jvec, d_Jvec_d_p1,
+                                    d_Jvec_d_p1, psri.Uinds)
 
                             # Trace Ni d2J
                             hessian[key1, key1] += -0.5 * cython_logdet_dJ(
-                                    psr.Nvec, psr.Jvec, d2_Jvec_d2_p, psr.Uinds)
+                                    psri.Nvec, psri.Jvec, d2_Jvec_d2_p, psri.Uinds)
                         else: # Only cross terms
 
                             # r Ni dJ Ni dJ Ni r
-                            dJ1Nr = cython_Uj(d_Jvec_d_p1 * UTNr, psr.Uinds, len(Nr))
-                            dJ2Nr = cython_Uj(d_Jvec_d_p2 * UTNr, psr.Uinds, len(Nr))
+                            dJ1Nr = cython_Uj(d_Jvec_d_p1 * UTNr, psri.Uinds, len(Nr))
+                            dJ2Nr = cython_Uj(d_Jvec_d_p2 * UTNr, psri.Uinds, len(Nr))
                             NdJ1Nr = cython_block_shermor_0D(dJ1Nr,
-                                psr.Nvec, psr.Jvec, psr.Uinds)
-                            hessian[key1, key2] += -np.sum(dJ2Nr, NdJ1Nr)
+                                psri.Nvec, psri.Jvec, psri.Uinds)
+                            hessian[key1, key2] += -np.sum(dJ2Nr * NdJ1Nr)
 
                             # Trace Ni dJ Ni dJ
                             hessian[key1, key2] += 0.5 * cython_logdet_dJ_dJ(
-                                    psr.Nvec, psr.Jvec, d_Jvec_d_p1,
-                                    d_Jvec_d_p2, psr.Uinds)
+                                    psri.Nvec, psri.Jvec, d_Jvec_d_p1,
+                                    d_Jvec_d_p2, psri.Uinds)
 
                             # Symmetric
                             hessian[key2, key1] = hessian[key1, key2]
@@ -9684,204 +9688,170 @@ class ptaLikelihood(object):
                 for key1, d_Nvec_d_p1 in psri.d_Nvec_d_param.iteritems():
                     dNNr = d_Nvec_d_p1 * Nr
                     NdNNr = cython_block_shermor_0D(dNNr,
-                        psr.Nvec, psr.Jvec, psr.Uinds)
-                    hessian[key1, pinds] -= 0.5*np.dot(Tmat.T, NdNNr)
-                    hessian[pinds, key1] -= 0.5*np.dot(Tmat.T, NdNNr)
+                        psri.Nvec, psri.Jvec, psri.Uinds)
+                    hessian[key1, pinds] -= np.dot(Tmat.T, NdNNr)
+                    hessian[pinds, key1] -= np.dot(Tmat.T, NdNNr)
 
                 for key1, d_Jvec_d_p1 in psri.d_Jvec_d_param.iteritems():
-                    dJ1Nr = cython_Uj(d_Jvec_d_p1 * UTNr, psr.Uinds, len(Nr))
+                    dJ1Nr = cython_Uj(d_Jvec_d_p1 * UTNr, psri.Uinds, len(Nr))
                     NdJ1Nr = cython_block_shermor_0D(dJ1Nr,
-                        psr.Nvec, psr.Jvec, psr.Uinds)
-                    hessian[key1, pinds] -= 0.5*np.dot(Tmat.T, NdJ1Nr)
-                    hessian[pinds, key1] -= 0.5*np.dot(Tmat.T, NdJ1Nr)
+                        psri.Nvec, psri.Jvec, psri.Uinds)
+                    hessian[key1, pinds] -= np.dot(Tmat.T, NdJ1Nr)
+                    hessian[pinds, key1] -= np.dot(Tmat.T, NdJ1Nr)
 
-            # Now the dbdb term (requires the entire sigma_inv matrix)
-            # Should extract that piece out of the mark14 log-likelihood
+        #############################################
+        #############################################
+        ######## Start creating Sigma & Phi  ########
+        #############################################
+        #############################################
 
+        # Now the dbdb term (requires the entire sigma_inv matrix)
+        # Should extract that piece out of the mark12 log-likelihood
+        if 'jitter' in self.gibbsmodel:
+            nt = np.sum(self.npz)
+        else:
+            nt = np.sum(self.npz_n)
 
-
-
-
-
-
-        # Hessian dNdA term
-        for ii, psri in enumerate(self.ptapsrs):
-            Tmat = np.zeros((len(psri.detresiduals), 0))
-            b = np.zeros(0)
-            pinds = np.zeros(0, dtype=np.int)
-
-            if psri.fourierind is not None:
-                findex = np.sum(self.npf[:ii])
-                nfreq = self.npf[ii]
-                ind = psri.fourierind
-                pslc = np.arange(ind, ind+nfreq)
-                pinds = np.append(pinds, pslc)      # Total parameter inds
-                Tmat = np.append(Tmat, psri.Fmat, axis=1)
-                b = np.append(b, parameters[pslc])
-
+        nf = np.sum(self.npf)                   # Size full F-matrix
+        Finds = np.zeros(nf, dtype=np.int)      # T<->F translation indices
+        ZNZ = np.zeros((nt, nt))                # Full ZNZ matrix
+        Sigma = np.zeros((nt, nt))              # Full Sigma matrix
+        FPhi = np.zeros((nf, nf))               # RN full Phi matrix
+        sind = 0                                # Sigma-index
+        phind = 0                               # Z/T-index
+        pinds = np.zeros(0, dtype=np.int)
+        hinds = np.zeros(0, dtype=np.int)
 
         for ii, psr in enumerate(self.ptapsrs):
-            if psr.fourierind is not None and len(self.ptapsrs) == 1:
-                findex = np.sum(self.npf[:ii])
-                nfreq = self.npf[ii]
-                ind = psr.fourierind
-                fslc = slice(findex, findex+nfreq)
-                pslc = slice(ind, ind+nfreq)
+            if 'jitter' in self.gibbsmodel:
+                Zmat = psr.Zmat
+            else:
+                Zmat = psr.Zmat_N
 
-                bsqr = parameters[pslc]**2
-                phivec = self.Phivec[fslc] + self.Svec[fslc]
+            tsize = Zmat.shape[1]
 
-                self.rGr[ii] += np.sum(bsqr / phivec)
-                self.GNGldet[ii] += np.sum(np.log(phivec))
+            # Use jitter extension for ZNZ
+            _, ZNZp = cython_block_shermor_2D(Zmat, psr.Nvec, \
+                    psr.Jvec, psr.Uinds)
 
-                # Explicitly do the gradient wrt b of the prior
-                gradient[pslc] += d_Pr_d_b[pslc]
+            ZNZ[sind:sind+tsize, sind:sind+tsize] = ZNZp
 
-                # Gradient for Phivec hyper-parameters
-                for key, d_Phivec_d_p in self.d_Phivec_d_param.iteritems():
-                    # Inner product
-                    gradient[key] += 0.5 * np.sum(bsqr * d_Phivec_d_p / phivec**2)
+            # Create the prior (Sigma = ZNZ + Phi)
+            nms = self.npm[ii]
+            nfs = self.npf[ii]
+            nfbs = self.npfb[ii]
+            nfdms = self.npfdm[ii]
+            findex = np.sum(self.npf[:ii])
+            fdmindex = np.sum(self.npfdm[:ii])
+            fbindex = np.sum(self.npfb[:ii])
+            uindex = np.sum(self.npu[:ii])
+            npus = self.npu[ii]
+            if 'design' in self.gibbsmodel:
+                pslc = np.arange(psr.timingmodelind, psr.timingmodelind+nms)
+                pinds = np.append(pinds, pslc)
+                hinds = np.append(hinds, np.arange(sind+phind,
+                        sind+phind+nms))
+                phind += nms         
+            if 'rednoise' in self.gibbsmodel:
+                # Red noise, excluding GWS
+                pslc = np.arange(psr.fourierind, psr.fourierind+nfs)
+                pinds = np.append(pinds, pslc)
+                hinds = np.append(hinds, np.arange(sind+phind,
+                        sind+phind+nfs))
 
-                    # Determinant
-                    gradient[key] -= 0.5 * np.sum(d_Phivec_d_p / phivec)
+                if npsrs == 1:
+                    inds = slice(sind+phind, sind+phind+nfs)
+                    finds = slice(findex, findex+nfs)
+                    di = np.diag_indices(nfs)
+                    Sigma[inds, inds][di] += 1.0 / ( \
+                            self.Phivec[findex:findex+nfs] + \
+                            self.Svec[findex:findex+nfs])
+                    FPhi[finds, finds][di] += 1.0 / ( \
+                            self.Phivec[findex:findex+nfs] + \
+                            self.Svec[findex:findex+nfs])
 
-                # Gradient for Svec hyper-parameters
-                for key, d_Svec_d_p in self.d_Svec_d_param.iteritems():
-                    # Inner product
-                    gradient[key] += 0.5 * np.sum(bsqr * d_Svec_d_p / phivec**2)
+                    phind += nfs
+                elif npsrs > 1:
+                    # We need to do the full array at once. Do that below
+                    # Here, we construct the indexing matrices
+                    Finds[findex:findex+nfs] = np.arange(phind, phind+nfs)
+                    phind += nfs
+            if 'freqrednoise' in self.gibbsmodel:
+                inds = slice(sind+phind, sind+phind+nfbs)
+                hinds = np.append(hinds, np.arange(sind+phind,
+                        sind+phind+nfbs))
+                di = np.diag_indices(nfbs)
+                Sigma[inds, inds][di] += 1.0 / self.Betavec[fbindex:fbindex+nfbs]
+                phind += nfbs
+                raise NotImplementedError("Freq Red Noise not yet implemented")
+            if 'dm' in self.gibbsmodel:
+                pslc = np.arange(psr.dmfourierind, psr.dmfourierind+nfdms)
+                pinds = np.append(pinds, pslc)
 
-                    # Determinant
-                    gradient[key] -= 0.5 * np.sum(d_Svec_d_p / phivec)
+                inds = slice(sind+phind, sind+phind+nfdms)
+                hinds = np.append(hinds, np.arange(sind+phind,
+                        sind+phind+nfdms))
+                di = np.diag_indices(nfdms)
+                Sigma[inds, inds][di] += 1.0 / self.Thetavec[fdmindex:fdmindex+nfdms]
+                phind += nfdms
+            if 'jitter' in self.gibbsmodel:
+                pslc = np.arange(psr.jitterind, psr.jitterind+npus)
+                pinds = np.append(pinds, pslc)
 
-            if psr.dmfourierind is not None:
-                fdmindex = np.sum(self.npfdm[:ii])
-                nfreqdm = self.npfdm[ii]
-                ind = psr.dmfourierind
-                fslc = slice(fdmindex, fdmindex+nfreqdm)
-                pslc = slice(ind, ind+nfreqdm)
+                inds = slice(sind+phind, sind+phind+npus)
+                hinds = np.append(hinds, np.arange(sind+phind,
+                        sind+phind+npus))
+                Sigma[inds, inds][di] += 1.0 / psr.Jvec
+                phind += npus
 
-                bsqr = parameters[pslc]**2
-                thetavec = self.Thetavec[fslc]
+            sind += tsize
 
-                self.rGr[ii] += np.sum(bsqr / thetavec)
-                self.GNGldet[ii] += np.sum(np.log(thetavec))
+        if npsrs > 1 and 'rednoise' in self.gibbsmodel:
+            msk_ind = np.zeros(self.freqmask.shape, dtype=np.int)
+            msk_ind[self.freqmask] = np.arange(np.sum(self.freqmask))
+            msk_zind = np.arange(np.sum(self.npf))
+            for mode in range(0, self.freqmask.shape[1], 2):
+                freq = int(mode/2)          # Which frequency
 
-                # Explicitly do the gradient wrt b of the prior
-                gradient[pslc] += d_Pr_d_b[pslc]
+                # We had pre-calculated the Cholesky factor and the inverse
+                # (in gibbs_construct_all_freqcov)
+                rncov_inv = self.Scor_im_inv[freq]
+                cf = self.Scor_im_cf[freq]
 
-                # Gradient for Thetavec hyper-parameters
-                for key, d_Thetavec_d_p in self.d_Thetavec_d_param.iteritems():
-                    # Inner product
-                    gradient[key] += 0.5 * np.sum(bsqr * d_Thetavec_d_p / thetavec**2)
+                # We have the inverse for the individual modes now. Add them to
+                # the full prior covariance matrix
 
-                    # Determinant
-                    gradient[key] -= 0.5 * np.sum(d_Thetavec_d_p / thetavec)
+                # Firstly the Cosine mode
+                newmsk = np.zeros(self.freqmask.shape, dtype=np.bool)
+                newmsk[:, mode] = self.freqmask[:, mode]
+                mode_ind = msk_ind[newmsk]
+                z_ind = msk_zind[mode_ind]
+                FPhi[np.array([z_ind]).T, z_ind] += rncov_inv
 
-            if psr.jitterind is not None:
-                uindex = np.sum(self.npu[:ii])
-                npus = self.npu[ii]
-                ind = psr.jitterind
-                pslc = slice(ind, ind+npus)
+                # Secondly the Sine mode
+                newmsk[:] = False
+                newmsk[:, mode+1] = self.freqmask[:, mode+1]
+                mode_ind = msk_ind[newmsk]
+                z_ind = msk_zind[mode_ind]
+                FPhi[np.array([z_ind]).T, z_ind] += rncov_inv
 
-                bsqr = parameters[pslc]**2
-                jvec = psr.Jvec
+            Sigma[np.array([Finds]).T, Finds] += FPhi
 
-                self.rGr[ii] += np.sum(bsqr / jvec)
-                self.GNGldet[ii] += np.sum(np.log(jvec))
+        Sigma += ZNZ
 
-                # Explicitly do the gradient wrt b of the prior
-                gradient[pslc] += d_Pr_d_b[pslc]
+        #############################################
+        #############################################
+        ######## Have Sigma & Phi. Fill da^2  #######
+        #############################################
+        #############################################
+        
+        # We do not need to invert Sigma
+        hessian[np.array([pinds]).T, pinds] += -0.5 * Sigma[hinds, :][:, hinds]
 
-                # Gradient for Thetavec hyper-parameters
-                for key, d_Jvec_d_p in psr.d_Jvec_d_param.iteritems():
-                    # Inner product
-                    gradient[key] += 0.5 * np.sum(bsqr * d_Jvec_d_p / jvec**2)
+    
 
-                    # Determinant
-                    gradient[key] -= 0.5 * np.sum(d_Jvec_d_p / jvec)
+        return hessian
 
-        # Do correlated signals for the full array here
-        corr_xi2 = 0.0
-        corr_ldet = 0.0
-        if 'rednoise' in self.gibbsmodel and len(self.ptapsrs) > 1:
-            # Re-create the overlap reduction function Cholesky decomposition
-            # per frequency
-            self.gibbs_construct_all_freqcov()
-
-            # Set the freqb matrix (Fourier coefficients)
-            for pp, psr in enumerate(self.ptapsrs):
-                nfreq = self.npf[ii]
-                ind = psr.fourierind
-                pslc = slice(ind, ind+nfreq)
-                self.freqb[pp, self.freqmask[pp,:]] = parameters[pslc]
-
-            # Do some fancy stuff here per frequency
-            for ii in range(0, len(self.Svec), 2):
-                msk = self.freqmask[:, ii]
-                pinds_cos = self.freqpinds[msk, ii]
-                pinds_sin = self.freqpinds[msk, ii+1]
-                finds_cos = self.freqfinds[msk, ii]
-                finds_sin = self.freqfinds[msk, ii+1]
-
-                # The covariance between sin/cos modes is identical
-                cf = self.Scor_im_cf[int(ii / 2)]
-                c_inv = self.Scor_im_inv[int(ii / 2)]
-
-                # Cosine mode loglik
-                bc = self.freqb[msk, ii]
-                Lx_c = sl.cho_solve(cf, bc)
-                corr_xi2 += np.sum(Lx_c*bc)
-                corr_ldet += 2*np.sum(np.log(np.diag(cf[0])))
-
-                # Cosine mode gradient
-                gradient[pinds_cos] -= sl.cho_solve(cf, bc)
-
-                # Sine mode
-                bs = self.freqb[msk, ii+1]
-                Lx_s = sl.cho_solve(cf, bs)
-                corr_xi2 += np.sum(Lx_s*bs)
-                corr_ldet += 2*np.sum(np.log(np.diag(cf[0])))
-
-                # Sine mode gradient
-                gradient[pinds_sin] -= sl.cho_solve(cf, bs)
-
-                # Gradient for B hyper-parameters
-                for key, d_Phivec_d_p in self.d_Phivec_d_param.iteritems():
-                    d_phivec_cos = d_Phivec_d_p[finds_cos]    # Sin & Cos the same
-                    d_phivec_sin = d_Phivec_d_p[finds_sin]    # Sin & Cos the same
-
-                    # Inner-product of the prior
-                    gradient[key] += 0.5 * np.sum(Lx_c**2 * d_phivec_cos)
-                    gradient[key] += 0.5 * np.sum(Lx_s**2 * d_phivec_sin)
-
-                    # Determinant of the prior
-                    gradient[key] -= 0.5 * np.sum(np.diag(c_inv) * d_phivec_cos)
-                    gradient[key] -= 0.5 * np.sum(np.diag(c_inv) * d_phivec_sin)
-
-                # Gradient for Svec hyper-parameters
-                for key, d_Svec_d_p in self.d_Svec_d_param.iteritems():
-                    d_phivec_cos = d_Svec_d_p[finds_cos]    # Sin & Cos the same
-                    d_phivec_sin = d_Svec_d_p[finds_sin]    # Sin & Cos the same
-                    scor_cos = self.Scor[msk,:][:,msk] * d_phivec_cos
-                    scor_sin = self.Scor[msk,:][:,msk] * d_phivec_sin
-
-                    # Inner-product of the prior
-                    #gradient[key] += 0.5 * np.sum(Lx_c**2 * d_phivec_cos)
-                    #gradient[key] += 0.5 * np.sum(Lx_s**2 * d_phivec_sin)
-                    gradient[key] += 0.5 * np.sum(Lx_c * np.dot(scor_cos, Lx_c))
-                    gradient[key] += 0.5 * np.sum(Lx_s * np.dot(scor_sin, Lx_s))
-
-                    # Determinant of the prior
-                    #gradient[key] -= 0.5 * np.sum(np.diag(c_inv) * d_phivec_cos)
-                    #gradient[key] -= 0.5 * np.sum(np.diag(c_inv) * d_phivec_sin)
-                    gradient[key] -= 0.5 * np.trace(np.dot(c_inv, scor_cos))
-                    gradient[key] -= 0.5 * np.trace(np.dot(c_inv, scor_sin))
-
-        #ll = -0.5*np.sum(self.npobs)*np.log(2*np.pi) \
-        ll = -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) - \
-            0.5*corr_xi2 - 0.5*corr_ldet
-
-        return ll, gradient
 
 
 
