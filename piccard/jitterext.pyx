@@ -162,95 +162,6 @@ def cython_block_shermor_1D( \
     return Jldet, xNx
 
 
-def cython_logdet_dJNi( \
-        np.ndarray[np.double_t,ndim=1] Nvec, \
-        np.ndarray[np.double_t,ndim=1] Jvec, \
-        np.ndarray[np.double_t,ndim=1] dJvec, \
-        np.ndarray[np.int_t,ndim=2] Uinds):
-    """
-    Sherman-Morrison block-inversion for Jitter (Cythonized)
-
-    @param r:       The timing residuals, array (n)
-    @param Nvec:    The white noise amplitude, array (n)
-    @param Jvec:    The jitter amplitude, array (k)
-    @param dJvec:   The jitter derivative, array (k)
-    @param Uinds:   The start/finish indices for the jitter blocks (k x 2)
-
-    For this version, the residuals need to be sorted properly so that all the
-    blocks are continuous in memory. Here, there are n residuals, and k jitter
-    parameters.
-    """
-    cdef unsigned int cc, ii, rows = len(Nvec), cols = len(Jvec)
-    cdef double dJldet=0.0, ji, beta, nisum
-    cdef np.ndarray[np.double_t,ndim=1] ni = np.empty(rows, 'd')
-
-    ni = 1.0 / Nvec
-
-    #for cc in range(rows):
-    #    Jldet += log(Nvec[cc])
-    #    xNx += r[cc]*r[cc]*ni[cc]
-
-    for cc in range(cols):
-        if Jvec[cc] > 0.0:
-            ji = 1.0 / Jvec[cc]
-
-            #nir = 0.0
-            nisum = 0.0
-            for ii in range(Uinds[cc,0],Uinds[cc,1]):
-                nisum += ni[ii]
-                #nir += r[ii]*ni[ii]
-
-            beta = 1.0 / (nisum + ji)
-            #Jldet += log(Jvec[cc]) - log(beta)
-            #xNx -= beta * nir * nir
-
-            dJldet += dJvec[cc]*(nisum - beta*nisum**2)
-    
-    return dJldet
-
-def cython_logdet_dNNi( \
-        np.ndarray[np.double_t,ndim=1] Nvec, \
-        np.ndarray[np.double_t,ndim=1] Jvec, \
-        np.ndarray[np.double_t,ndim=1] dNvec, \
-        np.ndarray[np.int_t,ndim=2] Uinds):
-    """
-    Sherman-Morrison block-inversion for Jitter (Cythonized)
-
-    @param r:       The timing residuals, array (n)
-    @param Nvec:    The white noise amplitude, array (n)
-    @param Jvec:    The jitter amplitude, array (k)
-    @param dNvec:   The white noise derivative, array (n)
-    @param Uinds:   The start/finish indices for the jitter blocks (k x 2)
-
-    For this version, the residuals need to be sorted properly so that all the
-    blocks are continuous in memory. Here, there are n residuals, and k jitter
-    parameters.
-    """
-    cdef unsigned int cc, ii, rows = len(Nvec), cols = len(Jvec)
-    cdef double tr=0.0, ji, nisum, Nnisum
-    cdef np.ndarray[np.double_t,ndim=1] ni = np.empty(rows, 'd')
-    cdef np.ndarray[np.double_t,ndim=1] Nni = np.empty(rows, 'd')
-
-    ni = 1.0 / Nvec
-    Nni = dNvec / Nvec**2
-
-    for cc in range(rows):
-        tr += dNvec[cc] * ni[cc]
-
-    for cc in range(cols):
-        if Jvec[cc] > 0.0:
-            ji = 1.0 / Jvec[cc]
-
-            nisum = 0.0
-            Nnisum = 0.0
-            for ii in range(Uinds[cc,0],Uinds[cc,1]):
-                nisum += ni[ii]
-                Nnisum += Nni[ii]
-
-            tr -= Nnisum / (nisum + ji)
-    
-    return tr
-
 
 # Proposals for calculating the Z.T * N^-1 * Z combinations
 def python_block_shermor_2D(Z, Nvec, Jvec, Uinds):
@@ -563,3 +474,244 @@ def cython_UTx(np.ndarray[np.double_t,ndim=1] x, \
 
     return UTx
 
+def cython_logdet_dN( \
+        np.ndarray[np.double_t,ndim=1] Nvec, \
+        np.ndarray[np.double_t,ndim=1] Jvec, \
+        np.ndarray[np.double_t,ndim=1] dNvec, \
+        np.ndarray[np.int_t,ndim=2] Uinds):
+    """
+    Sherman-Morrison block-inversion for Jitter (Cythonized)
+
+    Calculates Trace(N^{-1} dN/dNp), where:
+        - N^{-1} is the ecorr-include N inverse
+        - dN/dNp is the diagonal derivate of N wrt Np
+
+    @param Nvec:    The white noise amplitude, array (n)
+    @param Jvec:    The jitter amplitude, array (k)
+    @param dNvec:   The white noise derivative, array (n)
+    @param Uinds:   The start/finish indices for the jitter blocks (k x 2)
+
+    For this version, the residuals need to be sorted properly so that all the
+    blocks are continuous in memory. Here, there are n residuals, and k jitter
+    parameters.
+    """
+    cdef unsigned int cc, ii, rows = len(Nvec), cols = len(Jvec)
+    cdef double tr=0.0, ji, nisum, Nnisum
+    cdef np.ndarray[np.double_t,ndim=1] ni = np.empty(rows, 'd')
+    cdef np.ndarray[np.double_t,ndim=1] Nni = np.empty(rows, 'd')
+
+    ni = 1.0 / Nvec
+    Nni = dNvec / Nvec**2
+
+    for cc in range(rows):
+        tr += dNvec[cc] * ni[cc]
+
+    for cc in range(cols):
+        if Jvec[cc] > 0.0:
+            ji = 1.0 / Jvec[cc]
+
+            nisum = 0.0
+            Nnisum = 0.0
+            for ii in range(Uinds[cc,0],Uinds[cc,1]):
+                nisum += ni[ii]
+                Nnisum += Nni[ii]
+
+            tr -= Nnisum / (nisum + ji)
+    
+    return tr
+
+def cython_logdet_dJ( \
+        np.ndarray[np.double_t,ndim=1] Nvec, \
+        np.ndarray[np.double_t,ndim=1] Jvec, \
+        np.ndarray[np.double_t,ndim=1] dJvec, \
+        np.ndarray[np.int_t,ndim=2] Uinds):
+    """
+    Sherman-Morrison block-inversion for Jitter (Cythonized)
+
+    Calculates Trace(N^{-1} dN/dJp), where:
+        - N^{-1} is the ecorr-include N inverse
+        - dN/dJp = U dJ/dJp U^{T}, with dJ/dJp the diagnal derivative of J wrt
+          Jp
+
+    @param Nvec:    The white noise amplitude, array (n)
+    @param Jvec:    The jitter amplitude, array (k)
+    @param dJvec:   The jitter derivative, array (k)
+    @param Uinds:   The start/finish indices for the jitter blocks (k x 2)
+
+    For this version, the residuals need to be sorted properly so that all the
+    blocks are continuous in memory. Here, there are n residuals, and k jitter
+    parameters.
+    """
+    cdef unsigned int cc, ii, rows = len(Nvec), cols = len(Jvec)
+    cdef double dJldet=0.0, ji, beta, nisum
+    cdef np.ndarray[np.double_t,ndim=1] ni = np.empty(rows, 'd')
+
+    ni = 1.0 / Nvec
+
+    for cc in range(cols):
+        if Jvec[cc] > 0.0:
+            ji = 1.0 / Jvec[cc]
+
+            nisum = 0.0
+            for ii in range(Uinds[cc,0],Uinds[cc,1]):
+                nisum += ni[ii]
+
+            beta = 1.0 / (nisum + ji)
+
+            dJldet += dJvec[cc]*(nisum - beta*nisum**2)
+    
+    return dJldet
+
+def cython_logdet_dN_dN( \
+        np.ndarray[np.double_t,ndim=1] Nvec, \
+        np.ndarray[np.double_t,ndim=1] Jvec, \
+        np.ndarray[np.double_t,ndim=1] dNvec1, \
+        np.ndarray[np.double_t,ndim=1] dNvec2, \
+        np.ndarray[np.int_t,ndim=2] Uinds):
+    """
+    Sherman-Morrison block-inversion for Jitter (Cythonized)
+
+    Calculates Trace(N^{-1} dN/dNp1 N^{-1} dN/dNp2), where:
+        - N^{-1} is the ecorr-include N inverse
+        - dN/dNpx is the diagonal derivate of N wrt Npx
+
+    @param Nvec:    The white noise amplitude, array (n)
+    @param Jvec:    The jitter amplitude, array (k)
+    @param dNvec1:  The white noise derivative, array (n)
+    @param dNvec2:  The white noise derivative, array (n)
+    @param Uinds:   The start/finish indices for the jitter blocks (k x 2)
+
+    For this version, the residuals need to be sorted properly so that all the
+    blocks are continuous in memory. Here, there are n residuals, and k jitter
+    parameters.
+    """
+    cdef unsigned int cc, ii, rows = len(Nvec), cols = len(Jvec)
+    cdef double tr=0.0, ji, nisum, Nnisum1, Nnisum2, NniNnisum, beta
+    cdef np.ndarray[np.double_t,ndim=1] ni = np.empty(rows, 'd')
+    cdef np.ndarray[np.double_t,ndim=1] Nni1 = np.empty(rows, 'd')
+    cdef np.ndarray[np.double_t,ndim=1] Nni2 = np.empty(rows, 'd')
+
+    ni = 1.0 / Nvec
+    Nni1 = dNvec1 / Nvec**2
+    Nni2 = dNvec2 / Nvec**2
+
+    for cc in range(rows):
+        tr += dNvec1[cc] * dNvec2[cc] * ni[cc]**2
+
+    for cc in range(cols):
+        if Jvec[cc] > 0.0:
+            ji = 1.0 / Jvec[cc]
+
+            nisum = 0.0
+            Nnisum1 = 0.0
+            Nnisum2 = 0.0
+            NniNnisum = 0.0
+            for ii in range(Uinds[cc,0],Uinds[cc,1]):
+                nisum += ni[ii]
+                Nnisum1 += Nni1[ii]
+                Nnisum2 += Nni2[ii]
+                NniNnisum += Nni1[ii]*Nni2[ii]*Nvec[ii]
+
+            beta = 1.0 / (nisum + ji)
+
+            tr += Nnisum1 * Nnisum2 * beta**2
+            tr -= 2 * NniNnisum * beta
+    
+    return tr
+
+def cython_logdet_dN_dJ( \
+        np.ndarray[np.double_t,ndim=1] Nvec, \
+        np.ndarray[np.double_t,ndim=1] Jvec, \
+        np.ndarray[np.double_t,ndim=1] dNvec, \
+        np.ndarray[np.double_t,ndim=1] dJvec, \
+        np.ndarray[np.int_t,ndim=2] Uinds):
+    """
+    Sherman-Morrison block-inversion for Jitter (Cythonized)
+
+    Calculates Trace(N^{-1} dN/dNp N^{-1} dN/dJp), where:
+        - N^{-1} is the ecorr-include N inverse
+        - dN/dNp is the diagonal derivate of N wrt Np
+        - dN/dJp = U dJ/dJp U^{T}, with dJ/dJp the diagnal derivative of J wrt
+          Jp
+
+    @param Nvec:    The white noise amplitude, array (n)
+    @param Jvec:    The jitter amplitude, array (k)
+    @param dNvec:   The white noise derivative, array (n)
+    @param dJvec:   The white noise ecor derivative, array (k)
+    @param Uinds:   The start/finish indices for the jitter blocks (k x 2)
+
+    For this version, the residuals need to be sorted properly so that all the
+    blocks are continuous in memory. Here, there are n residuals, and k jitter
+    parameters.
+    """
+    cdef unsigned int cc, ii, rows = len(Nvec), cols = len(Jvec)
+    cdef double tr=0.0, ji, nisum, Nnisum, beta
+    cdef np.ndarray[np.double_t,ndim=1] ni = np.empty(rows, 'd')
+    cdef np.ndarray[np.double_t,ndim=1] Nni = np.empty(rows, 'd')
+
+    ni = 1.0 / Nvec
+    Nni = dNvec / Nvec**2
+
+    for cc in range(cols):
+        if Jvec[cc] > 0.0:
+            ji = 1.0 / Jvec[cc]
+
+            nisum = 0.0
+            Nnisum = 0.0
+            for ii in range(Uinds[cc,0],Uinds[cc,1]):
+                nisum += ni[ii]
+                Nnisum += Nni[ii]
+
+            beta = 1.0 / (nisum + ji)
+
+            tr += Nnisum * dJvec[cc]
+            tr -= 2 * nisum * dJvec[cc] * Nnisum * beta
+            tr += Nnisum * nisum**2 * dJvec[cc] *beta**2
+    
+    return tr
+
+def cython_logdet_dJ_dJ( \
+        np.ndarray[np.double_t,ndim=1] Nvec, \
+        np.ndarray[np.double_t,ndim=1] Jvec, \
+        np.ndarray[np.double_t,ndim=1] dJvec1, \
+        np.ndarray[np.double_t,ndim=1] dJvec2, \
+        np.ndarray[np.int_t,ndim=2] Uinds):
+    """
+    Sherman-Morrison block-inversion for Jitter (Cythonized)
+
+    Calculates Trace(N^{-1} dN/dJp1 N^{-1} dN/dJp2), where:
+        - N^{-1} is the ecorr-include N inverse
+        - dN/dJpx = U dJ/dJpx U^{T}, with dJ/dJpx the diagnal derivative of J wrt
+          Jpx
+
+    @param Nvec:    The white noise amplitude, array (n)
+    @param Jvec:    The jitter amplitude, array (k)
+    @param dJvec1:  The white noise derivative, array (k)
+    @param dJvec2:  The white noise derivative, array (k)
+    @param Uinds:   The start/finish indices for the jitter blocks (k x 2)
+
+    For this version, the residuals need to be sorted properly so that all the
+    blocks are continuous in memory. Here, there are n residuals, and k jitter
+    parameters.
+    """
+    cdef unsigned int cc, ii, rows = len(Nvec), cols = len(Jvec)
+    cdef double tr=0.0, ji, nisum, beta
+    cdef np.ndarray[np.double_t,ndim=1] ni = np.empty(rows, 'd')
+
+    ni = 1.0 / Nvec
+
+    for cc in range(cols):
+        if Jvec[cc] > 0.0:
+            ji = 1.0 / Jvec[cc]
+
+            nisum = 0.0
+            for ii in range(Uinds[cc,0],Uinds[cc,1]):
+                nisum += ni[ii]
+
+            beta = 1.0 / (nisum + ji)
+
+            tr += dJvec1[cc] * dJvec2[cc] * nisum**2
+            tr -= 2 * dJvec1[cc] * dJvec2[cc] * beta * nisum**3
+            tr += dJvec1[cc] * dJvec2[cc] * beta**2 * nisum**4
+
+    return tr
