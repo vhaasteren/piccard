@@ -55,7 +55,7 @@ def real_sph_harm(mm, ll, phi, theta):
 
     return ans.real
 
-def signalResponse(ptapsrs, gwtheta, gwphi, dirconv=True):
+def signalResponse(ptapsrs, gwtheta, gwphi, dirconv=True, norm=True):
     """
     Create the signal response matrix
     @param dirconv: True when Omega in direction of source (not prop.)
@@ -63,10 +63,12 @@ def signalResponse(ptapsrs, gwtheta, gwphi, dirconv=True):
     psrpos_phi = np.array([ptapsrs[ii].raj for ii in range(len(ptapsrs))])
     psrpos_theta = np.array([np.pi/2.0 - ptapsrs[ii].decj for ii in range(len(ptapsrs))])
 
-    return signalResponse_fast(psrpos_theta, psrpos_phi, gwtheta, gwphi, dirconv)
+    return signalResponse_fast(psrpos_theta, psrpos_phi, gwtheta, gwphi,
+            dirconv, norm=norm)
 
 
-def signalResponse_fast(ptheta_a, pphi_a, gwtheta_a, gwphi_a, dirconv=True):
+def signalResponse_fast(ptheta_a, pphi_a, gwtheta_a, gwphi_a, dirconv=True,
+        norm=True):
     """
     Create the signal response matrix FAST
     @param dirconv: True when Omega in direction of source (not prop.)
@@ -77,10 +79,11 @@ def signalResponse_fast(ptheta_a, pphi_a, gwtheta_a, gwphi_a, dirconv=True):
     gwphi, pphi = np.meshgrid(gwphi_a, pphi_a)
     gwtheta, ptheta = np.meshgrid(gwtheta_a, ptheta_a)
 
-    return createSignalResponse(pphi, ptheta, gwphi, gwtheta, dirconv=dirconv)
+    return createSignalResponse(pphi, ptheta, gwphi, gwtheta, dirconv=dirconv,
+            norm=norm)
 
 
-def createSignalResponse(pphi, ptheta, gwphi, gwtheta, dirconv=True):
+def createSignalResponse(pphi, ptheta, gwphi, gwtheta, dirconv=True, norm=True):
     """
     Create the signal response matrix. All parameters are assumed to be of the
     same dimensionality.
@@ -90,12 +93,16 @@ def createSignalResponse(pphi, ptheta, gwphi, gwtheta, dirconv=True):
     @param gwphi:   Phi of GW location
     @param gwtheta: Theta of GW location
     @param dirconv: True when Omega in direction of source (not prop.)
+    @param norm:    Re-normalize the signal response to yield the Hellings&Downs
+                    normalized correlation matrix
 
     @return:    Signal response matrix of Earth-term
 
     """
-    Fp = createSignalResponse_pol(pphi, ptheta, gwphi, gwtheta, plus=True, dirconv=dirconv)
-    Fc = createSignalResponse_pol(pphi, ptheta, gwphi, gwtheta, plus=False, dirconv=dirconv)
+    Fp = createSignalResponse_pol(pphi, ptheta, gwphi, gwtheta, plus=True,
+            norm=norm, dirconv=dirconv)
+    Fc = createSignalResponse_pol(pphi, ptheta, gwphi, gwtheta, plus=False,
+            norm=norm, dirconv=dirconv)
 
     F = np.zeros((Fp.shape[0], 2*Fp.shape[1]))
     F[:, 0::2] = Fp
@@ -436,7 +443,8 @@ def bwmsignal(parameters, raj, decj, t):
     gwtheta = np.array([parameters[3]])
 
     # Get the signal response matrix, which contains the Fplus and Fcross
-    Fr = signalResponse_fast(psrpos_theta, psrpos_phi, gwtheta, gwphi)
+    Fr = signalResponse_fast(psrpos_theta, psrpos_phi, gwtheta, gwphi,
+            norm=False)
     Fp = Fr[0, 0]
     Fc = Fr[0, 1]
 
