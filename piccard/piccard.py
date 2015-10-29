@@ -4206,6 +4206,7 @@ class ptaLikelihood(object):
                 "pmax":[toamax, -10.0, 2.0],
                 "pwidth":[30, 0.1, 0.1],
                 "pstart":[0.5*(toamax+toamin), -15.0, signPsrBWM],
+                "interval":[True]*3,
                 "prior":'flatlog'
                 })
             signals.append(newsignal)
