@@ -2752,7 +2752,7 @@ class ptaLikelihood(object):
             signal['npsrfreqindex'] = psrSingleFreqs[signal['pulsarind']]
             self.addSignalFrequencyLine(signal)
             self.haveStochSources = True
-        elif signal['stype'] == 'bwm':
+        elif signal['stype'] in ['bwm', 'psrbwm']:
             # A burst with memory
             self.addSignalBWM(signal)
             self.haveDetSources = True
@@ -3365,7 +3365,7 @@ class ptaLikelihood(object):
             incDipole=False, dipoleModel='powerlaw', \
             incAniGWB=False, anigwbModel='powerlaw', lAniGWB=1, \
             incPixelGWB=False, pixelgwbModel='powerlaw', npixels=4, \
-            incBWM=False, \
+            incBWM=False, incPsrBWM=False, signPsrBWM=1.0, \
             incTimingModel=False, nonLinear=False, \
             keepTimingModelPars = None, \
             varyEfac=True, incEquad=False, \
@@ -4170,6 +4170,9 @@ class ptaLikelihood(object):
                     toamax = np.max(psr.toas)
                 if toamin > np.min(psr.toas):
                     toamin = np.min(psr.toas)
+
+            toamin = pic_T0 + toamin/pic_spd
+            toamax = pic_T0 + toamax/pic_spd
             newsignal = OrderedDict({
                 "stype":'bwm',
                 "corr":"gr",
@@ -4177,9 +4180,32 @@ class ptaLikelihood(object):
                 "bvary":[True, True, True, True, True],
                 "pmin":[toamin, -18.0, 0.0, 0.0, 0.0],
                 "pmax":[toamax, -10.0, 2*np.pi, np.pi, np.pi],
-                "pwidth":[30*24*3600.0, 0.1, 0.1, 0.1, 0.1],
+                "pwidth":[30, 0.1, 0.1, 0.1, 0.1],
                 "pstart":[0.5*(toamax+toamin), -15.0, 3.0, 1.0, 1.0],
                 "interval":[True]*5,
+                "prior":'flatlog'
+                })
+            signals.append(newsignal)
+
+        if incPsrBWM:
+            toamax = self.ptapsrs[0].toas[0]
+            toamin = self.ptapsrs[0].toas[0]
+            for psr in self.ptapsrs:
+                if toamax < np.max(psr.toas):
+                    toamax = np.max(psr.toas)
+                if toamin > np.min(psr.toas):
+                    toamin = np.min(psr.toas)
+            toamin = pic_T0 + toamin/pic_spd
+            toamax = pic_T0 + toamax/pic_spd
+            newsignal = OrderedDict({
+                "stype":'psrbwm',
+                "corr":"gr",
+                "pulsarind":-1,
+                "bvary":[True, True, False],
+                "pmin":[toamin, -18.0, -2.0],
+                "pmax":[toamax, -10.0, 2.0],
+                "pwidth":[30, 0.1, 0.1],
+                "pstart":[0.5*(toamax+toamin), -15.0, signPsrBWM],
                 "prior":'flatlog'
                 })
             signals.append(newsignal)
@@ -4685,6 +4711,9 @@ class ptaLikelihood(object):
                 elif sig['stype'] == 'bwm':
                     flagname = 'BurstWithMemory'
                     flagvalue = ['burst-arrival', 'amplitude', 'raj', 'decj', 'polarisation'][jj]
+                elif sig['stype'] == 'psrbwm':
+                    flagname = 'BurstWithMemory'
+                    flagvalue = ['burst-arrival', 'amplitude', 'sign'][jj]
                 elif sig['stype'] == 'lineartimingmodel' or \
                         sig['stype'] == 'nonlineartimingmodel':
                     flagname = sig['stype']
@@ -6035,6 +6064,11 @@ class ptaLikelihood(object):
 
                     if calc_gradient:
                         raise NotImplementedError("No gradients available yet")
+                elif m2signal['stype'] == 'psrbwm':
+                            bwmsig = bwmsignal_psr(sparameters,
+                                    self.ptapsrs[pp].toas)
+
+                            self.ptapsrs[pp].detresiduals -= bwmsig
                 elif m2signal['stype'] == 'timingmodel_xi':
                     pp = m2signal['pulsarind']
                     self.ptapsrs[pp].detresiduals -= \
