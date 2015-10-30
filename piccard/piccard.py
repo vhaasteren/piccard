@@ -3250,6 +3250,7 @@ class ptaLikelihood(object):
             incAniGWB=False, anigwbModel='powerlaw', lAniGWB=1, \
             incPixelGWB=False, pixelgwbModel='powerlaw', npixels=4, \
             incBWM=False, incPsrBWM=False, signPsrBWM=1.0, \
+            bwmFraction=0.7, \
             incTimingModel=False, nonLinear=False, \
             keepTimingModelPars = None, \
             varyEfac=True, incEquad=False, \
@@ -3981,13 +3982,17 @@ class ptaLikelihood(object):
 
             toamin = pic_T0 + toamin/pic_spd
             toamax = pic_T0 + toamax/pic_spd
+            toamed = 0.5 * (toamax+toamin)
+            toawid = 0.5 * (toamax-toamin)
+            epochmin = toamed - bwmFraction * toawid
+            epochmax = toamed + bwmFraction * toawid
             newsignal = OrderedDict({
                 "stype":'bwm',
                 "corr":"gr",
                 "pulsarind":-1,
                 "bvary":[True, True, True, True, True],
-                "pmin":[toamin, -18.0, 0.0, 0.0, 0.0],
-                "pmax":[toamax, -10.0, 2*np.pi, np.pi, np.pi],
+                "pmin":[epochmin, -18.0, 0.0, 0.0, 0.0],
+                "pmax":[epochmax, -10.0, 2*np.pi, np.pi, np.pi],
                 "pwidth":[30, 0.1, 0.1, 0.1, 0.1],
                 "pstart":[0.5*(toamax+toamin), -15.0, 3.0, 1.0, 1.0],
                 "prior":'flatlog'
@@ -4004,13 +4009,18 @@ class ptaLikelihood(object):
                     toamin = np.min(psr.toas)
             toamin = pic_T0 + toamin/pic_spd
             toamax = pic_T0 + toamax/pic_spd
+            toamed = 0.5 * (toamax+toamin)
+            toawid = 0.5 * (toamax-toamin)
+            epochmin = toamed - bwmFraction * toawid
+            epochmax = toamed + bwmFraction * toawid
+
             newsignal = OrderedDict({
                 "stype":'psrbwm',
                 "corr":"gr",
                 "pulsarind":-1,
                 "bvary":[True, True, False],
-                "pmin":[toamin, -18.0, -2.0],
-                "pmax":[toamax, -10.0, 2.0],
+                "pmin":[epochmin, -18.0, -2.0],
+                "pmax":[epochmax, -10.0, 2.0],
                 "pwidth":[30, 0.1, 0.1],
                 "pstart":[0.5*(toamax+toamin), -15.0, signPsrBWM],
                 "prior":'flatlog'
