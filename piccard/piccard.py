@@ -4278,6 +4278,7 @@ class ptaLikelihood(object):
             "compression":self.compression,
             "orderFrequencyLines":self.orderFrequencyLines,
             "evalCompressionComplement":self.evallikcomp,
+            "priorDraws":len(self._prior_draw_signal)>0,
             "likfunc":self.likfunc,
             "Tmax":self.Tmax,
             "gibbsmodel":self.gibbsmodel,
