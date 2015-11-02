@@ -3365,7 +3365,7 @@ class ptaLikelihood(object):
             incDipole=False, dipoleModel='powerlaw', \
             incAniGWB=False, anigwbModel='powerlaw', lAniGWB=1, \
             incPixelGWB=False, pixelgwbModel='powerlaw', npixels=4, \
-            incBWM=False, incPsrBWM=False, signPsrBWM=1.0, \
+            incBWM=False, incPsrBWM=False, signPsrBWM=0.5, varyBWMSign=False, \
             bwmFraction=0.7, \
             incTimingModel=False, nonLinear=False, \
             keepTimingModelPars = None, \
@@ -4211,9 +4211,9 @@ class ptaLikelihood(object):
                 "stype":'psrbwm',
                 "corr":"gr",
                 "pulsarind":-1,
-                "bvary":[True, True, False],
-                "pmin":[epochmin, -18.0, -2.0],
-                "pmax":[epochmax, -10.0, 2.0],
+                "bvary":[True, True, varyBWMSign],
+                "pmin":[epochmin, -18.0, -1.0],
+                "pmax":[epochmax, -10.0, 1.0],
                 "pwidth":[30, 0.1, 0.1],
                 "pstart":[0.5*(toamax+toamin), -15.0, signPsrBWM],
                 "interval":[True]*3,
