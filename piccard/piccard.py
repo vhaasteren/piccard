@@ -9894,7 +9894,11 @@ class ptaLikelihood(object):
         # We do not need to invert Sigma
         hessian[np.array([pinds]).T, pinds] += -Sigma[hinds, :][:, hinds]
 
+        # dBdb
+        
+
         # Now only the combinations dBdB and dBdb left
+
 
         return hessian
 
