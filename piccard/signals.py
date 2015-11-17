@@ -425,7 +425,7 @@ def bwmsignal(parameters, raj, decj, t):
     insightful anyway.
 
     parameter[0] = TOA time (sec) the burst hits the earth
-    parameter[1] = amplitude of the burst (strain h)
+    parameter[1] = log-amplitude of the burst (strain h)
     parameter[2] = azimuthal angle (rad)    [0, 2pi]
     parameter[3] = polar angle (rad)        [0, pi]
     parameter[4] = polarisation angle (rad) [0, pi]
@@ -463,7 +463,7 @@ def bwmsignal(parameters, raj, decj, t):
 
 def bwmsignal_psr(parameters, t):
     """
-    Function that calculates the earth-term gravitational-wave burst-with-memory
+    Function that calculates the pulsar-term gravitational-wave burst-with-memory
     signal, as described in:
     Seto et al, van haasteren and Levin, phsirkov et al, Cordes and Jenet.
 
@@ -471,7 +471,7 @@ def bwmsignal_psr(parameters, t):
     pulsar-term BWM signal.
 
     parameter[0] = TOA time (sec) the burst hits the earth
-    parameter[1] = amplitude of the burst (strain h)
+    parameter[1] = log-amplitude of the burst (strain h)
     parameter[2] = extra multiplier (typically -1 or 1, for sign of signal)
 
     t = timestamps where the waveform should be returned
@@ -488,5 +488,29 @@ def bwmsignal_psr(parameters, t):
 
     # Return the time-series for the pulsar
     return amp * s * heaviside(t - epoch) * (t - epoch)
+
+def glitchsignal(parameters, t):
+    """
+    Like pulsar term BWM event, but now differently parameterized: just an
+    amplitude (not log-amp) parameter, and an epoch.
+
+    parameter[0] = TOA time (sec) the burst hits the earth
+    parameter[1] = amplitude of the glitch
+
+    t = timestamps where the waveform should be returned
+
+    returns the waveform as induced timing residuals (seconds)
+
+    """
+    # Define the heaviside function
+    heaviside = lambda x: 0.5 * (np.sign(x) + 1)
+
+    amp = parameters[1]
+    epoch = (parameters[0] - pic_T0) * pic_spd
+
+    # Return the time-series for the pulsar
+    return amp * heaviside(t - epoch) * (t - epoch)
+
+
 
 

@@ -2752,7 +2752,7 @@ class ptaLikelihood(object):
             signal['npsrfreqindex'] = psrSingleFreqs[signal['pulsarind']]
             self.addSignalFrequencyLine(signal)
             self.haveStochSources = True
-        elif signal['stype'] in ['bwm', 'psrbwm']:
+        elif signal['stype'] in ['bwm', 'psrbwm', 'glitch']:
             # A burst with memory
             self.addSignalBWM(signal)
             self.haveDetSources = True
@@ -3365,7 +3365,9 @@ class ptaLikelihood(object):
             incDipole=False, dipoleModel='powerlaw', \
             incAniGWB=False, anigwbModel='powerlaw', lAniGWB=1, \
             incPixelGWB=False, pixelgwbModel='powerlaw', npixels=4, \
-            incBWM=False, incPsrBWM=False, signPsrBWM=0.5, varyBWMSign=False, \
+            incBWM=False, incPsrBWM=False, signPsrBWM=0.5, \
+            varyBWMSign=True, nPsrBWM=1, \
+            incGlitch=False, nGlitch=1, glitchEpoch=None, varyGlitchEpoch=True, \
             bwmFraction=0.7, \
             incTimingModel=False, nonLinear=False, \
             keepTimingModelPars = None, \
@@ -4193,33 +4195,69 @@ class ptaLikelihood(object):
             signals.append(newsignal)
 
         if incPsrBWM:
-            toamax = self.ptapsrs[0].toas[0]
-            toamin = self.ptapsrs[0].toas[0]
-            for psr in self.ptapsrs:
-                if toamax < np.max(psr.toas):
-                    toamax = np.max(psr.toas)
-                if toamin > np.min(psr.toas):
-                    toamin = np.min(psr.toas)
-            toamin = pic_T0 + toamin/pic_spd
-            toamax = pic_T0 + toamax/pic_spd
-            toamed = 0.5 * (toamax+toamin)
-            toawid = 0.5 * (toamax-toamin)
-            epochmin = toamed - bwmFraction * toawid
-            epochmax = toamed + bwmFraction * toawid
+            for pp, m2psr in enumerate(self.ptapsrs):
+                for ii in range(nPsrBWM):
+                    toamax = self.ptapsrs[0].toas[0]
+                    toamin = self.ptapsrs[0].toas[0]
+                    for psr in self.ptapsrs:
+                        if toamax < np.max(psr.toas):
+                            toamax = np.max(psr.toas)
+                        if toamin > np.min(psr.toas):
+                            toamin = np.min(psr.toas)
+                    toamin = pic_T0 + toamin/pic_spd
+                    toamax = pic_T0 + toamax/pic_spd
+                    toamed = 0.5 * (toamax+toamin)
+                    toawid = 0.5 * (toamax-toamin)
+                    epochmin = toamed - bwmFraction * toawid
+                    epochmax = toamed + bwmFraction * toawid
 
-            newsignal = OrderedDict({
-                "stype":'psrbwm',
-                "corr":"gr",
-                "pulsarind":-1,
-                "bvary":[True, True, varyBWMSign],
-                "pmin":[epochmin, -18.0, -1.0],
-                "pmax":[epochmax, -10.0, 1.0],
-                "pwidth":[30, 0.1, 0.1],
-                "pstart":[0.5*(toamax+toamin), -15.0, signPsrBWM],
-                "interval":[True]*3,
-                "prior":'flatlog'
-                })
-            signals.append(newsignal)
+                    newsignal = OrderedDict({
+                        "stype":'psrbwm',
+                        "corr":"single",
+                        "pulsarind":pp,
+                        "bvary":[True, True, varyBWMSign],
+                        "pmin":[epochmin, -18.0, -1.0],
+                        "pmax":[epochmax, -10.0, 1.0],
+                        "pwidth":[30, 0.1, 0.1],
+                        "pstart":[0.5*(toamax+toamin), -15.0, signPsrBWM],
+                        "interval":[True]*3,
+                        "prior":'flatlog'
+                        })
+                    signals.append(newsignal)
+
+        if incGlitch:
+            for pp, m2psr in enumerate(self.ptapsrs):
+                for ii in range(nGlitch):
+                    toamax = self.ptapsrs[0].toas[0]
+                    toamin = self.ptapsrs[0].toas[0]
+                    for psr in self.ptapsrs:
+                        if toamax < np.max(psr.toas):
+                            toamax = np.max(psr.toas)
+                        if toamin > np.min(psr.toas):
+                            toamin = np.min(psr.toas)
+                    toamin = pic_T0 + toamin/pic_spd
+                    toamax = pic_T0 + toamax/pic_spd
+                    toamed = 0.5 * (toamax+toamin)
+                    toawid = 0.5 * (toamax-toamin)
+                    epochmin = toamed - bwmFraction * toawid
+                    epochmax = toamed + bwmFraction * toawid
+
+                    if glitchEpoch is None:
+                        glitchEpoch = 0.5*(toamax+toamin)
+
+                    newsignal = OrderedDict({
+                        "stype":'glitch',
+                        "corr":"single",
+                        "pulsarind":pp,
+                        "bvary":[varyGlitchEpoch, True],
+                        "pmin":[epochmin, -1e-10],
+                        "pmax":[epochmax, 1e-10],
+                        "pwidth":[30, 1e-14],
+                        "pstart":[glitchEpoch, 1.0e-15],
+                        "interval":[True]*2,
+                        "prior":'flatlog'
+                        })
+                    signals.append(newsignal)
 
         # The list of signals
         modeldict = OrderedDict({
@@ -4726,6 +4764,9 @@ class ptaLikelihood(object):
                 elif sig['stype'] == 'psrbwm':
                     flagname = 'BurstWithMemory'
                     flagvalue = ['burst-arrival', 'amplitude', 'sign'][jj]
+                elif sig['stype'] == 'glitch':
+                    flagname = 'Glitch'
+                    flagvalue = ['glitch-epoch', 'amplitude'][jj]
                 elif sig['stype'] == 'lineartimingmodel' or \
                         sig['stype'] == 'nonlineartimingmodel':
                     flagname = sig['stype']
@@ -6081,6 +6122,11 @@ class ptaLikelihood(object):
                                     self.ptapsrs[pp].toas)
 
                             self.ptapsrs[pp].detresiduals -= bwmsig
+                elif m2signal['stype'] == 'glitch':
+                            glitchsig = glitchsignal(sparameters,
+                                    self.ptapsrs[pp].toas)
+
+                            self.ptapsrs[pp].detresiduals -= glitchsig
                 elif m2signal['stype'] == 'timingmodel_xi':
                     pp = m2signal['pulsarind']
                     self.ptapsrs[pp].detresiduals -= \
@@ -9335,8 +9381,8 @@ class ptaLikelihood(object):
         transformations
         """
         if set_hyper_pars:
-            self.set_hyper_pars(parameters, calc_gradient=False)
-            self.set_det_sources(parameters, calc_gradient=False)
+            self.set_hyper_pars(parameters, calc_gradient=True)
+            self.set_det_sources(parameters, calc_gradient=True)
 
         # We will have to do the d_Pr_d_b ourselves here in the likelihood
         d_L_d_b, d_Pr_d_b = self._d_L_d_b, self._d_Pr_d_b
@@ -9570,6 +9616,15 @@ class ptaLikelihood(object):
             #       don't we even have the T-matrix somewhere?
             #       Yes, Tmat = psr.Zmat_N...  if ecor in N.
             #       Oh, well, just do the whole lot here...
+            if psri.timingmodelind is not None:
+                mindex = np.sum(self.npm[:ii])
+                npms = self.npm[ii]
+                ind = psri.timingmodelind
+                pslc = np.arange(ind, ind+npms)
+                pinds = np.append(pinds, pslc)      # Total parameter inds
+                Tmat = np.append(Tmat, psri.Mmat_g, axis=1)
+                b = np.append(b, parameters[pslc])
+
             if psri.fourierind is not None:
                 findex = np.sum(self.npf[:ii])
                 nfreq = self.npf[ii]
@@ -9617,8 +9672,8 @@ class ptaLikelihood(object):
                             hessian[key1, key2] += 0.5*np.sum(d_Nvec_d_p1*
                                     d_Nvec_d_p2 / psri.Nvec**2)
 
-                            # Symmetric
-                            hessian[key2, key1] = hessian[key1, key2]
+                            # Symmetric, don't do. We loop over key1 and key2
+                            # hessian[key2, key1] = hessian[key1, key2]
 
                     # Combinations of dNdb
                     NdNNr = psri.detresiduals * d_Nvec_d_p1 / psri.Nvec**2
@@ -9667,8 +9722,8 @@ class ptaLikelihood(object):
                                     psri.Nvec, psri.Jvec, d_Nvec_d_p1,
                                     d_Nvec_d_p2, psri.Uinds)
 
-                            # Symmetric
-                            hessian[key2, key1] = hessian[key1, key2]
+                            # Symmetric, don't do. We loop over key1 and key2
+                            #hessian[key2, key1] = hessian[key1, key2]
 
                     for key2, d_Jvec_d_p2 in psri.d_Jvec_d_param.iteritems():
                         # Cross terms between N and J (key1 != key2)
@@ -9727,8 +9782,8 @@ class ptaLikelihood(object):
                                     psri.Nvec, psri.Jvec, d_Jvec_d_p1,
                                     d_Jvec_d_p2, psri.Uinds)
 
-                            # Symmetric
-                            hessian[key2, key1] = hessian[key1, key2]
+                            # Symmetric, don't do. We loop over key1 and key2
+                            #hessian[key2, key1] = hessian[key1, key2]
 
                 # Combinations of dNdb
                 for key1, d_Nvec_d_p1 in psri.d_Nvec_d_param.iteritems():
@@ -9758,13 +9813,23 @@ class ptaLikelihood(object):
         else:
             nt = np.sum(self.npz_n)
 
+        self.gibbs_construct_all_freqcov()
+
+        # Set the freqb matrix (Fourier coefficients)
+        # Used below in the d_phi_d_phi components
+        for pp, psr in enumerate(self.ptapsrs):
+            nfreq = self.npf[ii]
+            ind = psr.fourierind
+            pslc = slice(ind, ind+nfreq)
+            self.freqb[pp, self.freqmask[pp,:]] = parameters[pslc]
+
         nf = np.sum(self.npf)                   # Size full F-matrix
         Finds = np.zeros(nf, dtype=np.int)      # T<->F translation indices
         ZNZ = np.zeros((nt, nt))                # Full ZNZ matrix
         Sigma = np.zeros((nt, nt))              # Full Sigma matrix
         FPhi = np.zeros((nf, nf))               # RN full Phi matrix
         sind = 0                                # Sigma-index
-        phind = 0                               # Z/T-index
+        phind = 0                               # Z/T-index (total)
         pinds = np.zeros(0, dtype=np.int)
         hinds = np.zeros(0, dtype=np.int)
 
@@ -9792,21 +9857,24 @@ class ptaLikelihood(object):
             fbindex = np.sum(self.npfb[:ii])
             uindex = np.sum(self.npu[:ii])
             npus = self.npu[ii]
+            phind_pp = 0                               # Z/T-index per pulsar
             if 'design' in self.gibbsmodel:
                 pslc = np.arange(psr.timingmodelind, psr.timingmodelind+nms)
                 pinds = np.append(pinds, pslc)
-                hinds = np.append(hinds, np.arange(sind+phind,
-                        sind+phind+nms))
+                hinds = np.append(hinds, np.arange(sind+phind_pp,
+                        sind+phind_pp+nms))
                 phind += nms         
+                phind_pp += nms         
             if 'rednoise' in self.gibbsmodel:
                 # Red noise, excluding GWS
                 pslc = np.arange(psr.fourierind, psr.fourierind+nfs)
                 pinds = np.append(pinds, pslc)
-                hinds = np.append(hinds, np.arange(sind+phind,
-                        sind+phind+nfs))
+                hinds = np.append(hinds, np.arange(sind+phind_pp,
+                        sind+phind_pp+nfs))
 
-                if npsrs == 1:
-                    inds = slice(sind+phind, sind+phind+nfs)
+                # Do not do single-pulsar stuff here. Do below
+                if npsrs == 1 and False:
+                    inds = slice(sind+phind_pp, sind+phind_pp+nfs)
                     finds = slice(findex, findex+nfs)
                     di = np.diag_indices(nfs)
                     Sigma[inds, inds][di] += 1.0 / ( \
@@ -9817,42 +9885,47 @@ class ptaLikelihood(object):
                             self.Svec[findex:findex+nfs])
 
                     phind += nfs
-                elif npsrs > 1:
+                    phind_pp += nfs
+                elif npsrs > 1 or True:
                     # We need to do the full array at once. Do that below
                     # Here, we construct the indexing matrices
                     Finds[findex:findex+nfs] = np.arange(phind, phind+nfs)
                     phind += nfs
+                    phind_pp += nfs
             if 'freqrednoise' in self.gibbsmodel:
-                inds = slice(sind+phind, sind+phind+nfbs)
-                hinds = np.append(hinds, np.arange(sind+phind,
-                        sind+phind+nfbs))
+                inds = slice(sind+phind_pp, sind+phind_pp+nfbs)
+                hinds = np.append(hinds, np.arange(sind+phind_pp,
+                        sind+phind_pp+nfbs))
                 di = np.diag_indices(nfbs)
                 Sigma[inds, inds][di] += 1.0 / self.Betavec[fbindex:fbindex+nfbs]
                 phind += nfbs
+                phind_pp += nfbs
                 raise NotImplementedError("Freq Red Noise not yet implemented")
             if 'dm' in self.gibbsmodel:
                 pslc = np.arange(psr.dmfourierind, psr.dmfourierind+nfdms)
                 pinds = np.append(pinds, pslc)
 
-                inds = slice(sind+phind, sind+phind+nfdms)
-                hinds = np.append(hinds, np.arange(sind+phind,
-                        sind+phind+nfdms))
+                inds = slice(sind+phind_pp, sind+phind_pp+nfdms)
+                hinds = np.append(hinds, np.arange(sind+phind_pp,
+                        sind+phind_pp+nfdms))
                 di = np.diag_indices(nfdms)
                 Sigma[inds, inds][di] += 1.0 / self.Thetavec[fdmindex:fdmindex+nfdms]
                 phind += nfdms
+                phind_pp += nfdms
             if 'jitter' in self.gibbsmodel:
                 pslc = np.arange(psr.jitterind, psr.jitterind+npus)
                 pinds = np.append(pinds, pslc)
 
-                inds = slice(sind+phind, sind+phind+npus)
-                hinds = np.append(hinds, np.arange(sind+phind,
-                        sind+phind+npus))
+                inds = slice(sind+phind_pp, sind+phind_pp+npus)
+                hinds = np.append(hinds, np.arange(sind+phind_pp,
+                        sind+phind_pp+npus))
                 Sigma[inds, inds][di] += 1.0 / psr.Jvec
                 phind += npus
+                phind_pp += npus
 
             sind += tsize
 
-        if npsrs > 1 and 'rednoise' in self.gibbsmodel:
+        if (True or npsrs > 1) and 'rednoise' in self.gibbsmodel:
             msk_ind = np.zeros(self.freqmask.shape, dtype=np.int)
             msk_ind[self.freqmask] = np.arange(np.sum(self.freqmask))
             msk_zind = np.arange(np.sum(self.npf))
@@ -9891,13 +9964,386 @@ class ptaLikelihood(object):
         #############################################
         #############################################
         
-        # We do not need to invert Sigma
+        # We do not need to invert Sigma for da^2
         hessian[np.array([pinds]).T, pinds] += -Sigma[hinds, :][:, hinds]
 
-        # dBdb
-        
-
         # Now only the combinations dBdB and dBdb left
+
+        # dBdb and dBdB
+        # Now that we have Phi^{-1}, loop over all pulsars (again)
+        for ii, psr in enumerate(self.ptapsrs):
+            # Red noise comes later (for full array)
+            #if psri.fourierind is not None:
+            #    # 
+
+            if psr.dmfourierind is not None:
+                fdmindex = np.sum(self.npfdm[:ii])
+                nfreqdm = self.npfdm[ii]
+                ind = psr.dmfourierind
+                fslc = slice(fdmindex, fdmindex+nfreqdm)
+                pslc = slice(ind, ind+nfreqdm)
+
+                bb = parameters[pslc]
+                thetavec = self.Thetavec[fslc]
+
+                # First derivatives
+                for key1, d_Thetavec_d_p1 in self.d_Thetavec_d_param.iteritems():
+                    # dBdb
+                    hessian[pslc, key1] += bb * d_Thetavec_d_p1 / thetavec**2
+                    hessian[key1, pslc] = hessian[pslc, key1]
+
+                    # dBdB
+                    for key2, d_Thetavec_d_p2 in self.d_Thetavec_d_param.iteritems():
+                        # Inner product
+                        hessian[key1, key2] -= np.sum(bb**2 * d_Thetavec_d_p1 *
+                                d_Thetavec_d_p2 / thetavec**3)
+
+                        # Trace
+                        hessian[key1, key2] += 0.5 * np.sum(d_Thetavec_d_p1 *
+                                d_Thetavec_d_p2 / thetavec**2)
+
+                # Second derivatives
+                for key, d2_Thetavec_d2_p in self.d2_Thetavec_d2_param.iteritems():
+                    if key[0] == key[1]:
+                        # Inner product
+                        hessian[key[0], key[1]] += 0.5 * np.sum(bb**2 *
+                                d2_Thetavec_d2_p / thetavec**2)
+
+                        # Trace
+                        hessian[key[0], key[1]] -= 0.5 * np.sum(d2_Thetavec_d2_p
+                                / thetavec)
+                    else:
+                        # Inner product
+                        hessian[key[0], key[1]] += 0.5 * np.sum(bb**2 *
+                                d2_Thetavec_d2_p / thetavec**2)
+                        hessian[key[1], key[0]] += 0.5 * np.sum(bb**2 *
+                                d2_Thetavec_d2_p / thetavec**2)
+
+                        # Trace
+                        hessian[key[0], key[1]] -= 0.5 * np.sum(d2_Thetavec_d2_p
+                                / thetavec)
+                        hessian[key[1], key[0]] -= 0.5 * np.sum(d2_Thetavec_d2_p
+                                / thetavec)
+
+
+            if psr.jitterind is not None:
+                uindex = np.sum(self.npu[:ii])
+                npus = self.npu[ii]
+                ind = psr.jitterind
+                pslc = slice(ind, ind+npus)
+
+                bb = parameters[pslc]
+                jvec = psr.Jvec
+
+                # First derivatives
+                for key, d_Jvec_d_p in psr.d_Jvec_d_param.iteritems():
+                    # dBdb
+                    hessian[pslc, key] += bb * d_Jvec_d_p / jvec**2
+                    hessian[key, pslc] = hessian[pslc, key]
+
+                    # dBdB
+                    for key2, d_Jvec_d_p2 in psr.d_Jvec_d_param.iteritems():
+                        # Inner product
+                        hessian[key1, key2] -= np.sum(bb**2 * d_Jvec_d_p1 *
+                                d_Jvec_d_p2 / jvec**3)
+
+                        # Trace
+                        hessian[key1, key2] += 0.5 * np.sum(d_Jvec_d_p1 *
+                                d_Jvec_d_p2 / jvec**2)
+
+                # Second derivatives
+                for key, d2_Jvec_d2_p in psr.d2_Thetavec_d2_param.iteritems():
+                    if key[0] == key[1]:
+                        # Inner product
+                        hessian[key[0], key[1]] += 0.5 * np.sum(bb**2 *
+                                d2_Jvec_d2_p / jvec**2)
+
+                        # Trace
+                        hessian[key[0], key[1]] -= 0.5 * np.sum(d2_Jvec_d2_p
+                                / jvec)
+                    else:
+                        # Inner product
+                        hessian[key[0], key[1]] += 0.5 * np.sum(bb**2 *
+                                d2_Jvec_d2_p / jvec**2)
+                        hessian[key[1], key[0]] += 0.5 * np.sum(bb**2 *
+                                d2_Jvec_d2_p / jvec**2)
+
+                        # Trace
+                        hessian[key[0], key[1]] -= 0.5 * np.sum(d2_Jvec_d2_p
+                                / jvec)
+                        hessian[key[1], key[0]] -= 0.5 * np.sum(d2_Jvec_d2_p
+                                / jvec)
+
+        # Red noise and GWs is done globally
+        if 'rednoise' in self.gibbsmodel:
+            # Do it per frequency again
+            for ii in range(0, len(self.Svec), 2):
+                msk = self.freqmask[:, ii]
+                pinds_cos = self.freqpinds[msk, ii]
+                pinds_sin = self.freqpinds[msk, ii+1]
+                finds_cos = self.freqfinds[msk, ii]
+                finds_sin = self.freqfinds[msk, ii+1]
+
+                # The covariance between sin/cos modes is identical
+                cf = self.Scor_im_cf[int(ii / 2)]
+                c_inv = self.Scor_im_inv[int(ii / 2)]
+
+                # Cosine mode loglik
+                bc = self.freqb[msk, ii]
+                Lx_c = sl.cho_solve(cf, bc)
+                #corr_xi2 += np.sum(Lx_c*bc)
+                #corr_ldet += 2*np.sum(np.log(np.diag(cf[0])))
+
+                # Cosine mode gradient
+                # gradient[pinds_cos] -= sl.cho_solve(cf, bc)
+
+                # Sine mode
+                bs = self.freqb[msk, ii+1]
+                Lx_s = sl.cho_solve(cf, bs)
+                #corr_xi2 += np.sum(Lx_s*bs)
+                #corr_ldet += 2*np.sum(np.log(np.diag(cf[0])))
+
+                #print("Lx:", Lx_c, Lx_s, bc, 1e20*bs)
+                #print("Px", parameters[70:76])
+
+                # Red noise
+                # First derivatives (squared as well) dB
+                for key1, d_Phivec_d_p1 in self.d_Phivec_d_param.iteritems():
+                    d_phivec_cos1 = d_Phivec_d_p1[finds_cos]    # Sin & Cos the same
+                    d_phivec_sin1 = d_Phivec_d_p1[finds_sin]    # Sin & Cos the same
+
+                    LdpLx_c = sl.cho_solve(cf, d_phivec_cos1 * Lx_c)
+                    LdpLx_s = sl.cho_solve(cf, d_phivec_sin1 * Lx_s)
+
+                    # dBdb
+                    hessian[pinds_cos, key1] += LdpLx_c
+                    hessian[key1, pinds_cos] += LdpLx_c
+                    hessian[pinds_sin, key1] += LdpLx_s
+                    hessian[key1, pinds_sin] += LdpLx_s
+
+                    # Combined with first derivatives dBdB
+                    for key2, d_Phivec_d_p2 in self.d_Phivec_d_param.iteritems():
+                        d_phivec_cos2 = d_Phivec_d_p2[finds_cos]
+                        d_phivec_sin2 = d_Phivec_d_p2[finds_sin]
+
+                        # Inner product
+                        hessian[key1, key2] -= np.sum(Lx_c * d_phivec_cos2 *
+                                LdpLx_c)
+                        hessian[key1, key2] -= np.sum(Lx_s * d_phivec_sin2 *
+                                LdpLx_s)
+
+                        # Trace -- cos
+                        prod1 = sl.cho_solve(cf, np.diag(d_phivec_cos1))
+                        prod2 = sl.cho_solve(cf, np.diag(d_phivec_cos2))
+                        hessian[key1, key2] += \
+                                0.5 * np.trace(np.dot(prod1, prod2))
+
+                        # Trace -- sin
+                        prod1 = sl.cho_solve(cf, np.diag(d_phivec_sin1))
+                        prod2 = sl.cho_solve(cf, np.diag(d_phivec_sin2))
+                        hessian[key1, key2] += \
+                                0.5 * np.trace(np.dot(prod1, prod2))
+
+                # Red noise
+                # Second derivatives
+                for key, d2_Phivec_d2_p in self.d2_Phivec_d2_param.iteritems():
+                    d2_phivec_cos = d2_Phivec_d2_p[finds_cos]    # Sin & Cos the same
+                    d2_phivec_sin = d2_Phivec_d2_p[finds_sin]    # Sin & Cos the same
+
+                    # The cross-terms are only listed once. So expand ourselves
+                    if key[0] == key[1]:
+                        # Inner product
+                        hessian[key[0], key[1]] += 0.5 * np.sum(Lx_c**2 * d2_phivec_cos)
+                        hessian[key[0], key[1]] += 0.5 * np.sum(Lx_s**2 * d2_phivec_sin)
+
+                        # Trace
+                        diag_phiinv = np.diag(c_inv)
+                        hessian[key[0], key[1]] -= 0.5 * np.sum(
+                                diag_phiinv * d2_phivec_cos)
+                        hessian[key[0], key[1]] -= 0.5 * np.sum(
+                                diag_phiinv * d2_phivec_sin)
+                    else:
+                        # Inner product
+                        hessian[key[0], key[1]] += 0.5 * np.sum(Lx_c**2 * d2_phivec_cos)
+                        hessian[key[0], key[1]] += 0.5 * np.sum(Lx_s**2 * d2_phivec_sin)
+                        hessian[key[1], key[0]] += 0.5 * np.sum(Lx_c**2 * d2_phivec_cos)
+                        hessian[key[1], key[0]] += 0.5 * np.sum(Lx_s**2 * d2_phivec_sin)
+                        #print("Val2:", Lx_s**2 * d2_phivec_sin)
+
+                        # Trace (can use diagonal piece, because it is just
+                        # *one* diagonal matrix, and a general matrix).
+                        diag_phiinv = np.diag(c_inv)
+                        hessian[key[0], key[1]] -= 0.5 * np.sum(
+                                diag_phiinv * d2_phivec_cos)
+                        hessian[key[0], key[1]] -= 0.5 * np.sum(
+                                diag_phiinv * d2_phivec_sin)
+                        hessian[key[1], key[0]] -= 0.5 * np.sum(
+                                diag_phiinv * d2_phivec_cos)
+                        hessian[key[1], key[0]] -= 0.5 * np.sum(
+                                diag_phiinv * d2_phivec_sin)
+                        
+
+
+                ##### GW Signals #####
+                # First derivatives (squared as well) dB
+                for key1, d_Svec_d_p1 in self.d_Svec_d_param.iteritems():
+                    # Derivative of correlation matrix wrt key1 (for this freq)
+                    d_svec_corr1 = d_Svec_d_p1[finds_cos][0] * \
+                            self.Scor[msk,:][:,msk]
+
+                    # Sin & Cos correlation is the same
+                    LdpLx_c = sl.cho_solve(cf, np.dot(d_svec_corr1, Lx_c))
+                    LdpLx_s = sl.cho_solve(cf, np.dot(d_svec_corr1, Lx_s))
+
+                    #d_svec_cos1 = d_Svec_d_p1[finds_cos]    # Sin & Cos the same
+                    #d_svec_sin1 = d_Svec_d_p1[finds_sin]    # Sin & Cos the same
+                    #LdpLx_c = sl.cho_solve(cf, d_svec_cos1 * Lx_c)
+                    #LdpLx_s = sl.cho_solve(cf, d_svec_sin1 * Lx_s)
+
+                    # dBdb
+                    hessian[pinds_cos, key1] += LdpLx_c
+                    hessian[key1, pinds_cos] += LdpLx_c
+                    hessian[pinds_sin, key1] += LdpLx_s
+                    hessian[key1, pinds_sin] += LdpLx_s
+
+                    # Combined with first derivatives dBdB (GW - GW)
+                    for key2, d_Svec_d_p2 in self.d_Svec_d_param.iteritems():
+                        d_svec_corr2 = d_Svec_d_p2[finds_cos][0] * \
+                                self.Scor[msk,:][:,msk]
+
+                        # Inner product
+                        hessian[key1, key2] -= np.sum(Lx_c *
+                                np.dot(d_svec_corr2, LdpLx_c))
+                        hessian[key1, key2] -= np.sum(Lx_s *
+                                np.dot(d_svec_corr2, LdpLx_s))
+
+                        # Trace -- sin & cos
+                        prod1 = sl.cho_solve(cf, d_svec_corr1)
+                        prod2 = sl.cho_solve(cf, d_svec_corr2)
+                        hessian[key1, key2] += \
+                                np.trace(np.dot(prod1, prod2))
+
+                        #prod2 = sl.cho_solve(cf, np.diag(d_svec_cos2))
+                        #hessian[key1, key2] += \
+                        #        0.5 * np.trace(np.dot(prod1, prod2))
+
+                        #d_svec_cos2 = d_Svec_d_p2[finds_cos]
+                        #d_svec_sin2 = d_Svec_d_p2[finds_sin]
+
+                        # Inner product
+                        #hessian[key1, key2] -= np.sum(Lx_c * d_svec_cos2 *
+                        #        LdpLx_c)
+                        #hessian[key1, key2] -= np.sum(Lx_s * d_svec_sin2 *
+                        #        LdpLx_s)
+
+                        # Trace -- cos
+                        #prod1 = sl.cho_solve(cf, np.diag(d_svec_cos1))
+                        #prod2 = sl.cho_solve(cf, np.diag(d_svec_cos2))
+                        #hessian[key1, key2] += \
+                        #        0.5 * np.trace(np.dot(prod1, prod2))
+
+                        # Trace -- sin
+                        #prod1 = sl.cho_solve(cf, np.diag(d_svec_sin1))
+                        #prod2 = sl.cho_solve(cf, np.diag(d_svec_sin2))
+                        #hessian[key1, key2] += \
+                        #        0.5 * np.trace(np.dot(prod1, prod2))
+
+                    # Red noise first derivatives dBdB (Red Noise - GW)
+                    # NOTE: key1 != key2, ever, so symmetrize...
+                    for key2, d_Phivec_d_p2 in self.d_Phivec_d_param.iteritems():
+                        d_phivec_cos2 = d_Phivec_d_p2[finds_cos]
+                        d_phivec_sin2 = d_Phivec_d_p2[finds_sin]
+
+                        # Inner product
+                        hessian[key1, key2] -= np.sum(Lx_c * d_phivec_cos2 *
+                                LdpLx_c)
+                        hessian[key1, key2] -= np.sum(Lx_s * d_phivec_sin2 *
+                                LdpLx_s)
+                        hessian[key2, key1] -= np.sum(Lx_c * d_phivec_cos2 *
+                                LdpLx_c)
+                        hessian[key2, key1] -= np.sum(Lx_s * d_phivec_sin2 *
+                                LdpLx_s)
+
+                        # Trace -- cos
+                        #prod1 = sl.cho_solve(cf, np.diag(d_svec_cos1))
+                        prod1 = sl.cho_solve(cf, d_svec_corr1)
+                        prod2 = sl.cho_solve(cf, np.diag(d_phivec_cos2))
+                        hessian[key1, key2] += \
+                                0.5 * np.trace(np.dot(prod1, prod2))
+                        hessian[key2, key1] += \
+                                0.5 * np.trace(np.dot(prod1, prod2))
+
+                        # Trace -- sin
+                        #prod1 = sl.cho_solve(cf, np.diag(d_svec_sin1))
+                        prod1 = sl.cho_solve(cf, d_svec_corr1)
+                        prod2 = sl.cho_solve(cf, np.diag(d_phivec_sin2))
+                        hessian[key1, key2] += \
+                                0.5 * np.trace(np.dot(prod1, prod2))
+                        hessian[key2, key1] += \
+                                0.5 * np.trace(np.dot(prod1, prod2))
+
+                ##### GW Signals #####
+                # Second derivatives
+                for key, d2_Svec_d2_p in self.d2_Svec_d2_param.iteritems():
+                    # Second derivative of correlation matrix wrt key1 (for this freq)
+                    d2_svec_corr = d2_Svec_d2_p[finds_cos][0] * \
+                            self.Scor[msk,:][:,msk]
+
+                    #d2_svec_cos = d2_Svec_d2_p[finds_cos]    # Sin & Cos the same
+                    #d2_svec_sin = d2_Svec_d2_p[finds_sin]    # Sin & Cos the same
+
+                    # The cross-terms are only listed once. So expand ourselves
+                    if key[0] == key[1]:
+                        # Inner product
+                        hessian[key[0], key[1]] += 0.5 * np.sum(Lx_c *
+                                np.dot(d2_svec_corr, Lx_c))
+                        hessian[key[0], key[1]] += 0.5 * np.sum(Lx_s *
+                                np.dot(d2_svec_corr, Lx_s))
+                        
+                        #hessian[key[0], key[1]] += 0.5 * np.sum(Lx_c**2 * d2_svec_cos)
+                        #hessian[key[0], key[1]] += 0.5 * np.sum(Lx_s**2 * d2_svec_sin)
+
+                        # Trace
+                        hessian[key[0], key[1]] -= np.trace(np.dot(c_inv,
+                                d2_svec_corr))
+
+                        #diag_phiinv = np.diag(c_inv)
+                        #hessian[key[0], key[1]] -= 0.5 * np.sum(
+                        #        diag_phiinv * d2_svec_cos)
+                        #hessian[key[0], key[1]] -= 0.5 * np.sum(
+                        #        diag_phiinv * d2_svec_sin)
+                    else:
+                        # Inner product
+                        hessian[key[0], key[1]] += 0.5 * np.sum(Lx_c *
+                                np.dot(d2_svec_corr, Lx_c))
+                        hessian[key[0], key[1]] += 0.5 * np.sum(Lx_s *
+                                np.dot(d2_svec_corr, Lx_s))
+                        hessian[key[1], key[0]] += 0.5 * np.sum(Lx_c *
+                                np.dot(d2_svec_corr, Lx_c))
+                        hessian[key[1], key[0]] += 0.5 * np.sum(Lx_s *
+                                np.dot(d2_svec_corr, Lx_s))
+
+                        #hessian[key[0], key[1]] += 0.5 * np.sum(Lx_c**2 * d2_svec_cos)
+                        #hessian[key[0], key[1]] += 0.5 * np.sum(Lx_s**2 * d2_svec_sin)
+                        #hessian[key[1], key[0]] += 0.5 * np.sum(Lx_c**2 * d2_svec_cos)
+                        #hessian[key[1], key[0]] += 0.5 * np.sum(Lx_s**2 * d2_svec_sin)
+
+                        # Trace (can use diagonal piece, because it is just
+                        # *one* diagonal matrix, and a general matrix).
+                        hessian[key[0], key[1]] -= np.trace(np.dot(c_inv,
+                                d2_svec_corr))
+                        hessian[key[1], key[0]] -= np.trace(np.dot(c_inv,
+                                d2_svec_corr))
+
+                        #diag_phiinv = np.diag(c_inv)
+                        #hessian[key[0], key[1]] -= 0.5 * np.sum(
+                        #        diag_phiinv * d2_svec_cos)
+                        #hessian[key[0], key[1]] -= 0.5 * np.sum(
+                        #        diag_phiinv * d2_svec_sin)
+                        #hessian[key[1], key[0]] -= 0.5 * np.sum(
+                        #        diag_phiinv * d2_svec_cos)
+                        #hessian[key[1], key[0]] -= 0.5 * np.sum(
+                        #        diag_phiinv * d2_svec_sin)
 
 
         return hessian
