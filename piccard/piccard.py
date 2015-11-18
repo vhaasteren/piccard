@@ -10091,20 +10091,10 @@ class ptaLikelihood(object):
                 # Cosine mode loglik
                 bc = self.freqb[msk, ii]
                 Lx_c = sl.cho_solve(cf, bc)
-                #corr_xi2 += np.sum(Lx_c*bc)
-                #corr_ldet += 2*np.sum(np.log(np.diag(cf[0])))
-
-                # Cosine mode gradient
-                # gradient[pinds_cos] -= sl.cho_solve(cf, bc)
 
                 # Sine mode
                 bs = self.freqb[msk, ii+1]
                 Lx_s = sl.cho_solve(cf, bs)
-                #corr_xi2 += np.sum(Lx_s*bs)
-                #corr_ldet += 2*np.sum(np.log(np.diag(cf[0])))
-
-                #print("Lx:", Lx_c, Lx_s, bc, 1e20*bs)
-                #print("Px", parameters[70:76])
 
                 # Red noise
                 # First derivatives (squared as well) dB
@@ -10195,11 +10185,6 @@ class ptaLikelihood(object):
                     LdpLx_c = sl.cho_solve(cf, np.dot(d_svec_corr1, Lx_c))
                     LdpLx_s = sl.cho_solve(cf, np.dot(d_svec_corr1, Lx_s))
 
-                    #d_svec_cos1 = d_Svec_d_p1[finds_cos]    # Sin & Cos the same
-                    #d_svec_sin1 = d_Svec_d_p1[finds_sin]    # Sin & Cos the same
-                    #LdpLx_c = sl.cho_solve(cf, d_svec_cos1 * Lx_c)
-                    #LdpLx_s = sl.cho_solve(cf, d_svec_sin1 * Lx_s)
-
                     # dBdb
                     hessian[pinds_cos, key1] += LdpLx_c
                     hessian[key1, pinds_cos] += LdpLx_c
@@ -10223,31 +10208,6 @@ class ptaLikelihood(object):
                         hessian[key1, key2] += \
                                 np.trace(np.dot(prod1, prod2))
 
-                        #prod2 = sl.cho_solve(cf, np.diag(d_svec_cos2))
-                        #hessian[key1, key2] += \
-                        #        0.5 * np.trace(np.dot(prod1, prod2))
-
-                        #d_svec_cos2 = d_Svec_d_p2[finds_cos]
-                        #d_svec_sin2 = d_Svec_d_p2[finds_sin]
-
-                        # Inner product
-                        #hessian[key1, key2] -= np.sum(Lx_c * d_svec_cos2 *
-                        #        LdpLx_c)
-                        #hessian[key1, key2] -= np.sum(Lx_s * d_svec_sin2 *
-                        #        LdpLx_s)
-
-                        # Trace -- cos
-                        #prod1 = sl.cho_solve(cf, np.diag(d_svec_cos1))
-                        #prod2 = sl.cho_solve(cf, np.diag(d_svec_cos2))
-                        #hessian[key1, key2] += \
-                        #        0.5 * np.trace(np.dot(prod1, prod2))
-
-                        # Trace -- sin
-                        #prod1 = sl.cho_solve(cf, np.diag(d_svec_sin1))
-                        #prod2 = sl.cho_solve(cf, np.diag(d_svec_sin2))
-                        #hessian[key1, key2] += \
-                        #        0.5 * np.trace(np.dot(prod1, prod2))
-
                     # Red noise first derivatives dBdB (Red Noise - GW)
                     # NOTE: key1 != key2, ever, so symmetrize...
                     for key2, d_Phivec_d_p2 in self.d_Phivec_d_param.iteritems():
@@ -10265,7 +10225,6 @@ class ptaLikelihood(object):
                                 LdpLx_s)
 
                         # Trace -- cos
-                        #prod1 = sl.cho_solve(cf, np.diag(d_svec_cos1))
                         prod1 = sl.cho_solve(cf, d_svec_corr1)
                         prod2 = sl.cho_solve(cf, np.diag(d_phivec_cos2))
                         hessian[key1, key2] += \
@@ -10274,7 +10233,6 @@ class ptaLikelihood(object):
                                 0.5 * np.trace(np.dot(prod1, prod2))
 
                         # Trace -- sin
-                        #prod1 = sl.cho_solve(cf, np.diag(d_svec_sin1))
                         prod1 = sl.cho_solve(cf, d_svec_corr1)
                         prod2 = sl.cho_solve(cf, np.diag(d_phivec_sin2))
                         hessian[key1, key2] += \
@@ -10289,9 +10247,6 @@ class ptaLikelihood(object):
                     d2_svec_corr = d2_Svec_d2_p[finds_cos][0] * \
                             self.Scor[msk,:][:,msk]
 
-                    #d2_svec_cos = d2_Svec_d2_p[finds_cos]    # Sin & Cos the same
-                    #d2_svec_sin = d2_Svec_d2_p[finds_sin]    # Sin & Cos the same
-
                     # The cross-terms are only listed once. So expand ourselves
                     if key[0] == key[1]:
                         # Inner product
@@ -10300,18 +10255,10 @@ class ptaLikelihood(object):
                         hessian[key[0], key[1]] += 0.5 * np.sum(Lx_s *
                                 np.dot(d2_svec_corr, Lx_s))
                         
-                        #hessian[key[0], key[1]] += 0.5 * np.sum(Lx_c**2 * d2_svec_cos)
-                        #hessian[key[0], key[1]] += 0.5 * np.sum(Lx_s**2 * d2_svec_sin)
-
                         # Trace
                         hessian[key[0], key[1]] -= np.trace(np.dot(c_inv,
                                 d2_svec_corr))
 
-                        #diag_phiinv = np.diag(c_inv)
-                        #hessian[key[0], key[1]] -= 0.5 * np.sum(
-                        #        diag_phiinv * d2_svec_cos)
-                        #hessian[key[0], key[1]] -= 0.5 * np.sum(
-                        #        diag_phiinv * d2_svec_sin)
                     else:
                         # Inner product
                         hessian[key[0], key[1]] += 0.5 * np.sum(Lx_c *
@@ -10323,27 +10270,12 @@ class ptaLikelihood(object):
                         hessian[key[1], key[0]] += 0.5 * np.sum(Lx_s *
                                 np.dot(d2_svec_corr, Lx_s))
 
-                        #hessian[key[0], key[1]] += 0.5 * np.sum(Lx_c**2 * d2_svec_cos)
-                        #hessian[key[0], key[1]] += 0.5 * np.sum(Lx_s**2 * d2_svec_sin)
-                        #hessian[key[1], key[0]] += 0.5 * np.sum(Lx_c**2 * d2_svec_cos)
-                        #hessian[key[1], key[0]] += 0.5 * np.sum(Lx_s**2 * d2_svec_sin)
-
                         # Trace (can use diagonal piece, because it is just
                         # *one* diagonal matrix, and a general matrix).
                         hessian[key[0], key[1]] -= np.trace(np.dot(c_inv,
                                 d2_svec_corr))
                         hessian[key[1], key[0]] -= np.trace(np.dot(c_inv,
                                 d2_svec_corr))
-
-                        #diag_phiinv = np.diag(c_inv)
-                        #hessian[key[0], key[1]] -= 0.5 * np.sum(
-                        #        diag_phiinv * d2_svec_cos)
-                        #hessian[key[0], key[1]] -= 0.5 * np.sum(
-                        #        diag_phiinv * d2_svec_sin)
-                        #hessian[key[1], key[0]] -= 0.5 * np.sum(
-                        #        diag_phiinv * d2_svec_cos)
-                        #hessian[key[1], key[0]] -= 0.5 * np.sum(
-                        #        diag_phiinv * d2_svec_sin)
 
 
         return hessian
