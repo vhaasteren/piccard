@@ -11849,6 +11849,13 @@ class ptaLikelihood(object):
             acube[ii] = cube[ii]
 
         return self.logposterior(acube)
+    
+    def hessian(self, parameters, **kwargs):
+        if self.likfunc == 'mark14':
+            return self.mark14hessian(parameters, **kwargs)
+        else:
+            raise NotImplementedError("Hessian only implemented in mark14")
+        return None
 
     def samplefromprior(self, cube, ndim, nparams):
         """Hypercube transformation for MultiNest"""
