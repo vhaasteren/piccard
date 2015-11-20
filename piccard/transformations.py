@@ -203,15 +203,18 @@ class likelihoodWrapper(object):
         lp, lp_grad = self.likob.logprior_grad(x)
         return lp
 
-    def hessian(self, p, inc_dxdp_nondiag=True):
+    def hessian(self, p):
         """The Hessian matrix in the new coordinates"""
         # p should not be more than one-dimensional
         assert len(p.shape) == 1
 
+        # Get quantities from un-transformed distribution
         x = self.backward(p)
-        hessian = self.logjac_hessian(p)
         orig_hessian = self.likob.hessian(x)
+        _, orig_lp_grad = self.likob.logposterior_grad(x)
 
+        # Transformation properties
+        hessian = self.logjac_hessian(p)
         dxdpf = self.dxdp_full(p)
 
         # TODO: this, or transpose the dxdpf? Hmmzz
@@ -219,8 +222,7 @@ class likelihoodWrapper(object):
 
         # We also need the gradient
         # TODO: Why is there a minus sign? -=
-        lp, lp_grad = self.likob.logposterior_grad(x)
-        hessian -= np.diag(self.d2xd2p(p)*lp_grad)
+        hessian -= np.diag(self.d2xd2p(p)*orig_lp_grad)
 
         return hessian
 
@@ -420,7 +422,7 @@ class intervalLikelihood(likelihoodWrapper):
         """Derivative of x wrt p (jacobian for chain-rule) - diagonal"""
         pp = np.atleast_2d(p)
         m = self.msk
-        d = np.ones_like(pp)
+        d = np.zeros_like(pp)
         d[:,m] = (self.b[m]-self.a[m])*(np.exp(2*pp[:,m])-np.exp(pp[:,m]))/(1+np.exp(pp[:,m]))**3
         return d.reshape(p.shape)
 
@@ -1269,7 +1271,7 @@ class whitenedLikelihood(likelihoodWrapper):
                 raise ValueError("Eigh thinks -hessian is not positive definite")
             
             self._ch = eigvec * np.sqrt(eigval)
-            self._chi = eigvec / np.sqrt(eigval)
+            self._chi = (eigvec / np.sqrt(eigval)).T
             self._lj = -0.5*np.sum(np.log(eigval))
 
     def forward(self, x):
@@ -1293,7 +1295,7 @@ class whitenedLikelihood(likelihoodWrapper):
     def dxdp(self, p):
         """Derivative of x wrt p (jacobian for chain-rule) - diagonal"""
         raise ValueError("Should not use dxdp in whitenedLikelihood")
-        return np.diag(self._chi)
+        return np.diag(self._chi.T)
 
     def d2xd2p(self, p):
         """Derivative of x wrt p (jacobian for chain-rule) - diagonal"""
@@ -1304,7 +1306,7 @@ class whitenedLikelihood(likelihoodWrapper):
         # p should not be more than one-dimensional
         assert len(p.shape) == 1
 
-        return self._chi
+        return self._chi.T
 
     def dxdp_nondiag(self, p, ll_grad):
         raise ValueError("Should not use dxdp in whitenedLikelihood")
