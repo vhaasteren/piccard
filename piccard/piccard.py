@@ -9387,7 +9387,12 @@ class ptaLikelihood(object):
         # We will have to do the d_Pr_d_b ourselves here in the likelihood
         d_L_d_b, d_Pr_d_b = self._d_L_d_b, self._d_Pr_d_b
 
-        gradient = d_L_d_b      #+d_Pr_d_b)
+        gradient = d_L_d_b
+
+        # For efficiency in calculating gradients, we'll have to store some
+        # matrix-vector products
+        Binv_b_dm_sqr = np.zeros_like(self.Thetavec)
+        Binv_diag_dm = np.zeros_like(self.Thetavec)
 
         for ii, psr in enumerate(self.ptapsrs):
             # Gradient for Nvec hyper-parameters
@@ -9445,6 +9450,8 @@ class ptaLikelihood(object):
                 gradient[pslc] += d_Pr_d_b[pslc]
 
                 # Gradient for Phivec hyper-parameters
+                # We are not trying to be efficient here, since there is only
+                # one pulsar. For multi-pulsar efficiency, see below
                 for key, d_Phivec_d_p in self.d_Phivec_d_param.iteritems():
                     # Inner product
                     gradient[key] += 0.5 * np.sum(bsqr * d_Phivec_d_p / phivec**2)
@@ -9476,6 +9483,12 @@ class ptaLikelihood(object):
                 # Explicitly do the gradient wrt b of the prior
                 gradient[pslc] += d_Pr_d_b[pslc]
 
+                # For computational efficiency, we'll have to memorize the
+                # B^{-1} b vectors
+                Binv_b_dm_sqr[fslc] = bsqr / thetavec**2
+                Binv_diag_dm[fslc] = 1.0 / thetavec
+
+                """
                 # Gradient for Thetavec hyper-parameters
                 for key, d_Thetavec_d_p in self.d_Thetavec_d_param.iteritems():
                     # Inner product
@@ -9483,6 +9496,7 @@ class ptaLikelihood(object):
 
                     # Determinant
                     gradient[key] -= 0.5 * np.sum(d_Thetavec_d_p / thetavec)
+                """
 
             if psr.jitterind is not None:
                 uindex = np.sum(self.npu[:ii])
@@ -9522,6 +9536,11 @@ class ptaLikelihood(object):
                 pslc = slice(ind, ind+nfreq)
                 self.freqb[pp, self.freqmask[pp,:]] = parameters[pslc]
 
+            # For computational efficiency, we'll have to memorize the
+            # B^{-1} b vectors
+            Binv_b_rn = np.zeros_like(self.Phivec)
+            Binv_diag_rn = np.zeros_like(self.Phivec)
+
             # Do some fancy stuff here per frequency
             for ii in range(0, len(self.Svec), 2):
                 msk = self.freqmask[:, ii]
@@ -9552,18 +9571,11 @@ class ptaLikelihood(object):
                 # Sine mode gradient
                 gradient[pinds_sin] -= sl.cho_solve(cf, bs)
 
-                # Gradient for B hyper-parameters
-                for key, d_Phivec_d_p in self.d_Phivec_d_param.iteritems():
-                    d_phivec_cos = d_Phivec_d_p[finds_cos]    # Sin & Cos the same
-                    d_phivec_sin = d_Phivec_d_p[finds_sin]    # Sin & Cos the same
-
-                    # Inner-product of the prior
-                    gradient[key] += 0.5 * np.sum(Lx_c**2 * d_phivec_cos)
-                    gradient[key] += 0.5 * np.sum(Lx_s**2 * d_phivec_sin)
-
-                    # Determinant of the prior
-                    gradient[key] -= 0.5 * np.sum(np.diag(c_inv) * d_phivec_cos)
-                    gradient[key] -= 0.5 * np.sum(np.diag(c_inv) * d_phivec_sin)
+                # Fill the gradient memorizations
+                Binv_b_rn[finds_cos] = Lx_c
+                Binv_b_rn[finds_sin] = Lx_s
+                Binv_diag_rn[finds_cos] = np.diag(c_inv)
+                Binv_diag_rn[finds_sin] = np.diag(c_inv)
 
                 # Gradient for Svec hyper-parameters
                 for key, d_Svec_d_p in self.d_Svec_d_param.iteritems():
@@ -9580,7 +9592,22 @@ class ptaLikelihood(object):
                     gradient[key] -= 0.5 * np.trace(np.dot(c_inv, scor_cos))
                     gradient[key] -= 0.5 * np.trace(np.dot(c_inv, scor_sin))
 
-        #ll = -0.5*np.sum(self.npobs)*np.log(2*np.pi) \
+            # The gradients for the B hyper-parameters (red noise)
+            for key, d_Phivec_d_p in self.d_Phivec_d_param.iteritems():
+                # Inner-product of the prior
+                gradient[key] += 0.5 * np.sum(Binv_b_rn**2 * d_Phivec_d_p)
+
+                # Determinant of the prior
+                gradient[key] -= 0.5 * np.sum(Binv_diag_rn * d_Phivec_d_p)
+
+            # The gradients for the B hyper-parameters (DM variations)
+            for key, d_Thetavec_d_p in self.d_Thetavec_d_param.iteritems():
+                # Inner product
+                gradient[key] += 0.5 * np.sum(Binv_b_dm_sqr * d_Thetavec_d_p)
+
+                # Determinant
+                gradient[key] -= 0.5 * np.sum(Binv_diag_dm * d_Thetavec_d_p)
+
         ll = -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) - \
             0.5*corr_xi2 - 0.5*corr_ldet
 
@@ -10090,11 +10117,13 @@ class ptaLikelihood(object):
 
                 # Cosine mode loglik
                 bc = self.freqb[msk, ii]
-                Lx_c = sl.cho_solve(cf, bc)
+                #Lx_c = sl.cho_solve(cf, bc)
+                Lx_c = np.dot(c_inv, bc)
 
                 # Sine mode
                 bs = self.freqb[msk, ii+1]
-                Lx_s = sl.cho_solve(cf, bs)
+                #Lx_s = sl.cho_solve(cf, bs)
+                Lx_s = np.dot(c_inv, bs)
 
                 # Red noise
                 # First derivatives (squared as well) dB
@@ -10102,8 +10131,9 @@ class ptaLikelihood(object):
                     d_phivec_cos1 = d_Phivec_d_p1[finds_cos]    # Sin & Cos the same
                     d_phivec_sin1 = d_Phivec_d_p1[finds_sin]    # Sin & Cos the same
 
-                    LdpLx_c = sl.cho_solve(cf, d_phivec_cos1 * Lx_c)
-                    LdpLx_s = sl.cho_solve(cf, d_phivec_sin1 * Lx_s)
+                    # Speed optimizations
+                    LdpLx_c = np.dot(c_inv, d_phivec_cos1 * Lx_c)
+                    LdpLx_s = np.dot(c_inv, d_phivec_sin1 * Lx_s)
 
                     # dBdb
                     hessian[pinds_cos, key1] += LdpLx_c
@@ -10111,8 +10141,13 @@ class ptaLikelihood(object):
                     hessian[pinds_sin, key1] += LdpLx_s
                     hessian[key1, pinds_sin] += LdpLx_s
 
+                    # Memorize for second-order Trace-cos, Trace-sin
+                    tracecos_prod1 = np.dot(c_inv, np.diag(d_phivec_cos1))
+                    tracesin_prod1 = np.dot(c_inv, np.diag(d_phivec_sin1))
+
                     # Combined with first derivatives dBdB
                     for key2, d_Phivec_d_p2 in self.d_Phivec_d_param.iteritems():
+                        # INEFFICIENT slicing
                         d_phivec_cos2 = d_Phivec_d_p2[finds_cos]
                         d_phivec_sin2 = d_Phivec_d_p2[finds_sin]
 
@@ -10123,16 +10158,14 @@ class ptaLikelihood(object):
                                 LdpLx_s)
 
                         # Trace -- cos
-                        prod1 = sl.cho_solve(cf, np.diag(d_phivec_cos1))
-                        prod2 = sl.cho_solve(cf, np.diag(d_phivec_cos2))
-                        hessian[key1, key2] += \
-                                0.5 * np.trace(np.dot(prod1, prod2))
+                        prod2 = np.dot(c_inv, np.diag(d_phivec_cos2))
+                        hessian[key1, key2] += 0.5 * np.trace(
+                                np.dot(tracecos_prod1, prod2))
 
                         # Trace -- sin
-                        prod1 = sl.cho_solve(cf, np.diag(d_phivec_sin1))
-                        prod2 = sl.cho_solve(cf, np.diag(d_phivec_sin2))
-                        hessian[key1, key2] += \
-                                0.5 * np.trace(np.dot(prod1, prod2))
+                        prod2 = np.dot(c_inv, np.diag(d_phivec_sin2))
+                        hessian[key1, key2] += 0.5 * np.trace(
+                                np.dot(tracesin_prod1, prod2))
 
                 # Red noise
                 # Second derivatives
@@ -10182,14 +10215,19 @@ class ptaLikelihood(object):
                             self.Scor[msk,:][:,msk]
 
                     # Sin & Cos correlation is the same
-                    LdpLx_c = sl.cho_solve(cf, np.dot(d_svec_corr1, Lx_c))
-                    LdpLx_s = sl.cho_solve(cf, np.dot(d_svec_corr1, Lx_s))
+                    #LdpLx_c = sl.cho_solve(cf, np.dot(d_svec_corr1, Lx_c))
+                    #LdpLx_s = sl.cho_solve(cf, np.dot(d_svec_corr1, Lx_s))
+                    LdpLx_c = np.dot(c_inv, np.dot(d_svec_corr1, Lx_c))
+                    LdpLx_s = np.dot(c_inv, np.dot(d_svec_corr1, Lx_s))
 
                     # dBdb
                     hessian[pinds_cos, key1] += LdpLx_c
                     hessian[key1, pinds_cos] += LdpLx_c
                     hessian[pinds_sin, key1] += LdpLx_s
                     hessian[key1, pinds_sin] += LdpLx_s
+
+                    # Memorize for second-order Trace-corr
+                    trace_prod1 = np.dot(c_inv, d_svec_corr1)
 
                     # Combined with first derivatives dBdB (GW - GW)
                     for key2, d_Svec_d_p2 in self.d_Svec_d_param.iteritems():
@@ -10203,10 +10241,11 @@ class ptaLikelihood(object):
                                 np.dot(d_svec_corr2, LdpLx_s))
 
                         # Trace -- sin & cos
-                        prod1 = sl.cho_solve(cf, d_svec_corr1)
-                        prod2 = sl.cho_solve(cf, d_svec_corr2)
+                        #prod1 = sl.cho_solve(cf, d_svec_corr1)
+                        #prod2 = sl.cho_solve(cf, d_svec_corr2)
+                        prod2 = np.dot(c_inv, d_svec_corr2)
                         hessian[key1, key2] += \
-                                np.trace(np.dot(prod1, prod2))
+                                np.trace(np.dot(trace_prod1, prod2))
 
                     # Red noise first derivatives dBdB (Red Noise - GW)
                     # NOTE: key1 != key2, ever, so symmetrize...
@@ -10225,20 +10264,24 @@ class ptaLikelihood(object):
                                 LdpLx_s)
 
                         # Trace -- cos
-                        prod1 = sl.cho_solve(cf, d_svec_corr1)
-                        prod2 = sl.cho_solve(cf, np.diag(d_phivec_cos2))
+                        #prod1 = sl.cho_solve(cf, d_svec_corr1)
+                        #prod2 = sl.cho_solve(cf, np.diag(d_phivec_cos2))
+                        # INEFFICIENT?
+                        prod2 = np.dot(c_inv, np.diag(d_phivec_cos2))
                         hessian[key1, key2] += \
-                                0.5 * np.trace(np.dot(prod1, prod2))
+                                0.5 * np.trace(np.dot(trace_prod1, prod2))
                         hessian[key2, key1] += \
-                                0.5 * np.trace(np.dot(prod1, prod2))
+                                0.5 * np.trace(np.dot(trace_prod1, prod2))
 
                         # Trace -- sin
-                        prod1 = sl.cho_solve(cf, d_svec_corr1)
-                        prod2 = sl.cho_solve(cf, np.diag(d_phivec_sin2))
+                        #prod1 = sl.cho_solve(cf, d_svec_corr1)
+                        # INEFFICIENT?
+                        #prod2 = sl.cho_solve(cf, np.diag(d_phivec_sin2))
+                        prod2 = np.dot(c_inv, np.diag(d_phivec_sin2))
                         hessian[key1, key2] += \
-                                0.5 * np.trace(np.dot(prod1, prod2))
+                                0.5 * np.trace(np.dot(trace_prod1, prod2))
                         hessian[key2, key1] += \
-                                0.5 * np.trace(np.dot(prod1, prod2))
+                                0.5 * np.trace(np.dot(trace_prod1, prod2))
 
                 ##### GW Signals #####
                 # Second derivatives
@@ -10310,6 +10353,24 @@ class ptaLikelihood(object):
 
         @param mode:    The Fourier mode number
         """
+        # INEFFICIENT. Do this in Cython?
+        gw_pcdoubled = self.Svec
+        #msk = self.freqmask[:, mode]
+
+        #cov = self.Scor[msk,:][:,msk] * gw_pcdoubled[mode]
+        cov = self.Scor * gw_pcdoubled[mode]
+
+        freq_offsets = np.append([0], np.cumsum(self.npf))
+
+        for ii, psr in enumerate(self.ptapsrs):
+            #ind = np.sum(msk[:ii])
+            #cov[ind, ind] += self.Phivec[np.sum(self.npf[:ii])+mode]
+            cov[ii, ii] += self.Phivec[freq_offsets[ii]+mode]
+
+        return cov
+
+        """
+        # INEFFICIENT
         gw_pcdoubled = self.Svec
         msk = self.freqmask[:, mode]
 
@@ -10319,6 +10380,7 @@ class ptaLikelihood(object):
             cov[ind, ind] += self.Phivec[np.sum(self.npf[:ii])+mode]
 
         return cov
+        """
 
     def gibbs_construct_all_freqcov(self):
         """
