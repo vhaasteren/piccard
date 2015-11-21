@@ -844,7 +844,7 @@ def makeResidualsPlot(ax, toas, residuals, toaerrs, flags, \
 
 def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
         parametersfile=None, sampler='auto', make1dplots=True, \
-        maxpages=-1, skipTMP=True, triplot_hm=False):
+        maxpages=-1, skipTMP=True, triplot_hm=False, new_pt_file_order=False):
     """
     Given an MCMC chain file, and an output directory, make all the results
     plots
@@ -866,7 +866,7 @@ def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
     # Read the mcmc chain
     (llf, lpf, chainf, labels, pulsarid, pulsarname, stype, mlpso, mlpsopars) = \
             ReadMCMCFile(chainfile, parametersfile=parametersfile, \
-            sampler=sampler, incextra=True)
+            sampler=sampler, incextra=True, new_pt_file_order=new_pt_file_order)
 
     # Remove burn-in and thin the chain
     ll = llf[burnin::thin]
@@ -1069,7 +1069,7 @@ def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
     # Plot power-spectra from the Fourier components here. Even works when we
     # have modelled the spectrum itself with a power-law
     for psr in list(set(pulsarid)):
-        for signal in ['Fmat', 'Fmat_dm']:
+        for signal in ['Fmat', 'Fmat_dm', 'fouriermode_xi', 'dmfouriermode_xi']:
             sigind = (np.array(stype) == signal)
             psrind = (np.array(pulsarid) == psr)
             ind = np.logical_and(sigind, psrind)
@@ -1090,10 +1090,10 @@ def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
                 else:
                     spectrummlpso = None
 
-                if signal == 'Fmat':
+                if signal in ['Fmat', 'fouriermode_xi']:
                     title = 'Mode Power Spectral Density noise {0}'.format(\
                             pulsarname[ind[0]])
-                elif signal == 'Fdmmat':
+                elif signal in ['Fdmmat', 'dmfouriermode_xi']:
                     title = 'Mode Power Spectral Density DM variations {0}'.format(\
                             pulsarname[ind[0]])
 
@@ -1109,7 +1109,7 @@ def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
     # Plot the epoch-averaged residuals. These plots result from the jitter
     # analysis, and only represent the jitter signal
     for psr in list(set(pulsarid)):
-        for signal in ['Residual_ave']:
+        for signal in ['Residual_ave', 'jittermode_xi']:
             sigind = (np.array(stype) == signal)
             psrind = (np.array(pulsarid) == psr)
             ind = np.logical_and(sigind, psrind)
@@ -1149,7 +1149,7 @@ def makeAllPlots(chainfile, outputdir, burnin=0, thin=1, \
     # Make triplots of the timing model parameters. But... do it per page. No
     # more than 8 parameters on one page
     for psr in list(set(pulsarid)):
-        for signal in ['Mmat']:
+        for signal in ['Mmat', 'timingmodel_xi']:
             sigind = (np.array(stype) == signal)
             psrind = (np.array(pulsarid) == psr)
             ind = np.logical_and(sigind, psrind)
@@ -2429,7 +2429,7 @@ Obtain the MCMC chain as a numpy array, and a list of parameter indices
 @return: logposterior (1D), loglikelihood (1D), parameter-chain (2D), parameter-labels(1D)
 """
 def ReadMCMCFile(chainfile, parametersfile=None, sampler='auto', nolabels=False,
-        incextra=False):
+        incextra=False, new_pt_file_order=False):
     parametersfile = chainfile+'.parameters.txt'
     mnparametersfile = chainfile+'.mnparameters.txt'
     mnparametersfile2 = chainfile+'post_equal_weights.dat.mnparameters.txt'
@@ -2555,9 +2555,14 @@ def ReadMCMCFile(chainfile, parametersfile=None, sampler='auto', nolabels=False,
         logpost = None
         samples = chain[:,:-1]
     elif sampler.lower() == 'ptmcmc':
-        logpost = chain[:,0]
-        loglik = chain[:,1]
-        samples = chain[:,3:]
+        if new_pt_file_order:
+            samples = chain[:,:-4]
+            logpost = chain[:,-4]
+            loglik = chain[:,-3]
+        else:
+            logpost = chain[:,0]
+            loglik = chain[:,1]
+            samples = chain[:,3:]
 
     if incextra:
         retvals = (logpost, loglik, samples, parlabels, \

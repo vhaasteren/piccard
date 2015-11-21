@@ -3449,7 +3449,7 @@ class ptaLikelihood(object):
                         "pwidth":[0.1],
                         "pstart":[1.0],
                         "interval":[True],
-                        "prior":'flat'
+                        "prior":'flatlog'   # TODO: confusing. This means uniform
                         })
                     signals.append(newsignal)
             else:
@@ -3465,7 +3465,7 @@ class ptaLikelihood(object):
                     "pwidth":[0.1],
                     "pstart":[1.0],
                     "interval":[True],
-                    "prior":'flat'
+                    "prior":'flatlog'   # TODO: confusing. This means uniform
                     })
                 signals.append(newsignal)
 

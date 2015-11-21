@@ -217,11 +217,11 @@ class likelihoodWrapper(object):
         hessian = self.logjac_hessian(p)
         dxdpf = self.dxdp_full(p)
 
-        # TODO: this, or transpose the dxdpf? Hmmzz
         hessian += np.dot(dxdpf.T, np.dot(orig_hessian, dxdpf))
 
         # We also need the gradient
         # TODO: Why is there a minus sign? -=
+        #       I guess the interval d2xd2p has a '-' wrong. Check that!
         hessian -= np.diag(self.d2xd2p(p)*orig_lp_grad)
 
         return hessian
@@ -519,8 +519,6 @@ class stingrayLikelihood(likelihoodWrapper):
         """
         if self._cachefunc == func:
             self._cachefunc = None
-            #self._x = None
-            #self._p = None
 
     def have_cache(self):
         """Whether or not we have values cache already"""
@@ -1125,7 +1123,6 @@ class stingrayLikelihood(likelihoodWrapper):
     
     def logjacobian_grad(self, p):
         """Return the log of the Jacobian at point p"""
-        #self.stingray_transformation(p, calc_gradient=True)
         self.cache(p, self.logjacobian_grad, direction='backward',
                 calc_gradient=True)
         self.uncache(self.logjacobian_grad)
@@ -1133,7 +1130,6 @@ class stingrayLikelihood(likelihoodWrapper):
         return self._log_jacob, self._gradient
 
     def dxdp(self, p):
-        #self.stingray_transformation(p, calc_gradient=False)
         self.cache(p, self.dxdp, direction='backward',
                 calc_gradient=False)
         self.uncache(self.dxdp)
@@ -1158,7 +1154,6 @@ class stingrayLikelihood(likelihoodWrapper):
 
     def loglikelihood_grad(self, p):
         """The log-likelihood in the new coordinates"""
-        #x = self.backward(p)
         self.cache(p, self.loglikelihood_grad, direction='backward',
                 calc_gradient=True)
 
@@ -1180,7 +1175,6 @@ class stingrayLikelihood(likelihoodWrapper):
         """
         self.cache(p, self.logprior_grad, direction='backward',
                 calc_gradient=True)
-        #x = self.backward(p)
 
         lp, lp_grad = self.likob.logprior_grad(self._x)
         lpt = lp
@@ -1203,7 +1197,6 @@ class stingrayLikelihood(likelihoodWrapper):
 
     def loglikelihood(self, p):
         """The log-likelihood in the new coordinates"""
-        #x = self.backward(p)
         self.cache(p, self.loglikelihood, direction='backward',
                 calc_gradient=False)
 
@@ -1219,7 +1212,6 @@ class stingrayLikelihood(likelihoodWrapper):
         Note: to preserve logposterior = loglikelihood + logprior, this term
               does not include the jacobian transformation
         """
-        #x = self.backward(p)
         self.cache(p, self.logprior, direction='backward', calc_gradient=False)
 
         lp, lp_grad = self.likob.logprior_grad(self._x)
@@ -1258,7 +1250,7 @@ class whitenedLikelihood(likelihoodWrapper):
             # Try Cholesky
             self._ch = sl.cholesky(-hessian, lower=True)
 
-            # Faste solve
+            # Fast solve
             self._chi = sl.solve_triangular(self._ch, np.eye(len(self._ch)),
                     trans=0, lower=True)
             self._lj = np.sum(np.log(np.diag(self._chi)))
