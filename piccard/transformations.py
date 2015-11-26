@@ -37,7 +37,7 @@ class likelihoodWrapper(object):
         
         self.initBounds()
 
-        # We use a simplistic form of caching in stingrayLikeli8hood
+        # We use a simplistic form of caching in stingrayLikelihood
         # TODO: use descriptor decorators
         self._cachefunc = None      # For caching tracking
         self._p = None              # Cached values for coordinates
