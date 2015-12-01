@@ -1110,51 +1110,49 @@ class ptaPulsar(object):
         return Zmat, zmask, zmask_only
 
     def defineStingrayTransform(self):
-        """Define the mu and sigma offsets of the stingray transformation
-        """
+        """Define the mu and sigma offsets of the stingray transformation"""
+
         # Use EFAC = 1
         Nvec = self.toaerrs**2
+        Zmat = self.Zmat
 
-        ZNZ = np.dot(self.Zmat.T / Nvec, self.Zmat)
+        # The 'basic' Stingray transform quantities (used for parameters that
+        # have a hyper-prior on them)
+        self.sr_ZNZvec = np.diag(np.dot(Zmat.T / Nvec, Zmat))
+        self.sr_ZNyvec = np.dot(Zmat.T, self.residuals / Nvec)
 
-        if False:
-            # Figure out the 'maximum'/'conservative' prior on all non timing-model
-            # parameters
-            res_rms = np.std(self.residuals)
-            Zrms = np.std(self.Zmat, axis=0, ddof=0)
-            amp_prior = res_rms / Zrms
-            constraints = 1.0 / amp_prior**2
-            constraints[:self.Mmat.shape[1]] = 0.0  # Don't constrain timing model
+        # The timing model Stingray Transform quantities
+        # For numerical stability, we'll use conservative constraints on all the
+        # noise low-level parameters, even for the fully unconstrained ZNZ. This
+        # will still be orders of magnitude out of the parameter range that is
+        # allowed by the data.
+        ZNZ = np.dot(Zmat.T / Nvec, Zmat)
+        res_rms = np.std(self.residuals)            # RMS of residuals
+        Zrms = np.std(Zmat, axis=0, ddof=0)         # RMS of Z-column
+        amp_prior = res_rms / Zrms                  # Relative amplitude
+        constraints = 1.0 / amp_prior**2            # Constraint value
+        constraints[:self.Mmat.shape[1]] = 0.0      # Don't constrain timing model
 
-            # Get the (auto-) covariance of this conservative system
-            Sigma_inv = ZNZ + np.diag(constraints)
-            U, s, Vt = sl.svd(Sigma_inv)
-            Sigma = np.dot(Vt.T / s, U.T)
+        # TNT_1 is the 'unconstrained' component
+        TNT_1 = ZNZ + 1.0e-3 * np.diag(constraints) # 1e-3 << 1 (conservative)
+        cf = sl.cho_factor(TNT_1)
+        TNTi_1 = sl.cho_solve(cf, np.eye(len(TNT_1)))
 
-            # Check whether all entries are positive
-            if not np.all(np.diag(Sigma)) > 0.0:
-                raise ValueError("Degeneracies not (yet) supported for stingray")
-            #else:
-            #    raise ValueError("Just checking")
+        # TNT_0 is the fully constrained component (as if there is no noise)
+        ntmpars = self.Mmat_g.shape[1]
+        TNT_0 = np.dot(Zmat[:,:ntmpars].T/Nvec, Zmat[:,:ntmpars])
+        cf = sl.cho_factor(TNT_0)
+        TNTi_0 = sl.cho_solve(cf, np.eye(len(TNT_0)))
 
-            # Use the variances of this system as a gauge for the stingray
-            # transformation
-            self.ZNZ_srvec = 1.0 / np.diag(Sigma)
+        TNTi_0_vec = np.diag(TNTi_0)[:ntmpars]
+        TNTi_1_vec = np.diag(TNTi_1)[:ntmpars]
 
-            #Qs,Rs = sl.qr(ZNZ) 
-            #ZNZi = sl.solve(Rs, Qs.T)
-            #cf = sl.cho_factor(ZNZ)
-            #ZNZi = sl.cho_solve(cf, np.eye(len(ZNZ)))
-            #eigvec, eigval = sl.eigh(ZNZ)
-            #ZNZi = np.dot(eigvec / eigval, eigvec.T)
-            #U, s, Vt = sl.svd(ZNZ)
-            #ZNZi = np.dot(Vt.T / s, U.T)
-            #self.ZNZ_srvec = np.abs(1.0 / np.diag(ZNZi))
-        else:
-            self.ZNZ_srvec = np.diag(np.dot(self.Zmat.T / Nvec, self.Zmat))
-
-        # This one is not changed
-        self.ZNy_srvec = np.dot(self.Zmat.T, self.residuals / Nvec)
+        # The timing model Stingray quantities are now calculable as follows
+        self.sr_gamma = ZNZ[:ntmpars, ntmpars:]
+        self.sr_A = np.diag(ZNZ)[ntmpars:]
+        self.sr_delta = np.sum(self.sr_gamma / self.sr_A, axis=1)
+        self.sr_alpha = self.sr_delta / (1.0/TNTi_0_vec - 1.0/TNTi_1_vec)
+        self.sr_beta = self.sr_alpha / TNTi_0_vec
 
     """
     For every pulsar, quite a few Auxiliary quantities (like GtF etc.) are
