@@ -319,6 +319,10 @@ class likelihoodWrapper(object):
         return self.likob.ptasignals
 
     @property
+    def npm(self):
+        return self.likob.npm
+
+    @property
     def npf(self):
         return self.likob.npf
 
@@ -610,6 +614,7 @@ class stingrayLikelihood(likelihoodWrapper):
                 # Have a dm noise stingray transformation
                 fdmindex = np.sum(self.npfdm[:ii])
                 nfdms = self.npfdm[ii]
+                fslc = slice(fdmindex, fdmindex+nfdms)
                 thetavec = self.Thetavec[fdmindex:fdmindex+nfdms]
 
                 Sigmavec = 1.0/(psr.sr_ZNZvec[psr.Zmask_D_only] + 1.0 / thetavec)
@@ -685,7 +690,7 @@ class stingrayLikelihood(likelihoodWrapper):
         self._log_jacob = log_jacob     # Log-jacobian of transform
         self._gradient = gradient       # Gradient of log-jacobian
         self._d_b_d_xi = d_b_d_xi       # d_x_d_p
-        self._d_b_d_B = d_b_d_B         # d_x_d_B, with B hyper-pars
+        self._d_b_d_B = d_b_d_B         # d_x_d_B, with B hyper-pars (non-diag)
 
     def stingray_hessian_quants(self, p, set_hyper_pars=True):
         """Calculate quantities necessary for the Hessian calculations"""
@@ -1074,24 +1079,14 @@ class stingrayLikelihood(likelihoodWrapper):
         for key, d_Phivec_d_p in self.d_Phivec_d_param.iteritems():
             extra_grad[:, key] += np.sum(ll_grad2_rn * d_b_d_B_rn *
                     d_Phivec_d_p, axis=1)
-            #for aa in range(a):
-            #    extra_grad[aa, key] += np.sum(ll_grad2[aa, pslc] * 
-            #            self._d_b_d_B[pslc] * d_Phivec_d_p[fslc])
 
         for key, d_Svec_d_p in self.d_Svec_d_param.iteritems():
             extra_grad[:, key] += np.sum(ll_grad2_rn * d_b_d_B_rn *
                     d_Svec_d_p, axis=1)
-            #for aa in range(a):
-            #    extra_grad[aa, key] += np.sum(ll_grad2[aa, pslc] * 
-            #            self._d_b_d_B[pslc] * d_Svec_d_p[fslc])
 
         for key, d_Thetavec_d_p in self.d_Thetavec_d_param.iteritems():
             extra_grad[:, key] += np.sum(ll_grad2_dm * d_b_d_B_dm *
                     d_Thetavec_d_p, axis=1)
-
-            #for aa in range(a):
-            #    extra_grad[aa, key] += np.sum(ll_grad2[aa, pslc] * 
-            #            self._d_b_d_B[pslc] * d_Thetavec_d_p)
 
         return extra_grad.reshape(ll_grad.shape)
 
@@ -1250,7 +1245,7 @@ class stingrayLikelihood(likelihoodWrapper):
         return lp
 
 
-class tmStingrayLikelihood(likelihoodWrapper):
+class tmStingrayLikelihood(stingrayLikelihood):
     """
     Wrapper class of the likelihood for Hamiltonian samplers. This implements a
     coordinate transformation for all low-level parameters that gets rid of the
@@ -1263,77 +1258,11 @@ class tmStingrayLikelihood(likelihoodWrapper):
         """Initialize the tmStingrayLikelihood with a ptaLikelihood object"""
         super(tmStingrayLikelihood, self).__init__(h5filename, jsonfilename, **kwargs)
 
-    def initBounds(self):
-        """Initialize the parameter bounds"""
-        super(tmStingrayLikelihood, self).initBounds()
-
-        self.setLowLevelStart()
-
-    def setLowLevelStart(self):
-        """Set the starting-point of the low-level parameters, now that we have
-        a stingray transform"""
-        low_level_pars = ['timingmodel_xi', 'fouriermode_xi',
-                'dmfouriermode_xi', 'jittermode_xi']
-
-        if self.pstart is None:
-            return
-
-        pstart = self.pstart
-
-        for ii, m2signal in enumerate(self.ptasignals):
-            if m2signal['stype'] in low_level_pars:
-                # We have parameters that need to be re-set
-                sind = m2signal['parindex']
-                msk = m2signal['bvary']
-                npars = np.sum(msk)
-                #sigstart = m2signal['pstart'][msk]  # Original pars
-
-                # We use random starting positions, close to zero
-                #sigstart = np.ones(npars) * (0.1+0.05*np.random.randn(npars))
-                sigstart = np.ones(npars) * 0.1
-
-                pstart[sind:sind+npars] = sigstart
-
-        # We cannot do in-place because of possible lower-level transformations
-        # Need to set the hyper parameters in some way
-        self.pstart = pstart
-
-    def cache(self, pars, func, direction='backward', calc_gradient=True):
-        """Perform the forward coordinate transformation, and cache the result
-        
-        TODO: Make this functionality into a descriptor decorator
-        TODO: Keep track of whether or not we have gradients
-        """
-        if self._cachefunc is None:
-            self._cachefunc = func
-
-            # Set hyper parameters
-            self.stingray_transformation(pars, calc_gradient=calc_gradient,
-                    set_hyper_pars=True)
-
-            if direction == 'forward':
-                self._x = np.copy(pars)
-                self._p = self.forward(self._x)
-            elif direction == 'backward':
-                self._p = np.copy(pars)
-                self._x = self.backward(self._p)
-            else:
-                raise ValueError("Direction of transformation unknown")
-
-            # Update all the deterministic sources
-            self.set_det_sources(self._x)
-
-    def uncache(self, func):
-        """Perform the forward coordinate transformation, and cache the result
-        
-        TODO: Make this functionality into a descriptor decorator
-        """
-        if self._cachefunc == func:
-            self._cachefunc = None
-
-    def have_cache(self):
-        """Whether or not we have values cache already"""
-        return self._cachefunc is not None
+    #def initBounds(self):
+    #def setLowLevelStart(self):
+    #def cache(self, pars, func, direction='backward', calc_gradient=True):
+    #def uncache(self, func):
+    #def have_cache(self):
 
     def stingray_transformation(self, p, calc_gradient=True,
             set_hyper_pars=True):
@@ -1366,22 +1295,46 @@ class tmStingrayLikelihood(likelihoodWrapper):
         d_lj_d_phi = np.zeros_like(self.Phivec)
         d_lj_d_theta = np.zeros_like(self.Thetavec)
 
+        """Stingray definitions:
+        # The timing model Stingray quantities are now calculable as follows
+        self.sr_gamma = ZNZ[:ntmpars,:]  #[:ntmpars, ntmpars:]
+        self.sr_A = np.diag(ZNZ)  #[ntmpars:]
+        self.sr_delta = np.sum(self.sr_gamma / self.sr_A, axis=1)
+        self.sr_alpha = self.sr_delta / (1.0/TNTi_0_vec - 1.0/TNTi_1_vec)
+        self.sr_beta = self.sr_alpha / TNTi_0_vec
+        """
+
+        # For efficiency, calculate the following for the timing-model stingray
+        # stuff
+        ntmptot = np.sum(self.npm)
+        d_lj_d_phi_tm = np.zeros((len(self.Phivec), ntmptot))
+        d_lj_d_theta_tm = np.zeros((len(self.Thetavec), ntmptot))
+        d_lj_d_J_tm = np.zeros((np.sum(self.npu), ntmptot))
+        d_lj_d_phi_std = np.zeros_like(self.Phivec)
+        d_lj_d_theta_std = np.zeros_like(self.Thetavec)
+        d_lj_d_J_std = np.zeros_like(np.sum(self.npu))
+
         for ii, psr in enumerate(self.ptapsrs):
-            if psr.timingmodelind is not None:
-                # Have a timing model parameter stingray transformation
-                Sigmavec = 1.0/psr.sr_ZNZvec[psr.Zmask_M_only]  # No hyper pars
-                std = np.sqrt(Sigmavec)
-                mean = Sigmavec * psr.sr_ZNyvec[psr.Zmask_M_only]
-                index = psr.timingmodelind
-                npars = len(std)
-                slc = slice(index, index+npars)
+            #if psr.timingmodelind is not None:
+            #    # Have a timing model parameter stingray transformation
+            #    Sigmavec = 1.0/psr.sr_ZNZvec[psr.Zmask_M_only]  # No hyper pars
+            #    std = np.sqrt(Sigmavec)
+            #    mean = Sigmavec * psr.sr_ZNyvec[psr.Zmask_M_only]
+            #    index = psr.timingmodelind
+            #    npars = len(std)
+            #    slc = slice(index, index+npars)
 
-                # The linear transformation is now defined as:
-                mu[slc] = mean
-                sigma[slc] = std
+            #    # The linear transformation is now defined as:
+            #    mu[slc] = mean
+            #    sigma[slc] = std
 
-                log_jacob += np.sum(np.log(std))
-                d_b_d_xi[slc] = std
+            #    log_jacob += np.sum(np.log(std))
+            #    d_b_d_xi[slc] = std
+
+            # For the timing-model stingray of this pulsar, we will be filling
+            # some quantities for the low-level parameters, so we can collect
+            # results later on
+            sr_gamma_frac_den = np.zeros(psr.sr_gamma.shape[1])
 
             if psr.fourierind is not None:
                 # Have a red noise stingray transformation
@@ -1403,6 +1356,7 @@ class tmStingrayLikelihood(likelihoodWrapper):
 
                 # Memorize d_lj_d_phi for down below
                 d_lj_d_phi[fslc] = 0.5 * Sigmavec / phivec**2
+                d_lj_d_phi_std[fslc] = std
 
                 d_std_d_B = 0.5 * (Sigmavec ** 1.5) / phivec**2
                 d_mean_d_B = mean * Sigmavec / phivec**2
@@ -1413,10 +1367,18 @@ class tmStingrayLikelihood(likelihoodWrapper):
                 d_b_d_xi[slc] = std
                 log_jacob += np.sum(np.log(std))
 
+                # Fill the quantities for the timing-model stingray
+                gslc = psr.Zmask_F_only
+                mslc = slice(np.sum(self.npm[:ii]), np.sum(self.npm[:ii+1]))
+                sr_gamma_frac_den[gslc] = psr.sr_A[gslc] + 1.0 / phivec
+                d_lj_d_phi_tm[fslc, mslc] = psr.sr_gamma[:,gslc] / \
+                            (phivec**2*(psr.sr_A[gslc] + 1.0/phivec)**2)
+
             if psr.dmfourierind is not None:
                 # Have a dm noise stingray transformation
                 fdmindex = np.sum(self.npfdm[:ii])
                 nfdms = self.npfdm[ii]
+                fslc = slice(fdmindex, fdmindex+nfdms)
                 thetavec = self.Thetavec[fdmindex:fdmindex+nfdms]
 
                 Sigmavec = 1.0/(psr.sr_ZNZvec[psr.Zmask_D_only] + 1.0 / thetavec)
@@ -1432,6 +1394,7 @@ class tmStingrayLikelihood(likelihoodWrapper):
 
                 # Memorize d_lj_d_theta for down below
                 d_lj_d_theta[fslc] = 0.5 * Sigmavec / thetavec**2
+                d_lj_d_theta_std[fslc] = std
 
                 d_std_d_B = 0.5 * (Sigmavec ** 1.5) / thetavec**2
                 d_mean_d_B = mean * Sigmavec / thetavec**2
@@ -1442,10 +1405,18 @@ class tmStingrayLikelihood(likelihoodWrapper):
                 d_b_d_xi[slc] = std
                 log_jacob += np.sum(np.log(std))
 
+                # Fill the quantities for the timing-model stingray
+                gslc = psr.Zmask_D_only
+                mslc = slice(np.sum(self.npm[:ii]), np.sum(self.npm[:ii+1]))
+                sr_gamma_frac_den[gslc] = psr.sr_A[gslc] + 1.0 / thetavec
+                d_lj_d_theta_tm[fslc, mslc] = psr.sr_gamma[:,gslc] / \
+                            (thetavec**2*(psr.sr_A[gslc] + 1.0/thetavec)**2)
+
             if psr.jitterind is not None:
                 # Have an ecor stingray transformation
                 uindex = np.sum(self.npu[:ii])
                 nus = self.npu[ii]
+                fslc = slice(uindex, uindex+nus)
 
                 Sigmavec = 1.0/(psr.sr_ZNZvec[psr.Zmask_U_only] + \
                         1.0 / psr.Jvec)
@@ -1459,12 +1430,25 @@ class tmStingrayLikelihood(likelihoodWrapper):
                 mu[slc] = mean
                 sigma[slc] = std
 
+                ######################################
+                # Timing model Stingray calculations #
+                ######################################
+                gslc = psr.Zmask_U_only
+                mslc = slice(np.sum(self.npm[:ii]), np.sum(self.npm[:ii+1]))
+                sr_gamma_frac_den[gslc] = psr.sr_A[gslc] + 1.0 / psr.Jvec
+                d_lj_d_J_tm[fslc, mslc] = psr.sr_gamma[:,gslc] / \
+                            (psr.Jvec**2*(psr.sr_A[gslc] + 1.0/psr.Jvec)**2)
+
+                d_lj_d_J_std[fslc] = std
+
                 # Do jitter gradients here, since they are kept track of on a
                 # per-pulsar basis
                 if calc_gradient:
                     for key, value in psr.d_Jvec_d_param.iteritems():
                         d_lj_d_J = 0.5 * Sigmavec / psr.Jvec**2
                         gradient[key] += np.sum(d_lj_d_J * value)
+
+                        # TODO: use d_lj_d_J_tm here
 
                 d_std_d_B = 0.5 * (Sigmavec ** 1.5) / psr.Jvec**2
                 d_mean_d_B = mean * Sigmavec / psr.Jvec**2
@@ -1475,10 +1459,41 @@ class tmStingrayLikelihood(likelihoodWrapper):
                 d_b_d_xi[slc] = std
                 log_jacob += np.sum(np.log(std))
 
+            if psr.timingmodelind is not None:
+                # Now have all we need for the Stingray transformation
+                Sigmavec = psr.sr_alpha / (psr.sr_beta - np.sum(
+                        psr.sr_gamma / sr_gamma_frac_den, axis=1))
+                std = np.sqrt(Sigmavec)
+                mean = Sigmavec * psr.sr_ZNyvec[psr.Zmask_M_only]
+                index = psr.timingmodelind
+                npars = len(std)
+                slc = slice(index, index+npars)
+
+                # The linear transformation is now defined as:
+                mu[slc] = mean
+                sigma[slc] = std
+
+                log_jacob += np.sum(np.log(std))
+                d_b_d_xi[slc] = std
+
         if calc_gradient:
+            # For the timing model Stingray log-jacobian gradient, we need to
+            # multiply the up-to-now recorded values with the full coefficient,
+            # summed over the noise low-level parameters
+            d_lj_tm_coeff = psr.sr_alpha / (psr.sr_beta - np.sum(
+                    psr.sr_gamma / sr_gamma_frac_den, axis=1))**2
+            d_lj_d_phi_tm = (d_lj_d_phi_tm.T * d_lj_tm_coeff).T
+            d_lj_d_theta_tm = (d_lj_d_theta_tm.T * d_lj_tm_coeff).T
+            d_lj_d_J_tm = (d_lj_d_J_tm.T * d_lj_tm_coeff).T
+
             # Red noise
             for key, value in self.d_Phivec_d_param.iteritems():
+                # Log-jacobian for red noise Fourier terms
                 gradient[key] += np.sum(d_lj_d_phi * value)
+
+                # Log-jacobian for timing model (Just add the whole shebang)
+                d_J_d_B = (d_lj_d_phi_tm.T * (0.5 / d_lj_d_phi_std**2) ).T
+                gradient[key] = np.sum(np.sum(d_J_d_B.T * value, axis=0))
 
             # GW signals
             for key, value in self.d_Svec_d_param.iteritems():
@@ -1818,10 +1833,7 @@ class tmStingrayLikelihood(likelihoodWrapper):
 
         return hessian
 
-    def d2xd2p(self, p):
-        """Derivative of x wrt p (jacobian for chain-rule) - diagonal"""
-        # This is all done in the log-jacobian Hessian for the Stingray...
-        return np.zeros_like(p)
+    #def d2xd2p(self, p):
 
     def dxdp_nondiag(self, p, ll_grad):
         """Non-diagonal derivative of x wrt p (jacobian for chain-rule)
@@ -1881,26 +1893,30 @@ class tmStingrayLikelihood(likelihoodWrapper):
         for key, d_Phivec_d_p in self.d_Phivec_d_param.iteritems():
             extra_grad[:, key] += np.sum(ll_grad2_rn * d_b_d_B_rn *
                     d_Phivec_d_p, axis=1)
-            #for aa in range(a):
-            #    extra_grad[aa, key] += np.sum(ll_grad2[aa, pslc] * 
-            #            self._d_b_d_B[pslc] * d_Phivec_d_p[fslc])
 
         for key, d_Svec_d_p in self.d_Svec_d_param.iteritems():
             extra_grad[:, key] += np.sum(ll_grad2_rn * d_b_d_B_rn *
                     d_Svec_d_p, axis=1)
-            #for aa in range(a):
-            #    extra_grad[aa, key] += np.sum(ll_grad2[aa, pslc] * 
-            #            self._d_b_d_B[pslc] * d_Svec_d_p[fslc])
 
         for key, d_Thetavec_d_p in self.d_Thetavec_d_param.iteritems():
             extra_grad[:, key] += np.sum(ll_grad2_dm * d_b_d_B_dm *
                     d_Thetavec_d_p, axis=1)
 
-            #for aa in range(a):
-            #    extra_grad[aa, key] += np.sum(ll_grad2[aa, pslc] * 
-            #            self._d_b_d_B[pslc] * d_Thetavec_d_p)
-
         return extra_grad.reshape(ll_grad.shape)
+
+
+    ############################################################################
+    ############################################################################
+    ############################################################################
+    ############################################################################
+    ####                                                                    ####
+    ####    Can probably delete the tmStingrayLikelihood stuff below,       ####
+    ####   since it needs not be modified from the stingrayLikelihood       ####
+    ####                                                                    ####
+    ############################################################################
+    ############################################################################
+    ############################################################################
+    ############################################################################
 
     def forward(self, x):
         """Forward transform the real coordinates (with Stingray) to the
@@ -2055,6 +2071,19 @@ class tmStingrayLikelihood(likelihoodWrapper):
 
         self.uncache(self.logprior)
         return lp
+
+    ############################################################################
+    ############################################################################
+    ############################################################################
+    ############################################################################
+    ####                                                                    ####
+    ####    Can probably delete the tmStingrayLikelihood stuff above,       ####
+    ####   since it needs not be modified from the stingrayLikelihood       ####
+    ####                                                                    ####
+    ############################################################################
+    ############################################################################
+    ############################################################################
+    ############################################################################
 
 
 

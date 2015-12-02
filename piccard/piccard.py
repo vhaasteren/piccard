@@ -1148,8 +1148,8 @@ class ptaPulsar(object):
         TNTi_1_vec = np.diag(TNTi_1)[:ntmpars]
 
         # The timing model Stingray quantities are now calculable as follows
-        self.sr_gamma = ZNZ[:ntmpars, ntmpars:]
-        self.sr_A = np.diag(ZNZ)[ntmpars:]
+        self.sr_gamma = ZNZ[:ntmpars,:]  #[:ntmpars, ntmpars:]
+        self.sr_A = np.diag(ZNZ)  #[ntmpars:]
         self.sr_delta = np.sum(self.sr_gamma / self.sr_A, axis=1)
         self.sr_alpha = self.sr_delta / (1.0/TNTi_0_vec - 1.0/TNTi_1_vec)
         self.sr_beta = self.sr_alpha / TNTi_0_vec
@@ -1926,7 +1926,7 @@ class ptaPulsar(object):
                     #h5df.addData(self.name, 'pic_AoGE', self.AoGE)
                     #h5df.addData(self.name, 'pic_AoGEE', self.AoGEE)
 
-        if likfunc in ['mark14', 'mark13', 'mark12', 'gibbs'] or write == 'all':
+        if likfunc in ['mark14', 'mark13', 'mark12', 'gibbs']:
             # Set the band-limited F-matrices
             self.FBmats = []
             self.Fbands = []
@@ -1992,6 +1992,8 @@ class ptaPulsar(object):
                 h5df.addData(self.name, 'pic_Zmat', self.Zmat[self.iisort, :])
                 h5df.addData(self.name, 'pic_tmpConv', self.tmpConv)
                 h5df.addData(self.name, 'pic_tmpConvi', self.tmpConvi)
+
+        if likfunc in ['mark14', 'mark13']:
 
             # Define the stingray transformation (for EFAC = 1)
             self.defineStingrayTransform()
@@ -2399,6 +2401,8 @@ class ptaPulsar(object):
 
             self.Wvec = np.zeros(self.Mmat.shape[0]-self.Mmat.shape[1])
             self.Wovec = np.zeros(0)
+
+        if likfunc in ['mark14', 'mark13']:
 
             # Define the stingray transformation (for EFAC = 1)
             self.defineStingrayTransform()
