@@ -1118,7 +1118,7 @@ class ptaPulsar(object):
 
         # The 'basic' Stingray transform quantities (used for parameters that
         # have a hyper-prior on them)
-        self.sr_ZNZvec = np.diag(np.dot(Zmat.T / Nvec, Zmat))
+        #self.sr_ZNZvec = np.diag(np.dot(Zmat.T / Nvec, Zmat))
         self.sr_ZNyvec = np.dot(Zmat.T, self.residuals / Nvec)
 
         # The timing model Stingray Transform quantities
@@ -1153,6 +1153,9 @@ class ptaPulsar(object):
         self.sr_delta = np.sum(self.sr_gamma / self.sr_A, axis=1)
         self.sr_alpha = self.sr_delta / (1.0/TNTi_0_vec - 1.0/TNTi_1_vec)
         self.sr_beta = self.sr_alpha / TNTi_0_vec
+        self.sr_Sigma1 = 1.0/np.diag(ZNZ)
+        self.sr_Sigma2 = np.diag(TNTi_1)
+        self.sr_ZNZ = ZNZ
 
     """
     For every pulsar, quite a few Auxiliary quantities (like GtF etc.) are

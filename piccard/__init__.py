@@ -6,6 +6,8 @@ from piccard_pso import *
 from piccard_freqstat import *
 from piccard_gibbs import *
 from transformations import *
+from stingrays import *
+from hmcwrappers import *
 from piccard_hmc import *
 from resampler import *
 from distsampling import *
