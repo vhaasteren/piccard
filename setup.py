@@ -16,6 +16,18 @@ if sys.argv[-1] == "publish":
     os.system("python setup.py sdist upload")
     sys.exit()
 
+# Cython extensions
+ext_modules=[
+    Extension('piccard.jitterext',
+             ['piccard/jitterext.pyx'],
+             include_dirs = [numpy.get_include()],
+             extra_compile_args=["-O2"]),
+    Extension('piccard.choleskyext',
+             ['piccard/choleskyext.pyx'],
+             include_dirs = [numpy.get_include(), 'piccard/'],
+             extra_compile_args=["-O2", "-fno-wrapv"])  # 50% more efficient!
+]
+
 
 setup(
     name="piccard",
@@ -41,6 +53,5 @@ setup(
         "Operating System :: OS Independent",
         "Programming Language :: Python",
     ],
-    ext_modules = cythonize(Extension('piccard.jitterext', ['piccard/jitterext.pyx'],
-            include_dirs = [numpy.get_include()]))
+    ext_modules = cythonize(ext_modules)
 )
