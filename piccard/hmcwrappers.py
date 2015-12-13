@@ -11,8 +11,21 @@ from functools import partial
 
 from transformations import *
 from stingrays import *
+from fullstingray import *
 
 def hmcLikelihood(h5filename=None, jsonfilename=None, **kwargs):
+    """Wrapper for the compound of the full stingray transformation and the interval
+    transformation
+    """
+    if 'wrapperclass' in kwargs:
+        raise ValueError("hmcLikelihood already pre-sets wrapperclass")
+
+    return intervalLikelihood(h5filename=h5filename,
+            jsonfilename=jsonfilename,
+            wrapperclass=fullStingrayLikelihood,
+            **kwargs)
+
+def hpLikelihood(h5filename=None, jsonfilename=None, **kwargs):
     """Wrapper for the compound of the stingray transformation and the interval
     transformation
     """
@@ -23,6 +36,7 @@ def hmcLikelihood(h5filename=None, jsonfilename=None, **kwargs):
             jsonfilename=jsonfilename,
             wrapperclass=hpStingrayLikelihood,
             **kwargs)
+
 
 def tmHmcLikelihood1(h5filename=None, jsonfilename=None, **kwargs):
     """Wrapper for the compound of the stingray transformation and the interval
