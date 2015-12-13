@@ -10,6 +10,7 @@ import scipy.linalg as sl, scipy.special as ss
 from functools import partial
 
 from transformations import *
+from choleskyext import *
 
 
 class hpStingrayLikelihood(stingrayLikelihood):
@@ -3817,16 +3818,19 @@ class fullStingrayLikelihood(stingrayLikelihood):
         return Beta_inv_diag
 
     def get_psr_Sigma(self, ii, psr, Beta_inv_diag):
-        """For the mean-part of the stingray transform, we need the full Sigma
-        matrix"""
+        """Obtain Sigma, L, and Li, with Sigma=Li Li^T"""
         Sigma_inv = np.copy(psr.sr_ZNZ)
         Sigma_inv_diag = np.diag(Sigma_inv)
 
         # Construct the full Sigma matrix
         np.fill_diagonal(Sigma_inv, Sigma_inv_diag + Beta_inv_diag)
-        cf = sl.cho_factor(Sigma_inv)
 
-        return sl.cho_solve(cf, np.eye(len(Sigma_inv)))
+        # NOTE: Sigma = L_inv L_inv^T    (just easier that way)
+        L = sl.cholesky(Sigma_inv, lower=True)
+        Li = sl.solve_triangular(L, np.eye(len(L)), trans=0, lower=True)
+        cf = (Li, True)
+
+        return sl.cho_solve(cf, np.eye(len(Sigma_inv))), L, Li
 
     def get_par_psr_sigma_inds(self, ii, psr):
         """Given a pulsar, get a slice object (numpy int array) that contains
@@ -3891,10 +3895,20 @@ class fullStingrayLikelihood(stingrayLikelihood):
             ntmpars = self.npm[ii]
 
             psr.sr_Beta_inv = self.get_psr_Beta(ii, psr)
-            psr.sr_Sigma = self.get_psr_Sigma(ii, psr, psr.sr_Beta_inv)
+            psr.sr_Sigma, psr.sr_L, psr.sr_Li = \
+                    self.get_psr_Sigma(ii, psr, psr.sr_Beta_inv)
             psr.sr_mu = np.dot(psr.sr_Sigma, psr.sr_ZNyvec)
-            psr.sr_sigma = np.sqrt(np.diag(psr.sr_Sigma))
+            #psr.sr_sigma = np.sqrt(np.diag(psr.sr_Sigma))
             psr.diagSBS = dict()
+
+            # TODO: The linear transformation is now a matrix equation.
+            #       What we need to redefine:
+            #           - self.forward
+            #           - self.backward
+            #           - self._sigma (no longer used)
+            #           - self._d_b_d_xi (now 2D: psr.Li)
+            #
+            # NOTE: Most of these per PTA, but transforms defined per pulsar
 
             if psr.fourierind is not None:
                 # Have a red noise stingray transformation
