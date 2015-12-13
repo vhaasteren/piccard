@@ -60,3 +60,15 @@ def muHmcLikelihood(h5filename=None, jsonfilename=None, **kwargs):
             wrapperclass=muStingrayLikelihood,
             **kwargs)
     
+def msHmcLikelihood(h5filename=None, jsonfilename=None, **kwargs):
+    """Wrapper for the compound of the stingray transformation and the interval
+    transformation
+    """
+    if 'wrapperclass' in kwargs:
+        raise ValueError("hmcLikelihood already pre-sets wrapperclass")
+
+    return intervalLikelihood(h5filename=h5filename,
+            jsonfilename=jsonfilename,
+            wrapperclass=msStingrayLikelihood,
+            **kwargs)
+    
