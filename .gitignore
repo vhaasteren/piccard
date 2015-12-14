@@ -27,3 +27,14 @@ nanograv
 other-datasets
 testcdf.py
 testsph.py
+jitterext.c
+jitterext.so
+choleskyext.so
+mcmc-gibbs-intro.pdf
+showtree.sh
+temppixels.py
+Changelog
+.DS_Store
+.ipynb_checkpoints
+examples
+jitter-tests
