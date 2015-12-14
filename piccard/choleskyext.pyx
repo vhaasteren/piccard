@@ -8,12 +8,13 @@ cdef extern from "cython_dL_update_hmc.c":
 
 cdef void cython_dL_update_hmc(
         np.ndarray[np.double_t,ndim=2] L,
+        np.ndarray[np.double_t,ndim=2] Li,
         np.ndarray[np.double_t,ndim=1] p,
         np.ndarray[np.double_t,ndim=2] M,
         np.ndarray[np.double_t,ndim=1] tj):
     
-    cdef np.ndarray[np.double_t,ndim=2] Li = \
-        np.ascontiguousarray(sl.solve_triangular(L, np.eye(len(L)), trans=0, lower=True))
+    #cdef np.ndarray[np.double_t,ndim=2] Li = \
+    #    np.ascontiguousarray(sl.solve_triangular(L, np.eye(len(L)), trans=0, lower=True))
     cdef int N = len(p)
 
     assert L.shape[0] == L.shape[1]
@@ -22,14 +23,14 @@ cdef void cython_dL_update_hmc(
 
     dL_update_hmc(&L[0,0], &Li[0,0], &p[0], &M[0,0], &tj[0], N)
 
-def cython_dL_update(L, p):
+def cython_dL_update(L, Li, p):
     M = np.zeros_like(L, order='C')
     tj = np.zeros(len(L))
-    cython_dL_update_hmc(np.ascontiguousarray(L), p, M, tj)
+    cython_dL_update_hmc(np.ascontiguousarray(L), np.ascontiguousarray(L), p, M, tj)
     return M, tj
 
 # The aggregated algorithm for use in the Hamiltonian Sampler
-def python_dL_update(L, p):
+def python_dL_update(L, Li, p):
     """
     Formal derivative of rank-one update of Cholesky decomposition,
     adjusted to perform all rank-one updates at once for the derivative

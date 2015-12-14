@@ -30,7 +30,7 @@ class fullStingrayLikelihood(stingrayLikelihood):
     #           - self.forward  (see below)
     #           - self.backward (see below)
     #           - self._sigma (no longer used)
-    #           - self._d_b_d_xi (now 2D: psr.Li)
+    #           - self._d_b_d_xi (now 2D: psr.sr_Li)
     #
     # NOTE: Most of these per PTA, but transforms defined per pulsar
     #
@@ -55,7 +55,7 @@ class fullStingrayLikelihood(stingrayLikelihood):
     #
     # 5) Re-implement self.logposterior_grad, since it calls dxdp_nondiag twice.
     #    Change it so the call is only made once. In there, we'll have a call to
-    #    np.dot(psr.Li, ll_grad2)
+    #    np.dot(psr.sr_Li, ll_grad2)
     #
     # 6) The log-jacobian is np.sum(np.log(np.diag(psr.sr_Li)))
     #
@@ -64,6 +64,9 @@ class fullStingrayLikelihood(stingrayLikelihood):
     #    a) d_mu_d_hp  (fancy slicing)
     #    b) d_lj_d_hp  (Cython code - tj)
     #    c) d_L_d_hp   (Cython code - M)
+    #
+    #
+    # Most of this is done, except for number (5)!!!!!!!!!!!!!!!!!!!!
 
     def __init__(self, h5filename=None, jsonfilename=None, **kwargs):
         """Initialize the fullStingrayLikelihood with a ptaLikelihood object"""
@@ -83,7 +86,11 @@ class fullStingrayLikelihood(stingrayLikelihood):
             self.cache(p[0,:], self.forward, 
                     direction='forward', calc_gradient=False)
             # TODO: Change this for the real transform
-            p[0,:] = (p[0,:] - self._mu) / self._sigma
+            #p[0,:] = (p[0,:] - self._mu) / self._sigma
+            for pp, psr in enumerate(self.ptapsrs):
+                # We have to apply the transformation per-pulsar
+                p[0,psr.sr_pslc] = np.dot(psr.sr_L, p[0,psr.sr_pslc] - psr.sr_mu)
+
             self.uncache(self.forward)
         else:
             if self.have_cache():
@@ -93,7 +100,10 @@ class fullStingrayLikelihood(stingrayLikelihood):
                 self.cache(pc, self.forward, 
                         direction='forward', calc_gradient=False)
                 # TODO: Change this for the real transform
-                p[ii,:] = (pc - self._mu) / self._sigma
+                #p[ii,:] = (pc - self._mu) / self._sigma
+                for pp, psr in enumerate(self.ptapsrs):
+                    # We have to apply the transformation per-pulsar
+                    p[ii,psr.sr_pslc] = np.dot(psr.sr_L, p[ii,psr.sr_pslc] - psr.sr_mu)
                 self.uncache(self.forward)
 
         return p.reshape(x.shape)
@@ -112,7 +122,10 @@ class fullStingrayLikelihood(stingrayLikelihood):
             self.cache(x[0,:], self.backward, 
                     direction='backward', calc_gradient=False)
             # TODO: Change this for the real transform
-            x[0,:] = x[0,:] * self._sigma +  self._mu
+            #x[0,:] = x[0,:] * self._sigma +  self._mu
+            for pp, psr in enumerate(self.ptapsrs):
+                # We have to apply the transformation per-pulsar
+                x[0,psr.sr_pslc] = np.dot(psr.sr_Li, x[0,psr.sr_pslc]) + psr.sr_mu
             self.uncache(self.backward)
         else:
             if self.have_cache():
@@ -122,10 +135,21 @@ class fullStingrayLikelihood(stingrayLikelihood):
                 self.cache(xc, self.backward, 
                         direction='backward', calc_gradient=False)
                 # TODO: Change this for the real transform
-                x[ii,:] = xc * self._sigma + self._mu
+                #x[ii,:] = xc * self._sigma + self._mu
+                for pp, psr in enumerate(self.ptapsrs):
+                    # We have to apply the transformation per-pulsar
+                    x[ii,psr.sr_pslc] = np.dot(psr.sr_Li, x[ii,psr.sr_pslc]) + psr.sr_mu
                 self.uncache(self.backward)
 
         return x.reshape(p.shape)
+
+    def dxdp(self, p):
+        """We do all the dxdp action in dxdp_nondiag"""
+        self.cache(p, self.dxdp, direction='backward',
+                calc_gradient=False)
+        self.uncache(self.dxdp)
+
+        return np.zeros_like(p)
 
     def get_psr_Beta(self, ii, psr):
         """For the mean-part of the stingray transform, we need the full Sigma,
@@ -179,6 +203,7 @@ class fullStingrayLikelihood(stingrayLikelihood):
     def get_par_psr_sigma_inds(self, ii, psr):
         """Given a pulsar, get a slice object (numpy int array) that contains
         _all_ the indices of the low-level parameters"""
+        # TODO: This should be functionality of the Pulsar class
         slc = np.array([], dtype=np.int)
 
         if psr.timingmodelind is not None:
@@ -220,124 +245,25 @@ class fullStingrayLikelihood(stingrayLikelihood):
 
         log_jacob = 0.0
         gradient = np.zeros_like(p)
-        d_b_d_xi = np.ones_like(p)      # If nothing else, it's one
-        d_b_d_B = np.zeros_like(p)
-        mu = np.zeros_like(p)           # Mean of transformation
-        sigma = np.ones_like(p)         # Sigma of transformation
 
         for ii, psr in enumerate(self.ptapsrs):
-            # For the timing-model stingray of this pulsar, we will be filling
-            # some quantities for the low-level parameters, so we can collect
-            # results later on
-            sr_gamma_frac_den = np.zeros(psr.sr_gamma.shape[1])
-            fslc_phi = slice(0)         # Initialize later
-            fslc_theta = slice(0)       # Initialize later
-            fslc_J = slice(0)           # Initialize later
-            mslc = slice(np.sum(self.npm[:ii]), np.sum(self.npm[:ii+1]))
-            m_index = psr.timingmodelind
-            mslc_par = slice(m_index, m_index+self.npm[ii])
-            ntmpars = self.npm[ii]
+            psr.sr_diagSBS = dict()     # For d_mu_d_par
+            psr.sr_pslc = self.get_par_psr_sigma_inds(ii, psr)
 
+            # Define the Stingray transformation
             psr.sr_Beta_inv = self.get_psr_Beta(ii, psr)
             psr.sr_Sigma, psr.sr_L, psr.sr_Li = \
                     self.get_psr_Sigma(ii, psr, psr.sr_Beta_inv)
             psr.sr_mu = np.dot(psr.sr_Sigma, psr.sr_ZNyvec)
-            #psr.sr_sigma = np.sqrt(np.diag(psr.sr_Sigma))
-            psr.diagSBS = dict()
 
-            # TODO: The linear transformation is now a matrix equation.
-            #       CONTINUE EDITING STUFF HERE
+            # Quantities we need to take derivatives of the Cholesky factor
+            lowlevel_pars = np.dot(psr.sr_Li, p[psr.sr_pslc])
+            psr.sr_dL_M, psr.sr_dL_tj = \
+                    cython_dL_update(psr.sr_L, psr.sr_Li, lowlevel_pars)
 
-            if psr.fourierind is not None:
-                # Have a red noise stingray transformation
-                findex = np.sum(self.npf[:ii])
-                nfs = self.npf[ii]
-                fslc_phi = slice(findex, findex+nfs)
-                phivec = self.Phivec[fslc_phi] + self.Svec[:nfs]
+            # The log(det(Jacobian)), for all low-level parameters
+            log_jacob += np.sum(np.log(np.diag(psr.sr_Li)))
 
-                #Sigmavec = 1.0/(1.0/psr.sr_Sigma2[psr.Zmask_F_only] + 1.0 / phivec)
-                Sigmavec = psr.sr_sigma[psr.Zmask_F_only]**2
-                std = np.sqrt(Sigmavec)
-                mean = psr.sr_mu[psr.Zmask_F_only]
-
-                index = psr.fourierind
-                npars = len(std)
-                slc = slice(index, index+npars)
-
-                # The linear transformation is now defined as:
-                mu[slc] = mean
-                sigma[slc] = std
-
-                d_b_d_xi[slc] = std
-                log_jacob += np.sum(np.log(std))
-
-
-            if psr.dmfourierind is not None:
-                # Have a dm noise stingray transformation
-                fdmindex = np.sum(self.npfdm[:ii])
-                nfdms = self.npfdm[ii]
-                fslc_theta = slice(fdmindex, fdmindex+nfdms)
-                thetavec = self.Thetavec[fslc_theta]
-
-                Sigmavec = psr.sr_sigma[psr.Zmask_D_only]**2
-                std = np.sqrt(Sigmavec)
-                mean = psr.sr_mu[psr.Zmask_D_only]
-
-                index = psr.dmfourierind
-                npars = len(std)
-                slc = slice(index, index+npars)
-
-                # The linear transformation is now defined as:
-                mu[slc] = mean
-                sigma[slc] = std
-
-                d_b_d_xi[slc] = std
-                log_jacob += np.sum(np.log(std))
-
-
-            if psr.jitterind is not None:
-                # Have an ecor stingray transformation
-                uindex = np.sum(self.npu[:ii])
-                nus = self.npu[ii]
-                fslc_J = slice(uindex, uindex+nus)
-
-                Sigmavec = psr.sr_sigma[psr.Zmask_U_only]**2
-                std = np.sqrt(Sigmavec)        # No hyper pars
-                mean = psr.sr_mu[psr.Zmask_U_only]
-
-                index = psr.jitterind
-                npars = len(std)
-                slc = slice(index, index+npars)
-
-                # The linear transformation is now defined as:
-                mu[slc] = mean
-                sigma[slc] = std
-
-                d_b_d_xi[slc] = std
-                log_jacob += np.sum(np.log(std))
-
-
-            if psr.timingmodelind is not None:
-                # Now have all we need for the Stingray transformation
-                Sigmavec = psr.sr_sigma[psr.Zmask_M_only]**2
-
-                std = np.sqrt(Sigmavec)
-
-                # We keep the old estimate of the mean, because is it less
-                # biased
-                mean = psr.sr_mu[psr.Zmask_M_only]
-
-                index = psr.timingmodelind
-                npars = len(std)
-                slc = slice(index, index+npars)
-
-                # The linear transformation is now defined as:
-                mu[slc] = mean
-                sigma[slc] = std
-
-                log_jacob += np.sum(np.log(std))
-
-                d_b_d_xi[slc] = std
 
         if calc_gradient:
 
@@ -349,7 +275,7 @@ class fullStingrayLikelihood(stingrayLikelihood):
                             np.sum(self.npf[:ii+1]))
 
                     for key, value in self.d_Phivec_d_param.iteritems():
-                        # We need to remember diagSBS for dxdp_nondiag
+                        # We need to remember sr_diagSBS for dxdp_nondiag
                         BdB = np.zeros(len(psr.sr_Sigma))
                         BdB[psr.Zmask_F_only] = \
                                 psr.sr_Beta_inv[psr.Zmask_F_only]**2 * \
@@ -358,15 +284,15 @@ class fullStingrayLikelihood(stingrayLikelihood):
                         # Do some slicing magic to get the diagonals of the
                         # matrix product in O(n^2) time
                         BS = psr.sr_Sigma * BdB[None, :]
-                        psr.diagSBS[key] = np.sum(psr.sr_Sigma * BS, axis=1)
+                        psr.sr_diagSBS[key] = np.sum(psr.sr_Sigma * BS, axis=1)
 
                         # Log-jacobian for red noise Fourier terms
-                        gradient[key] = 0.5 * np.sum(psr.diagSBS[key] /
-                                psr.sr_sigma**2)
+                        gradient[key] = np.sum(
+                                psr.sr_dL_tj[psr.Zmask_F_only] * value[fslc_phi])
 
                     # GW signals
                     for key, value in self.d_Svec_d_param.iteritems():
-                        # We need to remember diagSBS for dxdp_nondiag
+                        # We need to remember sr_diagSBS for dxdp_nondiag
                         BdB = np.zeros(len(psr.sr_Sigma))
                         BdB[psr.Zmask_F_only] = \
                                 psr.sr_Beta_inv[psr.Zmask_F_only]**2 * \
@@ -375,11 +301,11 @@ class fullStingrayLikelihood(stingrayLikelihood):
                         # Do some slicing magic to get the diagonals of the
                         # matrix product in O(n^2) time
                         BS = psr.sr_Sigma * BdB[None, :]
-                        psr.diagSBS[key] = np.sum(psr.sr_Sigma * BS, axis=1)
+                        psr.sr_diagSBS[key] = np.sum(psr.sr_Sigma * BS, axis=1)
 
                         # Log-jacobian for red noise Fourier terms
-                        gradient[key] = 0.5 * np.sum(psr.diagSBS[key] /
-                                psr.sr_sigma**2)
+                        gradient[key] = np.sum(
+                                psr.sr_dL_tj[psr.Zmask_F_only] * value[fslc_phi])
 
                 # DM variations
                 if psr.dmfourierind is not None:
@@ -387,7 +313,7 @@ class fullStingrayLikelihood(stingrayLikelihood):
                             np.sum(self.npfdm[:ii+1]))
 
                     for key, value in self.d_Thetavec_d_param.iteritems():
-                        # We need to remember diagSBS for dxdp_nondiag
+                        # We need to remember sr_diagSBS for dxdp_nondiag
                         BdB = np.zeros(len(psr.sr_Sigma))
                         BdB[psr.Zmask_D_only] = \
                                 psr.sr_Beta_inv[psr.Zmask_D_only]**2 * \
@@ -396,11 +322,11 @@ class fullStingrayLikelihood(stingrayLikelihood):
                         # Do some slicing magic to get the diagonals of the
                         # matrix product in O(n^2) time
                         BS = psr.sr_Sigma * BdB[None, :]
-                        psr.diagSBS[key] = np.sum(psr.sr_Sigma * BS, axis=1)
+                        psr.sr_diagSBS[key] = np.sum(psr.sr_Sigma * BS, axis=1)
 
                         # Log-jacobian for DM variation Fourier terms
-                        gradient[key] = 0.5 * np.sum(psr.diagSBS[key] /
-                                psr.sr_sigma**2)
+                        gradient[key] = np.sum(
+                                psr.sr_dL_tj[psr.Zmask_D_only] * value[fslc_theta])
 
                 # ECORR
                 if psr.jitterind is not None:
@@ -408,7 +334,7 @@ class fullStingrayLikelihood(stingrayLikelihood):
                     #        np.sum(self.npu[:ii+1]))
 
                     for key, value in psr.d_Jvec_d_param.iteritems():
-                        # We need to remember diagSBS for dxdp_nondiag
+                        # We need to remember sr_diagSBS for dxdp_nondiag
                         BdB = np.zeros(len(psr.sr_Sigma))
                         BdB[psr.Zmask_U_only] = \
                                 psr.sr_Beta_inv[psr.Zmask_U_only]**2 * \
@@ -417,18 +343,14 @@ class fullStingrayLikelihood(stingrayLikelihood):
                         # Do some slicing magic to get the diagonals of the
                         # matrix product in O(n^2) time
                         BS = psr.sr_Sigma * BdB[None, :]
-                        psr.diagSBS[key] = np.sum(psr.sr_Sigma * BS, axis=1)
+                        psr.sr_diagSBS[key] = np.sum(psr.sr_Sigma * BS, axis=1)
 
                         # Log-jacobian for DM variation Fourier terms
-                        gradient[key] = 0.5 * np.sum(psr.diagSBS[key] /
-                                psr.sr_sigma**2)
+                        gradient[key] = np.sum(
+                                psr.sr_dL_tj[psr.Zmask_U_only] * value)
 
-        self._mu = mu                   # Mean of stingray transform
-        self._sigma = sigma             # Slope of stingray transform
         self._log_jacob = log_jacob     # Log-jacobian of transform
         self._gradient = gradient       # Gradient of log-jacobian
-        self._d_b_d_xi = d_b_d_xi       # d_x_d_p
-        self._d_b_d_B = d_b_d_B         # d_x_d_B, with B hyper-pars
 
 
     def stingray_hessian_quants(self, p, set_hyper_pars=True):
@@ -775,10 +697,16 @@ class fullStingrayLikelihood(stingrayLikelihood):
         (a, b) = extra_grad.shape
 
         for ii, psr in enumerate(self.ptapsrs):
-            pslc_tot = self.get_par_psr_sigma_inds(ii, psr)
+            #pslc_tot = self.get_par_psr_sigma_inds(ii, psr)
+            pslc_tot = psr.sr_pslc
             ll_grad2_psr = ll_grad2[:, pslc_tot]
             pars_psr = p[pslc_tot]
             Wv = np.dot(psr.sr_Sigma, psr.sr_ZNyvec)
+
+            # We have to do the 'regular' dxdp here as well, since in this full
+            # Stingray transform, that is a full 2D matrix for the low-level
+            # parameters
+            extra_grad[:, pslc_tot] += np.dot(psr.sr_Li, ll_grad2_psr.T).T
 
             if psr.fourierind is not None:
                 fslc_phi = slice(np.sum(self.npf[:ii]), np.sum(self.npf[:ii+1]))
@@ -786,9 +714,13 @@ class fullStingrayLikelihood(stingrayLikelihood):
 
                 for key, d_Phivec_d_p in self.d_Phivec_d_param.iteritems():
                     # dxdp for Sigma
-                    extra_grad[:, key] += 0.5 * np.sum(ll_grad2_psr *
-                            pars_psr[None, :] * psr.diagSBS[key][None, :] / 
-                            psr.sr_sigma[None, :], axis=1)
+                    #extra_grad[:, key] += 0.5 * np.sum(ll_grad2_psr *
+                    #        pars_psr[None, :] * psr.sr_diagSBS[key][None, :] / 
+                    #        psr.sr_sigma[None, :], axis=1)
+                    dxdhp = np.dot(psr.sr_Li, np.dot(psr.sr_dL_M[:,slc_sig],
+                            d_Phivec_d_p[fslc_phi]))
+                    extra_grad[:, key] += np.sum(
+                            dxdhp[None,slc_sig] * ll_grad2_psr[:,slc_sig], axis=1)
 
                     # dxdp for mu
                     WBWv = np.dot(psr.sr_Sigma[:,slc_sig],
@@ -800,9 +732,13 @@ class fullStingrayLikelihood(stingrayLikelihood):
 
                 for key, d_Svec_d_p in self.d_Svec_d_param.iteritems():
                     # dxdp for Sigma
-                    extra_grad[:, key] += 0.5 * np.sum(ll_grad2_psr *
-                            pars_psr[None, :] * psr.diagSBS[key][None, :] / 
-                            psr.sr_sigma[None, :], axis=1)
+                    #extra_grad[:, key] += 0.5 * np.sum(ll_grad2_psr *
+                    #        pars_psr[None, :] * psr.sr_diagSBS[key][None, :] / 
+                    #        psr.sr_sigma[None, :], axis=1)
+                    dxdhp = np.dot(psr.sr_Li, np.dot(psr.sr_dL_M[:,slc_sig],
+                            d_Svec_d_p[fslc_phi]))
+                    extra_grad[:, key] += np.sum(
+                            dxdhp[None,slc_sig] * ll_grad2_psr[:,slc_sig], axis=1)
 
                     # dxdp for mu
                     WBWv = np.dot(psr.sr_Sigma[:,slc_sig],
@@ -817,9 +753,13 @@ class fullStingrayLikelihood(stingrayLikelihood):
 
                 for key, d_Thetavec_d_p in self.d_Thetavec_d_param.iteritems():
                     # dxdp for Sigma
-                    extra_grad[:, key] += 0.5 * np.sum(ll_grad2_psr *
-                            pars_psr[None, :] * psr.diagSBS[key][None, :] / 
-                            psr.sr_sigma[None, :], axis=1)
+                    #extra_grad[:, key] += 0.5 * np.sum(ll_grad2_psr *
+                    #        pars_psr[None, :] * psr.sr_diagSBS[key][None, :] / 
+                    #        psr.sr_sigma[None, :], axis=1)
+                    dxdhp = np.dot(psr.sr_Li, np.dot(psr.sr_dL_M[:,slc_sig],
+                            d_Thetavec_d_p[fslc_theta]))
+                    extra_grad[:, key] += np.sum(
+                            dxdhp[None,slc_sig] * ll_grad2_psr[:,slc_sig], axis=1)
 
                     # dxdp for mu
                     WBWv = np.dot(psr.sr_Sigma[:,slc_sig],
@@ -833,9 +773,13 @@ class fullStingrayLikelihood(stingrayLikelihood):
 
                 for key, d_Jvec_d_p in psr.d_Jvec_d_param.iteritems():
                     # dxdp for Sigma
-                    extra_grad[:, key] += 0.5 * np.sum(ll_grad2_psr *
-                            pars_psr[None, :] * psr.diagSBS[key][None, :] / 
-                            psr.sr_sigma[None, :], axis=1)
+                    #extra_grad[:, key] += 0.5 * np.sum(ll_grad2_psr *
+                    #        pars_psr[None, :] * psr.sr_diagSBS[key][None, :] / 
+                    #        psr.sr_sigma[None, :], axis=1)
+                    dxdhp = np.dot(psr.sr_Li, np.dot(psr.sr_dL_M[:,slc_sig],
+                            d_Jvec_d_p))
+                    extra_grad[:, key] += np.sum(
+                            dxdhp[None,slc_sig] * ll_grad2_psr[:,slc_sig], axis=1)
 
                     # dxdp for mu
                     WBWv = np.dot(psr.sr_Sigma[:,slc_sig],

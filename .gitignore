@@ -30,6 +30,7 @@ testsph.py
 jitterext.c
 jitterext.so
 choleskyext.so
+choleskyext.c
 mcmc-gibbs-intro.pdf
 showtree.sh
 temppixels.py

@@ -31,7 +31,7 @@ ext_modules=[
 
 setup(
     name="piccard",
-    version='2014.12',
+    version='2015.12',
     author="Rutger van Haasteren",
     author_email="vhaasteren@gmail.com",
     packages=["piccard"],
