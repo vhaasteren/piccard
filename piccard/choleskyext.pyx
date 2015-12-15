@@ -26,7 +26,7 @@ cdef void cython_dL_update_hmc(
 def cython_dL_update(L, Li, p):
     M = np.zeros_like(L, order='C')
     tj = np.zeros(len(L))
-    cython_dL_update_hmc(np.ascontiguousarray(L), np.ascontiguousarray(L), p, M, tj)
+    cython_dL_update_hmc(np.ascontiguousarray(L), np.ascontiguousarray(Li), p, M, tj)
     return M, tj
 
 # The aggregated algorithm for use in the Hamiltonian Sampler
