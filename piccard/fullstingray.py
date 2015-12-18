@@ -259,6 +259,11 @@ class fullStingrayLikelihood(stingrayLikelihood):
                     self.get_psr_Sigma(ii, psr, psr.sr_Beta_inv)
             psr.sr_mu = np.dot(psr.sr_Sigma, psr.sr_ZNyvec)
 
+            # Undo the Stingray
+            #psr.sr_mu *= 0.0
+            #psr.sr_Sigma = np.eye(len(psr.sr_Sigma))
+            #psr.sr_L = psr.sr_Li = np.eye(len(psr.sr_Sigma))
+
             # Quantities we need to take derivatives of the Cholesky factor
             lowlevel_pars = np.dot(psr.sr_Li, p[psr.sr_pslc])
             psr.sr_dL_M, psr.sr_dL_tj = \
@@ -713,7 +718,7 @@ class fullStingrayLikelihood(stingrayLikelihood):
             # Stingray transform, that is a full 2D matrix for the low-level
             # parameters
             # Asjemenou? Waarom is dit nou niet goed??
-            extra_grad[:, pslc_tot] = np.dot(psr.sr_Li, ll_grad2_psr.T).T
+            extra_grad[:, pslc_tot] = np.dot(psr.sr_Li.T, ll_grad2_psr.T).T
 
             if psr.fourierind is not None:
                 fslc_phi = slice(np.sum(self.npf[:ii]), np.sum(self.npf[:ii+1]))
