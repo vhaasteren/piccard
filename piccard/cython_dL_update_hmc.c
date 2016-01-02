@@ -87,9 +87,12 @@ static void dL_update_hmc(double *pdL, double *pdLi, double *pdp,
         } /* for i */
 
         /* Update M.   TODO: Make this a BLAS call? */
-        for(i=k; i<N; ++i) {
-            for(j=0; j<N; ++j) {
-                pdM[j+N*i] += pdLdot[j+N*i]*pdp[k];
+        /*for(i=k; i<N; ++i) {*/
+        for(i=0; i<N; ++i) {
+            /*for(j=0; j<N; ++j) {*/
+            for(j=k; j<N; ++j) {
+                /* pdM[j+N*i] += pdLdot[j+N*i]*pdp[k]; */
+                pdM[i+N*k] += pdLdot[i+N*j]*pdp[j];
             } /* for j */
         } /* for i */
 

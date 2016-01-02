@@ -25,7 +25,7 @@ def hmcLikelihood(h5filename=None, jsonfilename=None, **kwargs):
             wrapperclass=fullStingrayLikelihood,
             **kwargs)
 
-def hpLikelihood(h5filename=None, jsonfilename=None, **kwargs):
+def hpHmcLikelihood(h5filename=None, jsonfilename=None, **kwargs):
     """Wrapper for the compound of the stingray transformation and the interval
     transformation
     """

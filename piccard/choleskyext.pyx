@@ -66,27 +66,22 @@ def python_dL_update(L, Li, p):
         rdot = 0.5*U[k,:]**2 / r
         cdot = rdot/L[k,k]
         s = U[k,:] / L[k,k]
-        #sdot = 0.5*U[k,:] / L[k,k]
         
-        Ldot[k-1,:] = 0.0           # Clear all data from the previous iteration
-        Ldot[k,:] = rdot #0.5 * U[k,:]**2 / L[k,k]
+        Ldot[k-1,:] = 0.0    # Clear all data from the previous iteration
+        Ldot[k,:] = rdot
 
         Ldot[k+1:n,:] = U[None,k,:]*U[k+1:,:]/L[k,k] - 0.5*U[None,k,:]**2*L[k+1:,k,None]/L[k,k]**2
-        #Ldot[k+1:n,:] = U[None,k,:]*U[k+1:,:]/L[k,k] - 0.5*U[None,k,:]**2*L[k+1:,k,None]/L[k,k]**2
-        #Ldot[k+1:n,:] = sdot[None,:]*U[k+1:n,:]+s[None,:]*Udot[k+1:n,:] - cdot[None,:]*Lp[k+1:n,k,None]
 
         # The change of u does not depend on udot (or adot), so it's the same for all derivatives
-        #Udot[k+1:n,:] = Udot[k+1:n,:] - sdot[None,:]*Lp[k+1:n,k,None]
-        
         U[k+1:n,:] = U[k+1:n,:] - s[None,:]*L[k+1:n,k,None]
-        #U[k+1:n,:] = U[k+1:n,:] - s[None,:]*Lp[k+1:n,k,None]
         
         # At this point, Ldot contains the k-th column of the Cholesky factor for all the basis vectors
         # Ldot[:,i] = dL_i[:,k]
         
         # The i-th column of M: np.dot(dL3[:,:,i], p)
         # So... M[k,i] = sum_j dL3[k,j,i] * p[j]
-        M += Ldot * p[k]
+        #M += Ldot * p[k]       # This was for the L-version
+        M[k,:] = np.dot(Ldot.T, p)
         
         #tj += np.sum(Li[k,:,None] * Ldot, axis=0)
         tj += np.dot(Li[k, :], Ldot)

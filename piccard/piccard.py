@@ -3401,6 +3401,8 @@ class ptaLikelihood(object):
             incRedNoise=False, noiseModel='powerlaw', fc=None, \
             bandRedNoise=None, bandNoiseModel='blpowerlaw', \
             noisePrior='flatlog', dmPrior='flatlog', \
+            noiseAmp=-14.5, noiseSi=3.51, \
+            noiseVaryAmp=True, noiseVarySi=True, \
             noisePSDMin=[-18.0], noisePSDMax=[-7.0], \
             noisePLMin=[-20.0, 0.02, 1.0e-11], \
             noisePLMax=[-10.0, 6.98, 3.0e-9], \
@@ -3631,10 +3633,10 @@ class ptaLikelihood(object):
                     pwidth = [0.1]*nfreqs
                     interval = [True]*nfreqs
                 elif noiseModel=='powerlaw':
-                    bvary = [True, True, False]
+                    bvary = [noiseVaryAmp, noiseVarySi, False]
                     pmin = noisePLMin
                     pmax = noisePLMax
-                    pstart = [-14.5, 3.51, 1.0e-10]
+                    pstart = [noiseAmp, noiseSi, 1.0e-10]
                     pwidth = [0.3, 0.3, 5.0e-11]
                     interval = [True, True, True]
                 elif noiseModel=='spectralModel':
@@ -4692,7 +4694,8 @@ class ptaLikelihood(object):
 
         # Add the prior draws for when sampling with the PTSampler
         if fullmodel['priorDraws']:
-            self.addPriorDraws(which='hyper')
+            #self.addPriorDraws(which='hyper')
+            print("WARNING: prior draws not added: debug first")
 
     def registerModel(self):
         """
@@ -11722,7 +11725,8 @@ class ptaLikelihood(object):
         # transition probability
         qxy = 0
 
-        assert len(self._prior_draw_signal) > 0
+        if len(self._prior_draw_signal) == 0:
+            return q, qxy
 
         # Which signal/parameter to jump in
         ind = np.random.choice(self._prior_draw_signal)
@@ -11730,7 +11734,8 @@ class ptaLikelihood(object):
         signal = self.ptasignals[ind]
 
         if signal['npars'] > 0:
-            parind = signal['parindex'] + np.random.randint(0, signal['npars'])
+            parind = signal['parindex']
+            #parind = signal['parindex'] + np.random.randint(0, signal['npars'])
 
             if signal['prior'] in ['linear', 'flat']:
                 # Flat/linear prior (even though this is in log)
