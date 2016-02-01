@@ -53,7 +53,7 @@ def python_dL_update(L, Li, p):
     Ldot = np.zeros_like(L)
     
     # Bahh, this is another ms or so for N=300. Get through argument?
-    Li = sl.solve_triangular(L, np.eye(len(L)), trans=0, lower=True)
+    # Li = sl.solve_triangular(L, np.eye(len(L)), trans=0, lower=True)
 
     U = np.eye(n)
     M = np.zeros_like(L)

@@ -17,11 +17,15 @@ static void dL_update_hmc(double *pdL, double *pdLi, double *pdp,
     
     L'L'^{T} = LL^{T} + diag(B)
     dL' = L Phi(L^{-1} dB L^{-T})  With Phi the utril function
-    We need: 
-    
-    L is the Cholesky factor of C = C(a) = C(a(t))
-    C(a(0)) = LL^{T},   C(a(t)) = L'L'^{T}
-    u is a vector, and a(t) is a scalar function of t
+
+    B = B(x)
+
+    We need: dot(d_L_d_x, p), and trace(L^{-1} d_L_d_x)
+
+    Assuming we know dB/dx, we can get d_L_d_x from the chain-rule, using
+    d_L_d_B. The output of this function lets us do that:
+    dot(d_L_d_x, p) = dot(M, d_B_d_x)
+    trace(L^{-1} d_L_d_x) = dot(tj, d_B_d_x)
     
     Re-parameterized: also works in the limit where a->0
 
@@ -81,17 +85,13 @@ static void dL_update_hmc(double *pdL, double *pdLi, double *pdp,
         for(i=k+1; i<N; ++i) {
             tmp = pdL[k+N*i];
             for(j=0; j<N; ++j) {
-                /*pdU[j+N*i] = pdU[j+N*i] - pds[j]*pdL[k+N*i];*/
                 pdU[j+N*i] = pdU[j+N*i] - pds[j]*tmp;
             } /* for j */
         } /* for i */
 
         /* Update M.   TODO: Make this a BLAS call? */
-        /*for(i=k; i<N; ++i) {*/
         for(i=0; i<N; ++i) {
-            /*for(j=0; j<N; ++j) {*/
             for(j=k; j<N; ++j) {
-                /* pdM[j+N*i] += pdLdot[j+N*i]*pdp[k]; */
                 pdM[i+N*k] += pdLdot[i+N*j]*pdp[j];
             } /* for j */
         } /* for i */

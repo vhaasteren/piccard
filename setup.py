@@ -22,6 +22,11 @@ ext_modules=[
              ['piccard/jitterext.pyx'],
              include_dirs = [numpy.get_include()],
              extra_compile_args=["-O2"]),
+    Extension('piccard.choleskyext_omp',
+             ['piccard/choleskyext_omp.pyx'],
+             include_dirs = [numpy.get_include(), 'piccard/'],
+             extra_link_args=["-liomp5"],
+             extra_compile_args=["-O2", "-fopenmp", "-fno-wrapv"]),
     Extension('piccard.choleskyext',
              ['piccard/choleskyext.pyx'],
              include_dirs = [numpy.get_include(), 'piccard/'],
@@ -31,7 +36,7 @@ ext_modules=[
 
 setup(
     name="piccard",
-    version='2015.12',
+    version='2016.01',
     author="Rutger van Haasteren",
     author_email="vhaasteren@gmail.com",
     packages=["piccard"],

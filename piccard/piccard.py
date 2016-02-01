@@ -1963,9 +1963,6 @@ class ptaPulsar(object):
             self.Zmat_N, self.Zmask_N, _ = self.getZmat(gibbsmodel, which='N')
             self.gibbsresiduals = np.zeros(len(self.toas))
 
-            print("Doing it for ", self.name)
-
-
             self.gibbscoefficients = np.zeros(self.Zmat.shape[1])
 
             self.Wvec = np.zeros(self.Mmat.shape[0]-self.Mmat.shape[1])
