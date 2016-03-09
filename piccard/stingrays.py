@@ -584,7 +584,7 @@ class hpStingrayLikelihood(stingrayLikelihood):
                 extra_grad[:, key] += np.sum(ll_grad2_rn * d_b_d_B_rn *
                         d_Phivec_d_p, axis=1)
 
-            for key, d_Thetavec_d_p in self.d_Thetavec_d_param.iteritems():
+            for key, d_Thetavec_d_p in psr.d_Thetavec_d_param.iteritems():
                 extra_grad[:, key] += np.sum(ll_grad2_dm * d_b_d_B_dm *
                         d_Thetavec_d_p, axis=1)
 

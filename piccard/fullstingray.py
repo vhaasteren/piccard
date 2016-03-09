@@ -380,6 +380,323 @@ class fullStingrayLikelihood(stingrayLikelihood):
 
         hessian = np.zeros((len(p), len(p)))
 
+        for ii, psr in enumerate(self.ptapsrs):
+
+            if psr.fourierind is not None:
+                # Have a red noise stingray transformation
+                findex = np.sum(self.npf[:ii])
+                nfs = self.npf[ii]
+                fslc = slice(findex, findex+nfs)
+                phivec = self.Phivec[fslc] + self.Svec[:nfs]
+
+                Sigmavec = 1.0/(1.0/psr.sr_Sigma1[psr.Zmask_F_only] + 1.0 / phivec)
+                v = psr.sr_ZNyvec[psr.Zmask_F_only]
+                std = np.sqrt(Sigmavec)
+                index = psr.fourierind
+                npars = len(std)
+                slc = slice(index, index+npars)
+
+                # Pre-compute coefficients for the non-tensor components
+                p_coeff1 = 0.75 * Sigmavec**2.5 / phivec**4
+                p_coeff2 = -1.0 * Sigmavec**1.5 / phivec**3
+                p_coeff = p[slc] * (p_coeff1 + p_coeff2)
+                v_coeff1 = 2.0 * Sigmavec**3 / phivec**4
+                v_coeff2 = -2.0 * Sigmavec**2 / phivec**3
+                v_coeff = v * (v_coeff1 + v_coeff2)
+                snt_coeff = p_coeff + v_coeff
+                fnt_coeff = 0.5 * Sigmavec**1.5 / phivec**2
+                d2_sigma_d2_phi = 0.5 * Sigmavec**2 / phivec**4
+                d2_phi2_d2_phi = -Sigmavec / phivec**3
+
+                # INEFFICIENT: slicing [flc] all the time, below
+                # INEFFICIENT: We should not have to loop over psra and psrb,
+                #           since we are already looping over psr above
+
+                # Only red-noise -- red-noise crosses
+                for psra in self.ptapsrs:
+                    for key1, d_Phivec_d_p1 in psra.d_Phivec_d_param.iteritems():
+                        # First derivatives of non-tensor component
+                        hessian[slc, key1] += fnt_coeff * d_Phivec_d_p1[fslc] * lp_grad[slc]
+                        hessian[key1, slc] += fnt_coeff * d_Phivec_d_p1[fslc] * lp_grad[slc]
+
+                        # Don't symmetrize, because we loop over both keys
+                        for psrb in self.ptapsrs:
+                            for key2, d_Phivec_d_p2 in psrb.d_Phivec_d_param.iteritems():
+                                # First term (log-jacobian): d_sigma_d_phi
+                                hessian[key1, key2] += np.sum(d2_sigma_d2_phi *
+                                        d_Phivec_d_p1[fslc] * d_Phivec_d_p2[fslc])
+
+                                # Second term (log-jacobian): d_phi2_d_phi
+                                hessian[key1, key2] += np.sum(d2_phi2_d2_phi *
+                                        d_Phivec_d_p1[fslc] * d_Phivec_d_p2[fslc])
+
+                                # Non-tensor component
+                                hessian[key1, key2] += np.sum(snt_coeff * d_Phivec_d_p1[fslc] *
+                                        d_Phivec_d_p2[fslc] * lp_grad[slc])
+
+                # Pre-compute coefficients for the non-tensor components
+                p_coeff = 0.5 * p[slc] * Sigmavec**1.5 / phivec**2
+                v_coeff = 1.0 * v * Sigmavec**2 / phivec**2
+                snt_coeff = p_coeff + v_coeff
+                d2_phi_d2_phi = 0.5 * Sigmavec / phivec**2
+
+                # Only red-noise -- second derivatives
+                for key, d2_Phivec_d2_p in self.d2_Phivec_d2_param.iteritems():
+
+                    if key[0] == key[1]:
+                        # Log-jacobian
+                        hessian[key[0], key[1]] += np.sum(d2_phi_d2_phi *
+                                d2_Phivec_d2_p[fslc])
+
+                        # Non-tensor
+                        hessian[key[0], key[1]] += np.sum(snt_coeff *
+                                d2_Phivec_d2_p[fslc] * lp_grad[slc])
+                    else:
+                        # Log-jacobian
+                        hessian[key[0], key[1]] += np.sum(d2_phi_d2_phi *
+                                d2_Phivec_d2_p[fslc])
+                        hessian[key[1], key[0]] += np.sum(d2_phi_d2_phi *
+                                d2_Phivec_d2_p[fslc])
+
+                        # Non-tensor
+                        hessian[key[0], key[1]] += np.sum(snt_coeff *
+                                d2_Phivec_d2_p[fslc] * lp_grad[slc])
+                        hessian[key[1], key[0]] += np.sum(snt_coeff *
+                                d2_Phivec_d2_p[fslc] * lp_grad[slc])
+
+                # INEFFICIENT: Merge these with the memorized ones above? (Not
+                #              very inefficient though)
+                # INEFFICIENT: slicing [flc] all the time, below
+                # Pre-compute coefficients for the non-tensor components
+                fnt_coeff = 0.5 * Sigmavec**1.5 / phivec**2
+                d2_sigma_d2_phi = 0.5 * Sigmavec**2 / phivec**4
+                d2_phi2_d2_phi = -Sigmavec / phivec**3
+                p_coeff1 = 0.75 * Sigmavec**2.5 / phivec**4
+                p_coeff2 = -1.0 * Sigmavec**1.5 / phivec**3
+                p_coeff = p[slc] * (p_coeff1 + p_coeff2)
+                v_coeff1 = 2.0 * Sigmavec**3 / phivec**4
+                v_coeff2 = -2.0 * Sigmavec**2 / phivec**3
+                v_coeff = v * (v_coeff1 + v_coeff2)
+                snt_coeff = p_coeff + v_coeff
+
+                # GW and red-noise crosses
+                for key1, d_Svec_d_p1 in self.d_Svec_d_param.iteritems():
+                    # First derivatives of non-tensor component
+                    hessian[slc, key1] += fnt_coeff * d_Svec_d_p1[fslc] * lp_grad[slc]
+                    hessian[key1, slc] += fnt_coeff * d_Svec_d_p1[fslc] * lp_grad[slc]
+
+                    # Do symmetrize, because key1 != key2
+                    for psra in self.ptapsrs:
+                        for key2, d_Phivec_d_p2 in psra.d_Phivec_d_param.iteritems():
+                            # First term (log-jacobian): d_sigma_d_phi
+                            hessian[key1, key2] += np.sum(d2_sigma_d2_phi *
+                                    d_Svec_d_p1[fslc] * d_Phivec_d_p2[fslc])
+                            hessian[key2, key1] += np.sum(d2_sigma_d2_phi *
+                                    d_Svec_d_p1[fslc] * d_Phivec_d_p2[fslc])
+
+                            # Second term (log-jacobian): d_phi2_d_phi
+                            hessian[key1, key2] += np.sum(d2_phi2_d2_phi *
+                                    d_Svec_d_p1[fslc] * d_Phivec_d_p2[fslc])
+                            hessian[key2, key1] += np.sum(d2_phi2_d2_phi *
+                                    d_Svec_d_p1[fslc] * d_Phivec_d_p2[fslc])
+
+                            # Non-tensor component
+                            hessian[key1, key2] += np.sum(snt_coeff * d_Svec_d_p1[fslc] *
+                                    d_Phivec_d_p2[fslc] * lp_grad[slc])
+                            hessian[key2, key1] += np.sum(snt_coeff * d_Svec_d_p1[fslc] *
+                                    d_Phivec_d_p2[fslc] * lp_grad[slc])
+
+                        # Don't symmetrize, because we loop over both keys
+                        for key2, d_Svec_d_p2 in self.d_Svec_d_param.iteritems():
+                            # First term (log-jacobian): d_sigma_d_phi
+                            hessian[key1, key2] += np.sum(d2_sigma_d2_phi *
+                                    d_Svec_d_p1[fslc] * d_Svec_d_p2[fslc])
+
+                            # Second term (log-jacobian): d_phi2_d_phi
+                            hessian[key1, key2] += np.sum(d2_phi2_d2_phi *
+                                    d_Svec_d_p1[fslc] * d_Svec_d_p2[fslc])
+
+                            # Non-tensor component
+                            hessian[key1, key2] += np.sum(snt_coeff * d_Svec_d_p1[fslc] *
+                                    d_Svec_d_p2[fslc] * lp_grad[slc])
+
+                # Pre-compute coefficients for the non-tensor components
+                p_coeff = 0.5 * p[slc] * Sigmavec**1.5 / phivec**2
+                v_coeff = 1.0 * v * Sigmavec**2 / phivec**2
+                snt_coeff = p_coeff + v_coeff
+                d2_phi_d2_phi = 0.5 * Sigmavec / phivec**2
+
+                # Only GWs -- second derivatives
+                for key, d2_Svec_d2_p in self.d2_Svec_d2_param.iteritems():
+
+                    if key[0] == key[1]:
+                        hessian[key[0], key[1]] += np.sum(d2_phi_d2_phi *
+                                d2_Svec_d2_p[fslc])
+
+                        # Non-tensor
+                        hessian[key[0], key[1]] += np.sum(snt_coeff *
+                                d2_Svec_d2_p[fslc] * lp_grad[slc])
+                    else:
+                        hessian[key[0], key[1]] += np.sum(d2_phi_d2_phi *
+                                d2_Svec_d2_p[fslc])
+                        hessian[key[1], key[0]] += np.sum(d2_phi_d2_phi *
+                                d2_Svec_d2_p[fslc])
+
+                        # Non-tensor
+                        hessian[key[0], key[1]] += np.sum(snt_coeff *
+                                d2_Svec_d2_p[fslc] * lp_grad[slc])
+                        hessian[key[1], key[0]] += np.sum(snt_coeff *
+                                d2_Svec_d2_p[fslc] * lp_grad[slc])
+
+            if psr.dmfourierind is not None:
+                # Have a dm noise stingray transformation
+                fdmindex = np.sum(self.npfdm[:ii])
+                nfdms = self.npfdm[ii]
+                thetavec = self.Thetavec[fdmindex:fdmindex+nfdms]
+
+                Sigmavec = 1.0/(1.0/psr.sr_Sigma1[psr.Zmask_D_only] + 1.0 / thetavec)
+                v = psr.sr_ZNyvec[psr.Zmask_D_only]
+                std = np.sqrt(Sigmavec)
+                index = psr.dmfourierind
+                npars = len(std)
+                slc = slice(index, index+npars)
+
+                # Pre-compute coefficients for the non-tensor components
+                fnt_coeff = 0.5 * Sigmavec**1.5 / thetavec**2
+                d2_sigma_d2_theta = 0.5 * Sigmavec**2 / thetavec**4
+                d2_theta2_d2_theta = -Sigmavec / thetavec**3
+                p_coeff1 = 0.75 * Sigmavec**2.5 / thetavec**4
+                p_coeff2 = -1.0 * Sigmavec**1.5 / thetavec**3
+                p_coeff = p[slc] * (p_coeff1 + p_coeff2)
+                v_coeff1 = 2.0 * Sigmavec**3 / thetavec**4
+                v_coeff2 = -2.0 * Sigmavec**2 / thetavec**3
+                v_coeff = v * (v_coeff1 + v_coeff2)
+                snt_coeff = p_coeff + v_coeff
+
+                # First derivatives
+                for psra in self.ptapsrs:
+                    for key1, d_Thetavec_d_p1 in psra.d_Thetavec_d_param.iteritems():
+                        # First derivatives of non-tensor component
+                        hessian[slc, key1] += fnt_coeff * d_Thetavec_d_p1[fslc] * lp_grad[slc]
+                        hessian[key1, slc] += fnt_coeff * d_Thetavec_d_p1[fslc] * lp_grad[slc]
+
+                        # Don't symmetrize, because we loop over both keys
+                        for psrb in self.ptapsrs:
+                            for key2, d_Thetavec_d_p2 in psrb.d_Thetavec_d_param.iteritems():
+                                # First term (log-jacobian): d_sigma_d_theta
+                                hessian[key1, key2] += np.sum(d2_sigma_d2_theta *
+                                        d_Thetavec_d_p1 * d_Thetavec_d_p2)
+
+                                # Second term (log-jacobian): d_theta2_d_theta
+                                hessian[key1, key2] += np.sum(d2_theta2_d2_theta *
+                                        d_Thetavec_d_p1 * d_Thetavec_d_p2)
+
+                                # Non-tensor component
+                                hessian[key1, key2] += np.sum(snt_coeff * d_Thetavec_d_p1[fslc] *
+                                        d_Thetavec_d_p2[fslc] * lp_grad[slc])
+
+                # Pre-compute coefficients for the non-tensor components
+                p_coeff = 0.5 * p[slc] * Sigmavec**1.5 / thetavec**2
+                v_coeff = 1.0 * v * Sigmavec**2 / thetavec**2
+                snt_coeff = p_coeff + v_coeff
+                d2_theta_d2_theta = 0.5 * Sigmavec / thetavec**2
+
+                # Second derivatives
+                for key, d2_Thetavec_d2_p in self.d2_Thetavec_d2_param.iteritems():
+                    if key[0] == key[1]:
+                        # Log-jacobian
+                        hessian[key[0], key[1]] += np.sum(d2_theta_d2_theta *
+                                d2_Thetavec_d2_p)
+
+                        # Non-tensor
+                        hessian[key[0], key[1]] += np.sum(snt_coeff *
+                                d2_Thetavec_d2_p[fslc] * lp_grad[slc])
+                    else:
+                        # Log-jacobian
+                        hessian[key[0], key[1]] += np.sum(d2_theta_d2_theta *
+                                d2_Thetavec_d2_p)
+                        hessian[key[1], key[0]] += np.sum(d2_theta_d2_theta *
+                                d2_Thetavec_d2_p)
+
+                        # Non-tensor
+                        hessian[key[0], key[1]] += np.sum(snt_coeff *
+                                d2_Thetavec_d2_p[fslc] * lp_grad[slc])
+                        hessian[key[1], key[0]] += np.sum(snt_coeff *
+                                d2_Thetavec_d2_p[fslc] * lp_grad[slc])
+
+            if psr.jitterind is not None:
+                # Have an ecor stingray transformation
+                uindex = np.sum(self.npu[:ii])
+                nus = self.npu[ii]
+
+                Sigmavec = 1.0/(1.0/psr.sr_Sigma1[psr.Zmask_U_only] + \
+                        1.0 / psr.Jvec)
+                v = psr.sr_ZNyvec[psr.Zmask_U_only]
+                std = np.sqrt(Sigmavec)        # No hyper pars
+                index = psr.jitterind
+                npars = len(std)
+                slc = slice(index, index+npars)
+
+                # Pre-compute coefficients for the non-tensor components
+                fnt_coeff = 0.5 * Sigmavec**1.5 / psr.Jvec**2
+                d2_sigma_d2_j = 0.5 * Sigmavec**2 / psr.Jvec**4
+                d2_j2_d2_j = -Sigmavec / psr.Jvec**3
+                p_coeff1 = 0.75 * Sigmavec**2.5 / psr.Jvec**4
+                p_coeff2 = -1.0 * Sigmavec**1.5 / psr.Jvec**3
+                p_coeff = p[slc] * (p_coeff1 + p_coeff2)
+                v_coeff1 = 2.0 * Sigmavec**3 / psr.Jvec**4
+                v_coeff2 = -2.0 * Sigmavec**2 / psr.Jvec**3
+                v_coeff = v * (v_coeff1 + v_coeff2)
+                snt_coeff = p_coeff + v_coeff
+
+                # First derivatives
+                for key1, d_Jvec_d_p1 in psr.d_Jvec_d_param.iteritems():
+                    # First derivatives of non-tensor component
+                    hessian[slc, key1] += fnt_coeff * d_Jvec_d_p1 * lp_grad[slc]
+                    hessian[key1, slc] += fnt_coeff * d_Jvec_d_p1 * lp_grad[slc]
+
+                    # Don't symmetrize, because we loop over both keys
+                    for key2, d_Jvec_d_p2 in psr.d_Jvec_d_param.iteritems():
+                        # First term (log-jacobian): d_sigma_d_j
+                        hessian[key1, key2] += np.sum(d2_sigma_d2_j *
+                                d_Jvec_d_p1 * d_Jvec_d_p2)
+
+                        # Second term (log-jacobian): d_j2_d_j
+                        hessian[key1, key2] += np.sum(d2_j2_d2_j *
+                                d_Jvec_d_p1 * d_Jvec_d_p2)
+
+                        # Non-tensor component
+                        hessian[key1, key2] += np.sum(snt_coeff * d_Jvec_d_p1 *
+                                d_Jvec_d_p2 * lp_grad[slc])
+
+                # Pre-compute coefficients for the non-tensor components
+                p_coeff = 0.5 * p[slc] * Sigmavec**1.5 / psr.Jvec**2
+                v_coeff = 1.0 * v * Sigmavec**2 / psr.Jvec**2
+                snt_coeff = p_coeff + v_coeff
+                d2_j_d2_j = 0.5 * Sigmavec / psr.Jvec**2
+
+                # Second derivatives
+                for key, d2_Jvec_d2_p in psr.d2_Jvec_d2_param.iteritems():
+                    if key[0] == key[1]:
+                        # Log-jacobian
+                        hessian[key[0], key[1]] += np.sum(d2_j_d2_j *
+                                d2_Jvec_d2_p)
+
+                        # Non-tensor
+                        hessian[key[0], key[1]] += np.sum(snt_coeff *
+                                d2_Jvec_d2_p * lp_grad[slc])
+                    else:
+                        hessian[key[0], key[1]] += np.sum(d2_j_d2_j *
+                                d2_Jvec_d2_p)
+                        hessian[key[1], key[0]] += np.sum(d2_j_d2_j *
+                                d2_Jvec_d2_p)
+
+                        # Non-tensor
+                        hessian[key[0], key[1]] += np.sum(snt_coeff *
+                                d2_Jvec_d2_p * lp_grad[slc])
+                        hessian[key[1], key[0]] += np.sum(snt_coeff *
+                                d2_Jvec_d2_p * lp_grad[slc])
+
         return hessian
 
     def dxdp_nondiag(self, p, ll_grad):

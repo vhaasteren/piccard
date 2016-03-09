@@ -345,13 +345,13 @@ class likelihoodWrapper(object):
     def Svec(self):
         return self.likob.Svec
 
-    @property
-    def d_Phivec_d_param(self):
-        return self.likob.d_Phivec_d_param
+    #@property
+    #def d_Phivec_d_param(self):
+    #    return self.likob.d_Phivec_d_param
 
-    @property
-    def d2_Phivec_d2_param(self):
-        return self.likob.d2_Phivec_d2_param
+    #@property
+    #def d2_Phivec_d2_param(self):
+    #    return self.likob.d2_Phivec_d2_param
 
     @property
     def d_Svec_d_param(self):
@@ -361,13 +361,13 @@ class likelihoodWrapper(object):
     def d2_Svec_d2_param(self):
         return self.likob.d2_Svec_d2_param
 
-    @property
-    def d_Thetavec_d_param(self):
-        return self.likob.d_Thetavec_d_param
+    #@property
+    #def d_Thetavec_d_param(self):
+    #    return self.likob.d_Thetavec_d_param
 
-    @property
-    def d2_Thetavec_d2_param(self):
-        return self.likob.d2_Thetavec_d2_param
+    #@property
+    #def d2_Thetavec_d2_param(self):
+    #    return self.likob.d2_Thetavec_d2_param
 
 
 class intervalLikelihood(likelihoodWrapper):
