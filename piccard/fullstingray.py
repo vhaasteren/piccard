@@ -7,7 +7,6 @@ from __future__ import division, print_function
 import numpy as np
 import math
 import scipy.linalg as sl, scipy.special as ss
-from functools import partial
 
 from transformations import *
 from choleskyext import *
@@ -283,7 +282,7 @@ class fullStingrayLikelihood(stingrayLikelihood):
                     fslc_phi = slice(np.sum(self.npf[:ii]),
                             np.sum(self.npf[:ii+1]))
 
-                    for key, value in self.d_Phivec_d_param.iteritems():
+                    for key, value in psr.d_Phivec_d_param.iteritems():
                         # We need to remember sr_diagSBS for dxdp_nondiag
                         BdB = np.zeros(len(psr.sr_Sigma))
                         BdB[psr.Zmask_F_only] = \
@@ -323,7 +322,7 @@ class fullStingrayLikelihood(stingrayLikelihood):
                     fslc_theta = slice(np.sum(self.npfdm[:ii]),
                             np.sum(self.npfdm[:ii+1]))
 
-                    for key, value in self.d_Thetavec_d_param.iteritems():
+                    for key, value in psr.d_Thetavec_d_param.iteritems():
                         # We need to remember sr_diagSBS for dxdp_nondiag
                         BdB = np.zeros(len(psr.sr_Sigma))
                         BdB[psr.Zmask_D_only] = \
@@ -415,7 +414,7 @@ class fullStingrayLikelihood(stingrayLikelihood):
                 fslc_phi = slice(np.sum(self.npf[:ii]), np.sum(self.npf[:ii+1]))
                 slc_sig = psr.Zmask_F_only
 
-                for key, d_Phivec_d_p in self.d_Phivec_d_param.iteritems():
+                for key, d_Phivec_d_p in psr.d_Phivec_d_param.iteritems():
                     BdB = np.zeros(len(psr.sr_Sigma))
                     BdB[psr.Zmask_F_only] = \
                             psr.sr_Beta_inv[psr.Zmask_F_only]**2 * \
@@ -458,7 +457,7 @@ class fullStingrayLikelihood(stingrayLikelihood):
                 fslc_theta = slice(np.sum(self.npfdm[:ii]), np.sum(self.npfdm[:ii+1]))
                 slc_sig = psr.Zmask_D_only
 
-                for key, d_Thetavec_d_p in self.d_Thetavec_d_param.iteritems():
+                for key, d_Thetavec_d_p in psr.d_Thetavec_d_param.iteritems():
                     BdB = np.zeros(len(psr.sr_Sigma))
                     BdB[psr.Zmask_D_only] = \
                             psr.sr_Beta_inv[psr.Zmask_D_only]**2 * \

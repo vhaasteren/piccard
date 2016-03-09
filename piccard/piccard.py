@@ -201,6 +201,12 @@ class ptaPulsar(object):
         self.d2_Nvec_d2_param = dict()
         self.d_Jvec_d_param = dict()
         self.d2_Jvec_d2_param = dict()
+        self.d_Phivec_d_param = dict()          # For gradients
+        self.d2_Phivec_d2_param = dict()        # For Hessian
+        self.d_Thetavec_d_param = dict()        # For gradients
+        self.d2_Thetavec_d2_param = dict()      # For Hessian
+        self.d_Betavec_d_param = dict()         # For gradients
+        self.d2_Betavec_d2_param = dict()       # For Hessian
 
         # To select the number of Frequency modes
         self.bfinc = None        # Number of modes of all internal matrices
@@ -2473,6 +2479,73 @@ class ptaPulsar(object):
 
         self.setLimitedModeAuxiliaries(bfinc, bfdminc, likfunc=likfunc)
 
+    def add_d_Phivec(self, d_mat, startindex, mask):
+        """Update d_Phivec_d_param with the new derivatives"""
+        for col in range(d_mat.shape[1]):
+            if mask[col]:
+                self.d_Phivec_d_param[startindex+col] = d_mat[:,col]
+
+    def add_d2_Phivec(self, d_mat, startindex, mask):
+        """Update d2_Phivec_d2_param with the new derivatives"""
+        if len(d_mat.shape) > 2:
+            # Have 2D indices for derivatives (so non-diagonal)
+            for row in range(d_mat.shape[1]):
+                for col in range(d_mat.shape[2]):
+                    index1 = startindex+row
+                    index2 = startindex+col
+                    if index1 <= index2 and mask[row] and mask[col]:
+                        index = (index1, index2)
+                        self.d2_Phivec_d2_param[index] = d_mat[:, row, col]
+        else:
+            for col in range(d_mat.shape[1]):
+                if mask[col]:
+                    index = (startindex+col, startindex+col)
+                    self.d2_Phivec_d2_param[index] = d_mat[:,col]
+
+    def add_d_Thetavec(self, d_mat, startindex, mask):
+        """Update d_Thetavec_d_param with the new derivatives"""
+        for col in range(d_mat.shape[1]):
+            if mask[col]:
+                self.d_Thetavec_d_param[startindex+col] = d_mat[:,col]
+
+    def add_d2_Thetavec(self, d_mat, startindex, mask):
+        """Update d2_Thetavec_d2_param with the new derivatives"""
+        if len(d_mat.shape) > 2:
+            # Have 2D indices for derivatives (so non-diagonal)
+            for row in range(d_mat.shape[1]):
+                for col in range(d_mat.shape[2]):
+                    index1 = startindex+row
+                    index2 = startindex+col
+                    if index1 <= index2 and mask[row] and mask[col]:
+                        index = (index1, index2)
+                        self.d2_Thetavec_d2_param[index] = d_mat[:, row, col]
+        else:
+            for col in range(d_mat.shape[1]):
+                if mask[col]:
+                    self.d2_Thetavec_d2_param[startindex+col] = d_mat[:,col]
+
+    def add_d_Betavec(self, d_mat, startindex, mask):
+        """Update d_Betavec_d_param with the new derivatives"""
+        for col in range(d_mat.shape[1]):
+            if mask[col]:
+                self.d_Betavec_d_param[startindex+col] = d_mat[:,col]
+
+    def add_d2_Betavec(self, d_mat, startindex, mask):
+        """Update d2_Betavec_d2_param with the new derivatives"""
+        if len(d_mat.shape) > 2:
+            # Have 2D indices for derivatives (so non-diagonal)
+            for row in range(d_mat.shape[1]):
+                for col in range(d_mat.shape[2]):
+                    index1 = startindex+row
+                    index2 = startindex+col
+                    if index1 <= index2 and mask[row] and mask[col]:
+                        index = (index1, index2)
+                        self.d2_Betavec_d2_param[index] = d_mat[:, row, col]
+        else:
+            for col in range(d_mat.shape[1]):
+                if mask[col]:
+                    self.d2_Betavec_d2_param[startindex+col] = d_mat[:,col]
+
 
 class ptaLikelihood(object):
     """
@@ -2612,12 +2685,6 @@ class ptaLikelihood(object):
         self.Sigma_F = None      #                                     gibbs
         self.Sigma_F_cf = None   #                                     gibbs
         self.GNGldet = None      # mark1, mark3, mark?, mark6                (log-det)
-        self.d_Phivec_d_param = dict()          # For gradients
-        self.d2_Phivec_d2_param = dict()        # For Hessian
-        self.d_Thetavec_d_param = dict()        # For gradients
-        self.d2_Thetavec_d2_param = dict()      # For Hessian
-        self.d_Betavec_d_param = dict()         # For gradients
-        self.d2_Betavec_d2_param = dict()       # For Hessian
         self.d_Svec_d_param  = dict()           # For gradients
         self.d2_Svec_d2_param  = dict()         # For Hessian
 
@@ -5522,72 +5589,6 @@ class ptaLikelihood(object):
 
         return d_mat
 
-    def add_d_Phivec(self, d_mat, startindex, mask):
-        """Update d_Phivec_d_param with the new derivatives"""
-        for col in range(d_mat.shape[1]):
-            if mask[col]:
-                self.d_Phivec_d_param[startindex+col] = d_mat[:,col]
-
-    def add_d2_Phivec(self, d_mat, startindex, mask):
-        """Update d2_Phivec_d2_param with the new derivatives"""
-        if len(d_mat.shape) > 2:
-            # Have 2D indices for derivatives (so non-diagonal)
-            for row in range(d_mat.shape[1]):
-                for col in range(d_mat.shape[2]):
-                    index1 = startindex+row
-                    index2 = startindex+col
-                    if index1 <= index2 and mask[row] and mask[col]:
-                        index = (index1, index2)
-                        self.d2_Phivec_d2_param[index] = d_mat[:, row, col]
-        else:
-            for col in range(d_mat.shape[1]):
-                if mask[col]:
-                    index = (startindex+col, startindex+col)
-                    self.d2_Phivec_d2_param[index] = d_mat[:,col]
-
-    def add_d_Thetavec(self, d_mat, startindex, mask):
-        """Update d_Thetavec_d_param with the new derivatives"""
-        for col in range(d_mat.shape[1]):
-            if mask[col]:
-                self.d_Thetavec_d_param[startindex+col] = d_mat[:,col]
-
-    def add_d2_Thetavec(self, d_mat, startindex, mask):
-        """Update d2_Thetavec_d2_param with the new derivatives"""
-        if len(d_mat.shape) > 2:
-            # Have 2D indices for derivatives (so non-diagonal)
-            for row in range(d_mat.shape[1]):
-                for col in range(d_mat.shape[2]):
-                    index1 = startindex+row
-                    index2 = startindex+col
-                    if index1 <= index2 and mask[row] and mask[col]:
-                        index = (index1, index2)
-                        self.d2_Thetavec_d2_param[index] = d_mat[:, row, col]
-        else:
-            for col in range(d_mat.shape[1]):
-                if mask[col]:
-                    self.d2_Thetavec_d2_param[startindex+col] = d_mat[:,col]
-
-    def add_d_Betavec(self, d_mat, startindex, mask):
-        """Update d_Betavec_d_param with the new derivatives"""
-        for col in range(d_mat.shape[1]):
-            if mask[col]:
-                self.d_Betavec_d_param[startindex+col] = d_mat[:,col]
-
-    def add_d2_Betavec(self, d_mat, startindex, mask):
-        """Update d2_Betavec_d2_param with the new derivatives"""
-        if len(d_mat.shape) > 2:
-            # Have 2D indices for derivatives (so non-diagonal)
-            for row in range(d_mat.shape[1]):
-                for col in range(d_mat.shape[2]):
-                    index1 = startindex+row
-                    index2 = startindex+col
-                    if index1 <= index2 and mask[row] and mask[col]:
-                        index = (index1, index2)
-                        self.d2_Betavec_d2_param[index] = d_mat[:, row, col]
-        else:
-            for col in range(d_mat.shape[1]):
-                if mask[col]:
-                    self.d2_Betavec_d2_param[startindex+col] = d_mat[:,col]
 
     def add_d_Svec(self, d_mat, startindex, mask):
         """Update d_Svec_d_param with the new derivatives"""
@@ -5666,9 +5667,13 @@ class ptaLikelihood(object):
                 sparameters = m2signal['pstart'].copy()
                 sparameters[m2signal['bvary']] = \
                         parameters[m2signal['parindex']:m2signal['parindex']+m2signal['npars']]
+
+                psrind = m2signal['pulsarind']
+                psr = self.ptapsrs[psrind]
+
                 if m2signal['stype'] == 'spectrum':
                     if m2signal['corr'] == 'single':
-                        findex = np.sum(self.npff[:m2signal['pulsarind']])
+                        findex = np.sum(self.npff[:psrind])
                         # nfreq = int(self.npf[m2signal['pulsarind']]/2)
                         nfreq = m2signal['npars']
 
@@ -5685,14 +5690,14 @@ class ptaLikelihood(object):
                             ntotfreqs = np.sum(self.npff)
                             d_mat = self.d_spBpsd(sparameters,
                                     ntotfreqs=ntotfreqs, nfreqind=findex)
-                            self.add_d_Phivec(d_mat, m2signal['parindex'],
+                            psr.add_d_Phivec(d_mat, m2signal['parindex'],
                                     m2signal['bvary'])
 
                         if calc_hessian:
                             ntotfreqs = np.sum(self.npff)
                             d_mat = self.d2_spBpsd(sparameters,
                                     ntotfreqs=ntotfreqs, nfreqind=findex)
-                            self.add_d2_Phivec(d_mat, m2signal['parindex'],
+                            psr.add_d2_Phivec(d_mat, m2signal['parindex'],
                                     m2signal['bvary'])
 
                     elif m2signal['corr'] in ['gr', 'uniform', 'dipole', \
@@ -5749,15 +5754,13 @@ class ptaLikelihood(object):
                                     m2signal['bvary'])
 
                 elif m2signal['stype'] == 'blspectrum':
-                    pp = m2signal['pulsarind']
-                    psr = self.ptapsrs[pp]
-                    inds = np.sum(self.npfb[:pp])
-                    inde = inds + self.npfb[pp]
+                    inds = np.sum(self.npfb[:psrind])
+                    inde = inds + self.npfb[psrind]
 
                     # Find the FB index for the band we are in
                     bind = np.where(np.all(psr.Fbands==m2signal['freqband'],axis=1))[0][0]
-                    findex = np.sum(self.npfb[:pp]) + bind*self.npf[pp]
-                    nfreq = int(self.npf[pp]/2)
+                    findex = np.sum(self.npfb[:psrind]) + bind*self.npf[psrind]
+                    nfreq = int(self.npf[psrind]/2)
 
                     pcd = self.spBpsd(sparameters)
 
@@ -5766,19 +5769,21 @@ class ptaLikelihood(object):
 
                     if calc_gradient:
                         d_mat = self.d_spBpsd(sparameters,
-                                len(psr.Fbands)*self.npf[pp], bind*self.npf[pp])
-                        self.add_d_Betavec(d_mat, m2signal['parindex'],
+                                len(psr.Fbands)*self.npf[psrind],
+                                bind*self.npf[psrind])
+                        psr.add_d_Betavec(d_mat, m2signal['parindex'],
                                 m2signal['bvary'])
 
                     if calc_hessian:
                         d_mat = self.d2_spBpsd(sparameters,
-                                len(psr.Fbands)*self.npf[pp], bind*self.npf[pp])
-                        self.add_d2_Betavec(d_mat, m2signal['parindex'],
+                                len(psr.Fbands)*self.npf[psrind],
+                                bind*self.npf[psrind])
+                        psr.add_d2_Betavec(d_mat, m2signal['parindex'],
                                 m2signal['bvary'])
                 elif m2signal['stype'] == 'dmspectrum':
                     if m2signal['corr'] == 'single':
-                        findex = np.sum(self.npffdm[:m2signal['pulsarind']])
-                        nfreq = int(self.npfdm[m2signal['pulsarind']]/2)
+                        findex = np.sum(self.npffdm[:psrind])
+                        nfreq = int(self.npfdm[psrind]/2)
 
                         pcd = self.spBpsd(sparameters)
 
@@ -5787,22 +5792,22 @@ class ptaLikelihood(object):
 
                         if calc_gradient:
                             d_mat = self.d_spBpsd(sparameters)
-                            self.add_d_Thetavec(d_mat, m2signal['parindex'],
+                            psr.add_d_Thetavec(d_mat, m2signal['parindex'],
                                     m2signal['bvary'])
 
                         if calc_hessian:
                             d_mat = self.d2_spBpsd(sparameters)
-                            self.add_d2_Thetavec(d_mat, m2signal['parindex'],
+                            psr.add_d2_Thetavec(d_mat, m2signal['parindex'],
                                     m2signal['bvary'])
                 elif m2signal['stype'] == 'powerlaw':
                     lAmp = sparameters[0]
                     Si = sparameters[1]
                     sTmax = m2signal['Tmax']
-                    sfreqs = self.ptapsrs[m2signal['pulsarind']].Ffreqs
+                    sfreqs = self.ptapsrs[psrind].Ffreqs
 
                     if m2signal['corr'] == 'single':
-                        findex = np.sum(self.npff[:m2signal['pulsarind']])
-                        nfreq = int(self.npf[m2signal['pulsarind']]/2)
+                        findex = np.sum(self.npff[:psrind])
+                        nfreq = int(self.npf[psrind]/2)
                         pcd = self.plBpsd(lAmp, Si, sTmax, sfreqs)
 
                         # Fill the phi matrix
@@ -5817,14 +5822,14 @@ class ptaLikelihood(object):
                             ntotfreqs = np.sum(self.npff)
                             d_mat = self.d_plBpsd(lAmp, Si, sTmax, sfreqs,
                                     ntotfreqs=ntotfreqs, nfreqind=findex)
-                            self.add_d_Phivec(d_mat, m2signal['parindex'],
+                            psr.add_d_Phivec(d_mat, m2signal['parindex'],
                                     m2signal['bvary'])
 
                         if calc_hessian:
                             ntotfreqs = np.sum(self.npff)
                             d_mat = self.d2_plBpsd(lAmp, Si, sTmax, sfreqs,
                                     ntotfreqs=ntotfreqs, nfreqind=findex)
-                            self.add_d2_Phivec(d_mat, m2signal['parindex'],
+                            psr.add_d2_Phivec(d_mat, m2signal['parindex'],
                                     m2signal['bvary'])
                     elif m2signal['corr'] in ['gr', 'uniform', 'dipole', \
                                               'anisotropicgwb', 'pixelgwb']:
@@ -5879,11 +5884,11 @@ class ptaLikelihood(object):
                     alpha = sparameters[1]
                     lfc = sparameters[2]
                     sTmax = m2signal['Tmax']
-                    sfreqs = self.ptapsrs[m2signal['pulsarind']].Ffreqs
+                    sfreqs = self.ptapsrs[psrind].Ffreqs
 
                     if m2signal['corr'] == 'single':
-                        findex = np.sum(self.npff[:m2signal['pulsarind']])
-                        nfreq = int(self.npf[m2signal['pulsarind']]/2)
+                        findex = np.sum(self.npff[:psrind])
+                        nfreq = int(self.npf[psrind]/2)
                         pcd = self.smBpsd(lAmp, alpha, lfc, sTmax, sfreqs)
 
 
@@ -5899,7 +5904,7 @@ class ptaLikelihood(object):
                             ntotfreqs = np.sum(self.npff)
                             d_mat = self.d_smBpsd(lAmp, alpha, lfc, sTmax, sfreqs,
                                     ntotfreqs=ntotfreqs, nfreqind=findex)
-                            self.add_d_Phivec(d_mat, m2signal['parindex'],
+                            psr.add_d_Phivec(d_mat, m2signal['parindex'],
                                     m2signal['bvary'])
 
                         if calc_hessian:
@@ -5907,7 +5912,7 @@ class ptaLikelihood(object):
                             d_mat = self.d2_smBpsd(lAmp, alpha, lfc, sTmax, sfreqs,
                                     ntotfreqs=ntotfreqs, nfreqind=findex)
                             raise NotImplementedError("SM model for GWs not done")
-                            self.add_d2_Phivec(d_mat, m2signal['parindex'],
+                            psr.add_d2_Phivec(d_mat, m2signal['parindex'],
                                     m2signal['bvary'])
                     elif m2signal['corr'] in ['gr', 'uniform', 'dipole', \
                                               'anisotropicgwb', 'pixelgwb']:
@@ -5962,10 +5967,9 @@ class ptaLikelihood(object):
                             self.add_d2_Svec(d_mat, m2signal['parindex'],
                                     m2signal['bvary'])
                 elif m2signal['stype'] == 'blpowerlaw':
-                    pp = m2signal['pulsarind']
-                    psr = self.ptapsrs[pp]
-                    inds = np.sum(self.npfb[:pp])
-                    inde = inds + self.npfb[pp]
+                    psr = self.ptapsrs[psrind]
+                    inds = np.sum(self.npfb[:psrind])
+                    inde = inds + self.npfb[psrind]
 
                     lAmp = sparameters[0]
                     Si = sparameters[1]
@@ -5974,8 +5978,8 @@ class ptaLikelihood(object):
 
                     # Find the FB index for the band we are in
                     bind = np.where(np.all(psr.Fbands==m2signal['freqband'],axis=1))[0][0]
-                    findex = np.sum(self.npfb[:pp]) + bind*self.npf[pp]
-                    nfreq = int(self.npf[pp]/2)
+                    findex = np.sum(self.npfb[:psrind]) + bind*self.npf[psrind]
+                    nfreq = int(self.npf[psrind]/2)
 
                     pcd = self.plBpsd(lAmp, Si, sTmax, sfreqs)
 
@@ -5984,20 +5988,21 @@ class ptaLikelihood(object):
 
                     if calc_gradient:
                         d_mat = self.d_plBpsd(lAmp, Si, sTmax, sfreqs,
-                                len(psr.Fbands)*self.npf[pp], bind*self.npf[pp])
-                        self.add_d_Betavec(d_mat, m2signal['parindex'],
+                                len(psr.Fbands)*self.npf[psrind],
+                                bind*self.npf[psrind])
+                        psr.add_d_Betavec(d_mat, m2signal['parindex'],
                                 m2signal['bvary'])
 
                     if calc_hessian:
                         d_mat = self.d2_plBpsd(lAmp, Si, sTmax, sfreqs,
-                                len(psr.Fbands)*self.npf[pp], bind*self.npf[pp])
-                        self.add_d2_Betavec(d_mat, m2signal['parindex'],
+                                len(psr.Fbands)*self.npf[psrind],
+                                bind*self.npf[psrind])
+                        psr.add_d2_Betavec(d_mat, m2signal['parindex'],
                                 m2signal['bvary'])
                 elif m2signal['stype'] == 'blspectralModel':
-                    pp = m2signal['pulsarind']
-                    psr = self.ptapsrs[pp]
-                    inds = np.sum(self.npfb[:pp])
-                    inde = inds + self.npfb[pp]
+                    psr = self.ptapsrs[psrind]
+                    inds = np.sum(self.npfb[:psrind])
+                    inde = inds + self.npfb[psrind]
 
                     lAmp = sparameters[0]
                     alpha = sparameters[1]
@@ -6007,8 +6012,8 @@ class ptaLikelihood(object):
 
                     # Find the FB index for the band we are in
                     bind = np.where(np.all(psr.Fbands==m2signal['freqband'],axis=1))[0][0]
-                    findex = np.sum(self.npfb[:pp]) + bind*self.npf[pp]
-                    nfreq = int(self.npf[pp]/2)
+                    findex = np.sum(self.npfb[:psrind]) + bind*self.npf[psrind]
+                    nfreq = int(self.npf[psrind]/2)
 
                     pcd = smBpsd(lAmp, alpha, lfc, sTmax, sfreqs)
 
@@ -6017,14 +6022,16 @@ class ptaLikelihood(object):
 
                     if calc_gradient:
                         d_mat = self.d_smBpsd(lAmp, alpha, lfc, sTmax, sfreqs,
-                                len(psr.Fbands)*self.npf[pp], bind*self.npf[pp])
-                        self.add_d_Betavec(d_mat, m2signal['parindex'],
+                                len(psr.Fbands)*self.npf[psrind],
+                                bind*self.npf[psrind])
+                        psr.add_d_Betavec(d_mat, m2signal['parindex'],
                                 m2signal['bvary'])
 
                     if calc_hessian:
                         d_mat = self.d2_smBpsd(lAmp, alpha, lfc, sTmax, sfreqs,
-                                len(psr.Fbands)*self.npf[pp], bind*self.npf[pp])
-                        self.add_d2_Betavec(d_mat, m2signal['parindex'],
+                                len(psr.Fbands)*self.npf[psrind],
+                                bind*self.npf[psrind])
+                        psr.add_d2_Betavec(d_mat, m2signal['parindex'],
                                 m2signal['bvary'])
                 elif m2signal['stype'] == 'dmpowerlaw':
                     lAmp = sparameters[0]
@@ -6042,12 +6049,12 @@ class ptaLikelihood(object):
 
                         if calc_gradient:
                             d_mat = self.d_plBpsd(lAmp, Si,sTmax, sfreqs)
-                            self.add_d_Thetavec(d_mat, m2signal['parindex'],
+                            psr.add_d_Thetavec(d_mat, m2signal['parindex'],
                                     m2signal['bvary'])
 
                         if calc_hessian:
                             d_mat = self.d2_plBpsd(lAmp, Si,sTmax, sfreqs)
-                            self.add_d2_Thetavec(d_mat, m2signal['parindex'],
+                            psr.add_d2_Thetavec(d_mat, m2signal['parindex'],
                                     m2signal['bvary'])
 
                 elif m2signal['stype'] == 'frequencyline':
@@ -9048,7 +9055,7 @@ class ptaLikelihood(object):
                 self.GNGldet[ii] += np.sum(np.log(phivec))
 
                 # Gradient for Phivec hyper-parameters
-                for key, d_Phivec_d_p in self.d_Phivec_d_param.iteritems():
+                for key, d_Phivec_d_p in psr.d_Phivec_d_param.iteritems():
                     # Inner product
                     gradient[key] += 0.5 * np.sum(bsqr * d_Phivec_d_p[fslc] / phivec**2)
 
@@ -9077,7 +9084,7 @@ class ptaLikelihood(object):
                 self.GNGldet[ii] += np.sum(np.log(thetavec))
 
                 # Gradient for Thetavec hyper-parameters
-                for key, d_Thetavec_d_p in self.d_Thetavec_d_param.iteritems():
+                for key, d_Thetavec_d_p in psr.d_Thetavec_d_param.iteritems():
                     # Inner product
                     gradient[key] += 0.5 * np.sum(bsqr * d_Thetavec_d_p / thetavec**2)
 
@@ -9187,7 +9194,7 @@ class ptaLikelihood(object):
                 # Gradient for Phivec hyper-parameters
                 # We are not trying to be efficient here, since there is only
                 # one pulsar. For multi-pulsar efficiency, see below
-                for key, d_Phivec_d_p in self.d_Phivec_d_param.iteritems():
+                for key, d_Phivec_d_p in psr.d_Phivec_d_param.iteritems():
                     # Inner product
                     gradient[key] += 0.5 * np.sum(bsqr * d_Phivec_d_p / phivec**2)
 
@@ -9328,7 +9335,7 @@ class ptaLikelihood(object):
                     gradient[key] -= 0.5 * np.trace(np.dot(c_inv, scor_sin))
 
             # The gradients for the B hyper-parameters (red noise)
-            for key, d_Phivec_d_p in self.d_Phivec_d_param.iteritems():
+            for key, d_Phivec_d_p in psr.d_Phivec_d_param.iteritems():
                 # Inner-product of the prior
                 gradient[key] += 0.5 * np.sum(Binv_b_rn**2 * d_Phivec_d_p)
 
@@ -9336,7 +9343,7 @@ class ptaLikelihood(object):
                 gradient[key] -= 0.5 * np.sum(Binv_diag_rn * d_Phivec_d_p)
 
             # The gradients for the B hyper-parameters (DM variations)
-            for key, d_Thetavec_d_p in self.d_Thetavec_d_param.iteritems():
+            for key, d_Thetavec_d_p in psr.d_Thetavec_d_param.iteritems():
                 # Inner product
                 gradient[key] += 0.5 * np.sum(Binv_b_dm_sqr * d_Thetavec_d_p)
 
@@ -9749,13 +9756,13 @@ class ptaLikelihood(object):
                 thetavec = self.Thetavec[fslc]
 
                 # First derivatives
-                for key1, d_Thetavec_d_p1 in self.d_Thetavec_d_param.iteritems():
+                for key1, d_Thetavec_d_p1 in psr.d_Thetavec_d_param.iteritems():
                     # dBdb
                     hessian[pslc, key1] += bb * d_Thetavec_d_p1 / thetavec**2
                     hessian[key1, pslc] = hessian[pslc, key1]
 
                     # dBdB
-                    for key2, d_Thetavec_d_p2 in self.d_Thetavec_d_param.iteritems():
+                    for key2, d_Thetavec_d_p2 in psr.d_Thetavec_d_param.iteritems():
                         # Inner product
                         hessian[key1, key2] -= np.sum(bb**2 * d_Thetavec_d_p1 *
                                 d_Thetavec_d_p2 / thetavec**3)
@@ -9765,7 +9772,7 @@ class ptaLikelihood(object):
                                 d_Thetavec_d_p2 / thetavec**2)
 
                 # Second derivatives
-                for key, d2_Thetavec_d2_p in self.d2_Thetavec_d2_param.iteritems():
+                for key, d2_Thetavec_d2_p in psr.d2_Thetavec_d2_param.iteritems():
                     if key[0] == key[1]:
                         # Inner product
                         hessian[key[0], key[1]] += 0.5 * np.sum(bb**2 *
@@ -9862,83 +9869,86 @@ class ptaLikelihood(object):
 
                 # Red noise
                 # First derivatives (squared as well) dB
-                for key1, d_Phivec_d_p1 in self.d_Phivec_d_param.iteritems():
-                    d_phivec_cos1 = d_Phivec_d_p1[finds_cos]    # Sin & Cos the same
-                    d_phivec_sin1 = d_Phivec_d_p1[finds_sin]    # Sin & Cos the same
+                for psra in self.ptapsrs:
+                    for key1, d_Phivec_d_p1 in psra.d_Phivec_d_param.iteritems():
+                        d_phivec_cos1 = d_Phivec_d_p1[finds_cos]    # Sin & Cos the same
+                        d_phivec_sin1 = d_Phivec_d_p1[finds_sin]    # Sin & Cos the same
 
-                    # Speed optimizations
-                    LdpLx_c = np.dot(c_inv, d_phivec_cos1 * Lx_c)
-                    LdpLx_s = np.dot(c_inv, d_phivec_sin1 * Lx_s)
+                        # Speed optimizations
+                        LdpLx_c = np.dot(c_inv, d_phivec_cos1 * Lx_c)
+                        LdpLx_s = np.dot(c_inv, d_phivec_sin1 * Lx_s)
 
-                    # dBdb
-                    hessian[pinds_cos, key1] += LdpLx_c
-                    hessian[key1, pinds_cos] += LdpLx_c
-                    hessian[pinds_sin, key1] += LdpLx_s
-                    hessian[key1, pinds_sin] += LdpLx_s
+                        # dBdb
+                        hessian[pinds_cos, key1] += LdpLx_c
+                        hessian[key1, pinds_cos] += LdpLx_c
+                        hessian[pinds_sin, key1] += LdpLx_s
+                        hessian[key1, pinds_sin] += LdpLx_s
 
-                    # Memorize for second-order Trace-cos, Trace-sin
-                    tracecos_prod1 = np.dot(c_inv, np.diag(d_phivec_cos1))
-                    tracesin_prod1 = np.dot(c_inv, np.diag(d_phivec_sin1))
+                        # Memorize for second-order Trace-cos, Trace-sin
+                        tracecos_prod1 = np.dot(c_inv, np.diag(d_phivec_cos1))
+                        tracesin_prod1 = np.dot(c_inv, np.diag(d_phivec_sin1))
 
-                    # Combined with first derivatives dBdB
-                    for key2, d_Phivec_d_p2 in self.d_Phivec_d_param.iteritems():
-                        # INEFFICIENT slicing
-                        d_phivec_cos2 = d_Phivec_d_p2[finds_cos]
-                        d_phivec_sin2 = d_Phivec_d_p2[finds_sin]
+                        # Combined with first derivatives dBdB
+                        for psrb in self.ptapsrs:
+                            for key2, d_Phivec_d_p2 in psrb.d_Phivec_d_param.iteritems():
+                                # INEFFICIENT slicing
+                                d_phivec_cos2 = d_Phivec_d_p2[finds_cos]
+                                d_phivec_sin2 = d_Phivec_d_p2[finds_sin]
 
-                        # Inner product
-                        hessian[key1, key2] -= np.sum(Lx_c * d_phivec_cos2 *
-                                LdpLx_c)
-                        hessian[key1, key2] -= np.sum(Lx_s * d_phivec_sin2 *
-                                LdpLx_s)
+                                # Inner product
+                                hessian[key1, key2] -= np.sum(Lx_c * d_phivec_cos2 *
+                                        LdpLx_c)
+                                hessian[key1, key2] -= np.sum(Lx_s * d_phivec_sin2 *
+                                        LdpLx_s)
 
-                        # Trace -- cos
-                        prod2 = np.dot(c_inv, np.diag(d_phivec_cos2))
-                        hessian[key1, key2] += 0.5 * np.trace(
-                                np.dot(tracecos_prod1, prod2))
+                                # Trace -- cos
+                                prod2 = np.dot(c_inv, np.diag(d_phivec_cos2))
+                                hessian[key1, key2] += 0.5 * np.trace(
+                                        np.dot(tracecos_prod1, prod2))
 
-                        # Trace -- sin
-                        prod2 = np.dot(c_inv, np.diag(d_phivec_sin2))
-                        hessian[key1, key2] += 0.5 * np.trace(
-                                np.dot(tracesin_prod1, prod2))
+                                # Trace -- sin
+                                prod2 = np.dot(c_inv, np.diag(d_phivec_sin2))
+                                hessian[key1, key2] += 0.5 * np.trace(
+                                        np.dot(tracesin_prod1, prod2))
 
                 # Red noise
                 # Second derivatives
-                for key, d2_Phivec_d2_p in self.d2_Phivec_d2_param.iteritems():
-                    d2_phivec_cos = d2_Phivec_d2_p[finds_cos]    # Sin & Cos the same
-                    d2_phivec_sin = d2_Phivec_d2_p[finds_sin]    # Sin & Cos the same
+                for psr in self.ptapsrs:
+                    for key, d2_Phivec_d2_p in psr.d2_Phivec_d2_param.iteritems():
+                        d2_phivec_cos = d2_Phivec_d2_p[finds_cos]    # Sin & Cos the same
+                        d2_phivec_sin = d2_Phivec_d2_p[finds_sin]    # Sin & Cos the same
 
-                    # The cross-terms are only listed once. So expand ourselves
-                    if key[0] == key[1]:
-                        # Inner product
-                        hessian[key[0], key[1]] += 0.5 * np.sum(Lx_c**2 * d2_phivec_cos)
-                        hessian[key[0], key[1]] += 0.5 * np.sum(Lx_s**2 * d2_phivec_sin)
+                        # The cross-terms are only listed once. So expand ourselves
+                        if key[0] == key[1]:
+                            # Inner product
+                            hessian[key[0], key[1]] += 0.5 * np.sum(Lx_c**2 * d2_phivec_cos)
+                            hessian[key[0], key[1]] += 0.5 * np.sum(Lx_s**2 * d2_phivec_sin)
 
-                        # Trace
-                        diag_phiinv = np.diag(c_inv)
-                        hessian[key[0], key[1]] -= 0.5 * np.sum(
-                                diag_phiinv * d2_phivec_cos)
-                        hessian[key[0], key[1]] -= 0.5 * np.sum(
-                                diag_phiinv * d2_phivec_sin)
-                    else:
-                        # Inner product
-                        hessian[key[0], key[1]] += 0.5 * np.sum(Lx_c**2 * d2_phivec_cos)
-                        hessian[key[0], key[1]] += 0.5 * np.sum(Lx_s**2 * d2_phivec_sin)
-                        hessian[key[1], key[0]] += 0.5 * np.sum(Lx_c**2 * d2_phivec_cos)
-                        hessian[key[1], key[0]] += 0.5 * np.sum(Lx_s**2 * d2_phivec_sin)
-                        #print("Val2:", Lx_s**2 * d2_phivec_sin)
+                            # Trace
+                            diag_phiinv = np.diag(c_inv)
+                            hessian[key[0], key[1]] -= 0.5 * np.sum(
+                                    diag_phiinv * d2_phivec_cos)
+                            hessian[key[0], key[1]] -= 0.5 * np.sum(
+                                    diag_phiinv * d2_phivec_sin)
+                        else:
+                            # Inner product
+                            hessian[key[0], key[1]] += 0.5 * np.sum(Lx_c**2 * d2_phivec_cos)
+                            hessian[key[0], key[1]] += 0.5 * np.sum(Lx_s**2 * d2_phivec_sin)
+                            hessian[key[1], key[0]] += 0.5 * np.sum(Lx_c**2 * d2_phivec_cos)
+                            hessian[key[1], key[0]] += 0.5 * np.sum(Lx_s**2 * d2_phivec_sin)
+                            #print("Val2:", Lx_s**2 * d2_phivec_sin)
 
-                        # Trace (can use diagonal piece, because it is just
-                        # *one* diagonal matrix, and a general matrix).
-                        diag_phiinv = np.diag(c_inv)
-                        hessian[key[0], key[1]] -= 0.5 * np.sum(
-                                diag_phiinv * d2_phivec_cos)
-                        hessian[key[0], key[1]] -= 0.5 * np.sum(
-                                diag_phiinv * d2_phivec_sin)
-                        hessian[key[1], key[0]] -= 0.5 * np.sum(
-                                diag_phiinv * d2_phivec_cos)
-                        hessian[key[1], key[0]] -= 0.5 * np.sum(
-                                diag_phiinv * d2_phivec_sin)
+                            # Trace (can use diagonal piece, because it is just
+                            # *one* diagonal matrix, and a general matrix).
+                            diag_phiinv = np.diag(c_inv)
+                            hessian[key[0], key[1]] -= 0.5 * np.sum(
+                                    diag_phiinv * d2_phivec_cos)
+                            hessian[key[0], key[1]] -= 0.5 * np.sum(
+                                    diag_phiinv * d2_phivec_sin)
+                            hessian[key[1], key[0]] -= 0.5 * np.sum(
+                                    diag_phiinv * d2_phivec_cos)
+                            hessian[key[1], key[0]] -= 0.5 * np.sum(
+                                    diag_phiinv * d2_phivec_sin)
                         
 
 
@@ -9984,39 +9994,40 @@ class ptaLikelihood(object):
 
                     # Red noise first derivatives dBdB (Red Noise - GW)
                     # NOTE: key1 != key2, ever, so symmetrize...
-                    for key2, d_Phivec_d_p2 in self.d_Phivec_d_param.iteritems():
-                        d_phivec_cos2 = d_Phivec_d_p2[finds_cos]
-                        d_phivec_sin2 = d_Phivec_d_p2[finds_sin]
+                    for psr in self.ptapsrs:
+                        for key2, d_Phivec_d_p2 in psr.d_Phivec_d_param.iteritems():
+                            d_phivec_cos2 = d_Phivec_d_p2[finds_cos]
+                            d_phivec_sin2 = d_Phivec_d_p2[finds_sin]
 
-                        # Inner product
-                        hessian[key1, key2] -= np.sum(Lx_c * d_phivec_cos2 *
-                                LdpLx_c)
-                        hessian[key1, key2] -= np.sum(Lx_s * d_phivec_sin2 *
-                                LdpLx_s)
-                        hessian[key2, key1] -= np.sum(Lx_c * d_phivec_cos2 *
-                                LdpLx_c)
-                        hessian[key2, key1] -= np.sum(Lx_s * d_phivec_sin2 *
-                                LdpLx_s)
+                            # Inner product
+                            hessian[key1, key2] -= np.sum(Lx_c * d_phivec_cos2 *
+                                    LdpLx_c)
+                            hessian[key1, key2] -= np.sum(Lx_s * d_phivec_sin2 *
+                                    LdpLx_s)
+                            hessian[key2, key1] -= np.sum(Lx_c * d_phivec_cos2 *
+                                    LdpLx_c)
+                            hessian[key2, key1] -= np.sum(Lx_s * d_phivec_sin2 *
+                                    LdpLx_s)
 
-                        # Trace -- cos
-                        #prod1 = sl.cho_solve(cf, d_svec_corr1)
-                        #prod2 = sl.cho_solve(cf, np.diag(d_phivec_cos2))
-                        # INEFFICIENT?
-                        prod2 = np.dot(c_inv, np.diag(d_phivec_cos2))
-                        hessian[key1, key2] += \
-                                0.5 * np.trace(np.dot(trace_prod1, prod2))
-                        hessian[key2, key1] += \
-                                0.5 * np.trace(np.dot(trace_prod1, prod2))
+                            # Trace -- cos
+                            #prod1 = sl.cho_solve(cf, d_svec_corr1)
+                            #prod2 = sl.cho_solve(cf, np.diag(d_phivec_cos2))
+                            # INEFFICIENT?
+                            prod2 = np.dot(c_inv, np.diag(d_phivec_cos2))
+                            hessian[key1, key2] += \
+                                    0.5 * np.trace(np.dot(trace_prod1, prod2))
+                            hessian[key2, key1] += \
+                                    0.5 * np.trace(np.dot(trace_prod1, prod2))
 
-                        # Trace -- sin
-                        #prod1 = sl.cho_solve(cf, d_svec_corr1)
-                        # INEFFICIENT?
-                        #prod2 = sl.cho_solve(cf, np.diag(d_phivec_sin2))
-                        prod2 = np.dot(c_inv, np.diag(d_phivec_sin2))
-                        hessian[key1, key2] += \
-                                0.5 * np.trace(np.dot(trace_prod1, prod2))
-                        hessian[key2, key1] += \
-                                0.5 * np.trace(np.dot(trace_prod1, prod2))
+                            # Trace -- sin
+                            #prod1 = sl.cho_solve(cf, d_svec_corr1)
+                            # INEFFICIENT?
+                            #prod2 = sl.cho_solve(cf, np.diag(d_phivec_sin2))
+                            prod2 = np.dot(c_inv, np.diag(d_phivec_sin2))
+                            hessian[key1, key2] += \
+                                    0.5 * np.trace(np.dot(trace_prod1, prod2))
+                            hessian[key2, key1] += \
+                                    0.5 * np.trace(np.dot(trace_prod1, prod2))
 
                 ##### GW Signals #####
                 # Second derivatives
