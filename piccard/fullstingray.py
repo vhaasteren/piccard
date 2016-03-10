@@ -257,7 +257,7 @@ class fullStingrayLikelihood(stingrayLikelihood):
         gradient = np.zeros_like(p)
 
         for ii, psr in enumerate(self.ptapsrs):
-            psr.sr_diagSBS = dict()     # For d_mu_d_par
+            # psr.sr_diagSBS = dict()     # For d_mu_d_par
             psr.sr_pslc = self.get_par_psr_sigma_inds(ii, psr)
 
             # Define the Stingray transformation
@@ -290,16 +290,16 @@ class fullStingrayLikelihood(stingrayLikelihood):
                             np.sum(self.npf[:ii+1]))
 
                     for key, value in psr.d_Phivec_d_param.iteritems():
-                        # We need to remember sr_diagSBS for dxdp_nondiag
+                        # Do some slicing magic to get the diagonals of the
+                        # matrix product in O(n^2) time
                         BdB = np.zeros(len(psr.sr_Sigma))
                         BdB[psr.Zmask_F_only] = \
                                 psr.sr_Beta_inv[psr.Zmask_F_only]**2 * \
                                 value[fslc_phi]
 
-                        # Do some slicing magic to get the diagonals of the
-                        # matrix product in O(n^2) time
-                        BS = psr.sr_Sigma * BdB[None, :]
-                        psr.sr_diagSBS[key] = np.sum(psr.sr_Sigma * BS, axis=1)
+                        # We need to remember sr_diagSBS for dxdp_nondiag
+                        #BS = psr.sr_Sigma * BdB[None, :]
+                        #psr.sr_diagSBS[key] = np.sum(psr.sr_Sigma * BS, axis=1)
 
                         # Log-jacobian for red noise Fourier terms
                         gradient[key] += np.sum(
@@ -308,16 +308,16 @@ class fullStingrayLikelihood(stingrayLikelihood):
 
                     # GW signals
                     for key, value in self.d_Svec_d_param.iteritems():
-                        # We need to remember sr_diagSBS for dxdp_nondiag
+                        # Do some slicing magic to get the diagonals of the
+                        # matrix product in O(n^2) time
                         BdB = np.zeros(len(psr.sr_Sigma))
                         BdB[psr.Zmask_F_only] = \
                                 psr.sr_Beta_inv[psr.Zmask_F_only]**2 * \
                                 value[fslc_phi]
 
-                        # Do some slicing magic to get the diagonals of the
-                        # matrix product in O(n^2) time
-                        BS = psr.sr_Sigma * BdB[None, :]
-                        psr.sr_diagSBS[key] = np.sum(psr.sr_Sigma * BS, axis=1)
+                        # We need to remember sr_diagSBS for dxdp_nondiag
+                        #BS = psr.sr_Sigma * BdB[None, :]
+                        #psr.sr_diagSBS[key] = np.sum(psr.sr_Sigma * BS, axis=1)
 
                         # Log-jacobian for red noise Fourier terms
                         gradient[key] += np.sum(
@@ -330,16 +330,16 @@ class fullStingrayLikelihood(stingrayLikelihood):
                             np.sum(self.npfdm[:ii+1]))
 
                     for key, value in psr.d_Thetavec_d_param.iteritems():
-                        # We need to remember sr_diagSBS for dxdp_nondiag
+                        # Do some slicing magic to get the diagonals of the
+                        # matrix product in O(n^2) time
                         BdB = np.zeros(len(psr.sr_Sigma))
                         BdB[psr.Zmask_D_only] = \
                                 psr.sr_Beta_inv[psr.Zmask_D_only]**2 * \
                                 value[fslc_theta]
 
-                        # Do some slicing magic to get the diagonals of the
-                        # matrix product in O(n^2) time
-                        BS = psr.sr_Sigma * BdB[None, :]
-                        psr.sr_diagSBS[key] = np.sum(psr.sr_Sigma * BS, axis=1)
+                        # We need to remember sr_diagSBS for dxdp_nondiag
+                        #BS = psr.sr_Sigma * BdB[None, :]
+                        #psr.sr_diagSBS[key] = np.sum(psr.sr_Sigma * BS, axis=1)
 
                         # Log-jacobian for DM variation Fourier terms
                         gradient[key] += np.sum(
@@ -352,16 +352,16 @@ class fullStingrayLikelihood(stingrayLikelihood):
                     #        np.sum(self.npu[:ii+1]))
 
                     for key, value in psr.d_Jvec_d_param.iteritems():
-                        # We need to remember sr_diagSBS for dxdp_nondiag
+                        # Do some slicing magic to get the diagonals of the
+                        # matrix product in O(n^2) time
                         BdB = np.zeros(len(psr.sr_Sigma))
                         BdB[psr.Zmask_U_only] = \
                                 psr.sr_Beta_inv[psr.Zmask_U_only]**2 * \
                                 value
 
-                        # Do some slicing magic to get the diagonals of the
-                        # matrix product in O(n^2) time
-                        BS = psr.sr_Sigma * BdB[None, :]
-                        psr.sr_diagSBS[key] = np.sum(psr.sr_Sigma * BS, axis=1)
+                        # We need to remember sr_diagSBS for dxdp_nondiag
+                        #BS = psr.sr_Sigma * BdB[None, :]
+                        #psr.sr_diagSBS[key] = np.sum(psr.sr_Sigma * BS, axis=1)
 
                         # Log-jacobian for DM variation Fourier terms
                         gradient[key] += np.sum(
@@ -408,23 +408,23 @@ class fullStingrayLikelihood(stingrayLikelihood):
                     BdB[psr.Zmask_F_only] = \
                             psr.sr_Beta_inv[psr.Zmask_F_only]**2 * \
                             d_Phivec_d_p1[fslc_phi]
-                    d_W_d_ea = -np.copy(BdB)                            # OK
+                    d_W_d_ea = -np.copy(BdB)
 
                     # Derivatives wrt eta_a (ea)
                     d_Sigma_d_ea = -np.dot(psr.sr_Sigma * d_W_d_ea, psr.sr_Sigma)
-                    LWaL = np.dot(psr.sr_Li * d_W_d_ea, psr.sr_Li.T)    # OK
-                    PhiLa = get_tril(LWaL)                              # OK
-                    d_L_d_ea = np.dot(psr.sr_L, PhiLa)                  # OK
+                    LWaL = np.dot(psr.sr_Li * d_W_d_ea, psr.sr_Li.T)
+                    PhiLa = get_tril(LWaL)
+                    d_L_d_ea = np.dot(psr.sr_L, PhiLa)
 
                     # Combination of dL that we'll need more later
-                    LdLTa = np.dot(d_L_d_ea.T, psr.sr_Li.T)             # OK
-                    d_LmT_d_ea = -np.dot(psr.sr_Li.T, LdLTa)            # OK
+                    LdLTa = np.dot(d_L_d_ea.T, psr.sr_Li.T)
+                    d_LmT_d_ea = -np.dot(psr.sr_Li.T, LdLTa)
 
                     #######################################################
                     # Some actual Hessian elements. Non-tensor first order
                     non_tensor =  np.dot(d_LmT_d_ea.T, lp_grad[psr.sr_pslc])
-                    hessian[psr.sr_pslc, key1] += non_tensor            # OK
-                    hessian[key1, psr.sr_pslc] += non_tensor            # OK
+                    hessian[psr.sr_pslc, key1] += non_tensor
+                    hessian[key1, psr.sr_pslc] += non_tensor
 
                     # Don't symmetrize, because we loop over both keys
                     for key2, d_Phivec_d_p2 in psr.d_Phivec_d_param.iteritems():
@@ -451,10 +451,16 @@ class fullStingrayLikelihood(stingrayLikelihood):
                                 d_Phivec_d_p2[fslc_phi]
 
                         # Derivatives wrt eta_b (eb)
-                        d_Sigma_d_eb = -np.dot(psr.sr_Sigma * d_W_d_eb, psr.sr_Sigma)
                         LWbL = np.dot(psr.sr_Li * d_W_d_eb, psr.sr_Li.T)
-                        PhiLb = get_tril(LWbL)                          # OK
-                        d_L_d_eb = np.dot(psr.sr_L, PhiLb)              # OK
+                        PhiLb = get_tril(LWbL)
+                        d_L_d_eb = np.dot(psr.sr_L, PhiLb)
+                        d_Sigma_d_eb = -np.dot(psr.sr_Sigma * d_W_d_eb, psr.sr_Sigma)
+
+                        # INEFFICIENT, BUT CODE BELOW FOR d2_mu_d2_eab HAS ERROR
+                        d2_Sigma_d_eab = -np.dot(d_Sigma_d_eb * d_W_d_ea,
+                                psr.sr_Sigma) - np.dot(psr.sr_Sigma *
+                                        d2_W_d_eab, psr.sr_Sigma) - \
+                                np.dot(psr.sr_Sigma * d_W_d_ea, d_Sigma_d_eb)
 
                         # Get the Phi's for the cross-dL second derivatives
                         Phi_first_ba = get_tril(
@@ -468,7 +474,7 @@ class fullStingrayLikelihood(stingrayLikelihood):
                         d2_L_deadeb = np.dot(d_L_d_eb, PhiLa) - \
                                 np.dot(psr.sr_L, Phi_first_ba) - \
                                 np.dot(psr.sr_L, Phi_first_ab) + \
-                                np.dot(psr.sr_L, Phi_second_ab)             # OK
+                                np.dot(psr.sr_L, Phi_second_ab)
 
                         # For second derivatives of b, we need the
                         # p_coefficients
@@ -485,12 +491,13 @@ class fullStingrayLikelihood(stingrayLikelihood):
                                 np.dot(d2_L_deadeb.T, np.dot(psr.sr_Li.T,
                                         p_vals)))
 
-                        # Second derivatives of mu
-                        Sigmav = np.dot(psr.sr_Sigma, psr.sr_ZNyvec)
-                        dSv = np.dot(d_Sigma_d_ea, psr.sr_ZNyvec)
-                        d2_mu_d2_eab = np.dot(d_Sigma_d_ea * d_W_d_eb, Sigmav) \
-                                - np.dot(psr.sr_Sigma * d2_W_d_eab, Sigmav) \
-                                + np.dot(psr.sr_Sigma * d_W_d_eb, dSv)
+                        # Second derivatives of mu (THIS PIECE HAS AN ERROR)
+                        #Sigmav = np.dot(psr.sr_Sigma, psr.sr_ZNyvec)
+                        #dSv = np.dot(d_Sigma_d_eb, psr.sr_ZNyvec)
+                        #d2_mu_d2_eab = np.dot(d_Sigma_d_eb * d_W_d_ea, Sigmav) \
+                        #        + np.dot(psr.sr_Sigma * d_W_d_ea, dSv) \
+                        #        - np.dot(psr.sr_Sigma * d2_W_d_eab, Sigmav)
+                        d2_mu_d2_eab = np.dot(d2_Sigma_d_eab, psr.sr_ZNyvec)
 
                         # Second derivatives of b
                         d2_b_d_eab = d2_mu_d2_eab - p_coeff_second_ab + \
@@ -500,14 +507,441 @@ class fullStingrayLikelihood(stingrayLikelihood):
                         hessian[key1, key2] += np.sum(d2_b_d_eab *
                                 lp_grad[psr.sr_pslc])
 
-                        # Log-jacobian Hessian components                   # OK
+                        # Log-jacobian Hessian components
+                        LdLa = np.dot(psr.sr_Li, d_L_d_ea)
+                        LdLb = np.dot(psr.sr_Li, d_L_d_eb)
+                        LdLab = np.dot(psr.sr_Li, d2_L_deadeb)
+                        hessian[key1, key2] += np.trace(np.dot(LdLa, LdLb)) - \
+                                               np.trace(LdLab)
+
+                    # Symmetrize, because the components are never the same
+                    for key2, d_Svec_d_p2 in self.d_Svec_d_param.iteritems():
+                        # The derivatives of W (=Sigma^{-1})
+                        d_W_d_eb = np.zeros(len(psr.sr_Sigma))
+                        d2_W_d_eab = np.zeros(len(psr.sr_Sigma))
+                        d_W_d_eb[psr.Zmask_F_only] = \
+                                -psr.sr_Beta_inv[psr.Zmask_F_only]**2 * \
+                                d_Svec_d_p2[fslc_phi]
+                        d2_W_d_eab[psr.Zmask_F_only] = \
+                                2*psr.sr_Beta_inv[psr.Zmask_F_only]**3 * \
+                                d_Phivec_d_p1[fslc_phi] * \
+                                d_Svec_d_p2[fslc_phi]
+
+                        # Derivatives wrt eta_b (eb)
+                        LWbL = np.dot(psr.sr_Li * d_W_d_eb, psr.sr_Li.T)
+                        PhiLb = get_tril(LWbL)
+                        d_L_d_eb = np.dot(psr.sr_L, PhiLb)
+                        d_Sigma_d_eb = -np.dot(psr.sr_Sigma * d_W_d_eb, psr.sr_Sigma)
+
+                        # INEFFICIENT, BUT CODE BELOW FOR d2_mu_d2_eab HAS ERROR
+                        d2_Sigma_d_eab = -np.dot(d_Sigma_d_eb * d_W_d_ea,
+                                psr.sr_Sigma) - np.dot(psr.sr_Sigma *
+                                        d2_W_d_eab, psr.sr_Sigma) - \
+                                np.dot(psr.sr_Sigma * d_W_d_ea, d_Sigma_d_eb)
+
+                        # Get the Phi's for the cross-dL second derivatives
+                        Phi_first_ba = get_tril(
+                                np.dot(psr.sr_Li, np.dot(d_L_d_eb, LWaL)))
+                        Phi_first_ab = get_tril(
+                                np.dot(LWaL, np.dot(d_L_d_eb.T, psr.sr_Li.T)))
+                        Phi_second_ab = get_tril(
+                                np.dot(psr.sr_Li * d2_W_d_eab, psr.sr_Li.T))
+
+                        # Second derivatives of the Cholesky factor
+                        d2_L_deadeb = np.dot(d_L_d_eb, PhiLa) - \
+                                np.dot(psr.sr_L, Phi_first_ba) - \
+                                np.dot(psr.sr_L, Phi_first_ab) + \
+                                np.dot(psr.sr_L, Phi_second_ab)
+
+                        # For second derivatives of b, we need the
+                        # p_coefficients
+                        p_vals = p[psr.sr_pslc]
+                        p_coeff_first_ab = np.dot(psr.sr_Li.T,
+                                np.dot(d_L_d_ea.T, np.dot(psr.sr_Li.T,
+                                        np.dot(d_L_d_eb.T, np.dot(psr.sr_Li.T,
+                                                p_vals)))))
+                        p_coeff_first_ba = np.dot(psr.sr_Li.T,
+                                np.dot(d_L_d_eb.T, np.dot(psr.sr_Li.T,
+                                        np.dot(d_L_d_ea.T, np.dot(psr.sr_Li.T,
+                                                p_vals)))))
+                        p_coeff_second_ab = np.dot(psr.sr_Li.T,
+                                np.dot(d2_L_deadeb.T, np.dot(psr.sr_Li.T,
+                                        p_vals)))
+
+                        # Second derivatives of mu (THIS PIECE HAS AN ERROR)
+                        #Sigmav = np.dot(psr.sr_Sigma, psr.sr_ZNyvec)
+                        #dSv = np.dot(d_Sigma_d_eb, psr.sr_ZNyvec)
+                        #d2_mu_d2_eab = np.dot(d_Sigma_d_eb * d_W_d_ea, Sigmav) \
+                        #        + np.dot(psr.sr_Sigma * d_W_d_ea, dSv) \
+                        #        - np.dot(psr.sr_Sigma * d2_W_d_eab, Sigmav)
+                        d2_mu_d2_eab = np.dot(d2_Sigma_d_eab, psr.sr_ZNyvec)
+
+                        # Second derivatives of b
+                        d2_b_d_eab = d2_mu_d2_eab - p_coeff_second_ab + \
+                                p_coeff_first_ab + p_coeff_first_ba
+                        
+                        # Non-tensor Hessian components
+                        hessian[key1, key2] += np.sum(d2_b_d_eab *
+                                lp_grad[psr.sr_pslc])
+                        hessian[key2, key1] += np.sum(d2_b_d_eab *
+                                lp_grad[psr.sr_pslc])
+
+                        # Log-jacobian Hessian components
+                        LdLa = np.dot(psr.sr_Li, d_L_d_ea)
+                        LdLb = np.dot(psr.sr_Li, d_L_d_eb)
+                        LdLab = np.dot(psr.sr_Li, d2_L_deadeb)
+                        hessian[key1, key2] += np.trace(np.dot(LdLa, LdLb)) - \
+                                               np.trace(LdLab)
+                        hessian[key2, key1] += np.trace(np.dot(LdLa, LdLb)) - \
+                                               np.trace(LdLab)
+
+                # Loop over first derivatives (Svec, not Phivec here)
+                for key1, d_Svec_d_p1 in self.d_Svec_d_param.iteritems():
+                    BdB = np.zeros(len(psr.sr_Sigma))
+                    BdB[psr.Zmask_F_only] = \
+                            psr.sr_Beta_inv[psr.Zmask_F_only]**2 * \
+                            d_Svec_d_p1[fslc_phi]
+                    d_W_d_ea = -np.copy(BdB)
+
+                    # Derivatives wrt eta_a (ea)
+                    d_Sigma_d_ea = -np.dot(psr.sr_Sigma * d_W_d_ea, psr.sr_Sigma)
+                    LWaL = np.dot(psr.sr_Li * d_W_d_ea, psr.sr_Li.T)
+                    PhiLa = get_tril(LWaL)
+                    d_L_d_ea = np.dot(psr.sr_L, PhiLa)
+
+                    # Combination of dL that we'll need more later
+                    LdLTa = np.dot(d_L_d_ea.T, psr.sr_Li.T)
+                    d_LmT_d_ea = -np.dot(psr.sr_Li.T, LdLTa)
+
+                    #######################################################
+                    # Some actual Hessian elements. Non-tensor first order
+                    non_tensor =  np.dot(d_LmT_d_ea.T, lp_grad[psr.sr_pslc])
+                    hessian[psr.sr_pslc, key1] += non_tensor
+                    hessian[key1, psr.sr_pslc] += non_tensor
+
+                    # Don't symmetrize, because we loop over both keys
+                    for key2, d_Svec_d_p2 in self.d_Svec_d_param.iteritems():
+                        # Find the key for the second derivative
+                        if (key1, key2) in self.d2_Svec_d2_param:
+                            dkey = (key1, key2)
+                        elif (key2, key1) in self.d2_Svec_d2_param:
+                            dkey = (key2, key1)
+                        else:
+                            raise ValueError("key not in d2_Phivec_d2_param!")
+                        d2_Svec_d_p1p2 = self.d2_Svec_d2_param[dkey]
+
+                        # The derivatives of W (=Sigma^{-1})
+                        d_W_d_eb = np.zeros(len(psr.sr_Sigma))
+                        d2_W_d_eab = np.zeros(len(psr.sr_Sigma))
+                        d_W_d_eb[psr.Zmask_F_only] = \
+                                -psr.sr_Beta_inv[psr.Zmask_F_only]**2 * \
+                                d_Svec_d_p2[fslc_phi]
+                        d2_W_d_eab[psr.Zmask_F_only] = \
+                                -psr.sr_Beta_inv[psr.Zmask_F_only]**2 * \
+                                d2_Svec_d_p1p2[fslc_phi] + \
+                                2*psr.sr_Beta_inv[psr.Zmask_F_only]**3 * \
+                                d_Svec_d_p1[fslc_phi] * \
+                                d_Svec_d_p2[fslc_phi]
+
+                        # Derivatives wrt eta_b (eb)
+                        LWbL = np.dot(psr.sr_Li * d_W_d_eb, psr.sr_Li.T)
+                        PhiLb = get_tril(LWbL)
+                        d_L_d_eb = np.dot(psr.sr_L, PhiLb)
+                        d_Sigma_d_eb = -np.dot(psr.sr_Sigma * d_W_d_eb, psr.sr_Sigma)
+
+                        # INEFFICIENT, BUT CODE BELOW FOR d2_mu_d2_eab HAS ERROR
+                        d2_Sigma_d_eab = -np.dot(d_Sigma_d_eb * d_W_d_ea,
+                                psr.sr_Sigma) - np.dot(psr.sr_Sigma *
+                                        d2_W_d_eab, psr.sr_Sigma) - \
+                                np.dot(psr.sr_Sigma * d_W_d_ea, d_Sigma_d_eb)
+
+                        # Get the Phi's for the cross-dL second derivatives
+                        Phi_first_ba = get_tril(
+                                np.dot(psr.sr_Li, np.dot(d_L_d_eb, LWaL)))
+                        Phi_first_ab = get_tril(
+                                np.dot(LWaL, np.dot(d_L_d_eb.T, psr.sr_Li.T)))
+                        Phi_second_ab = get_tril(
+                                np.dot(psr.sr_Li * d2_W_d_eab, psr.sr_Li.T))
+
+                        # Second derivatives of the Cholesky factor
+                        d2_L_deadeb = np.dot(d_L_d_eb, PhiLa) - \
+                                np.dot(psr.sr_L, Phi_first_ba) - \
+                                np.dot(psr.sr_L, Phi_first_ab) + \
+                                np.dot(psr.sr_L, Phi_second_ab)
+
+                        # For second derivatives of b, we need the
+                        # p_coefficients
+                        p_vals = p[psr.sr_pslc]
+                        p_coeff_first_ab = np.dot(psr.sr_Li.T,
+                                np.dot(d_L_d_ea.T, np.dot(psr.sr_Li.T,
+                                        np.dot(d_L_d_eb.T, np.dot(psr.sr_Li.T,
+                                                p_vals)))))
+                        p_coeff_first_ba = np.dot(psr.sr_Li.T,
+                                np.dot(d_L_d_eb.T, np.dot(psr.sr_Li.T,
+                                        np.dot(d_L_d_ea.T, np.dot(psr.sr_Li.T,
+                                                p_vals)))))
+                        p_coeff_second_ab = np.dot(psr.sr_Li.T,
+                                np.dot(d2_L_deadeb.T, np.dot(psr.sr_Li.T,
+                                        p_vals)))
+
+                        # Second derivatives of mu (THIS PIECE HAS AN ERROR)
+                        #Sigmav = np.dot(psr.sr_Sigma, psr.sr_ZNyvec)
+                        #dSv = np.dot(d_Sigma_d_eb, psr.sr_ZNyvec)
+                        #d2_mu_d2_eab = np.dot(d_Sigma_d_eb * d_W_d_ea, Sigmav) \
+                        #        + np.dot(psr.sr_Sigma * d_W_d_ea, dSv) \
+                        #        - np.dot(psr.sr_Sigma * d2_W_d_eab, Sigmav)
+                        d2_mu_d2_eab = np.dot(d2_Sigma_d_eab, psr.sr_ZNyvec)
+
+                        # Second derivatives of b
+                        d2_b_d_eab = d2_mu_d2_eab - p_coeff_second_ab + \
+                                p_coeff_first_ab + p_coeff_first_ba
+                        
+                        # Non-tensor Hessian components
+                        hessian[key1, key2] += np.sum(d2_b_d_eab *
+                                lp_grad[psr.sr_pslc])
+
+                        # Log-jacobian Hessian components
                         LdLa = np.dot(psr.sr_Li, d_L_d_ea)
                         LdLb = np.dot(psr.sr_Li, d_L_d_eb)
                         LdLab = np.dot(psr.sr_Li, d2_L_deadeb)
                         hessian[key1, key2] += np.trace(np.dot(LdLa, LdLb)) - \
                                                np.trace(LdLab)
             
-            # Do Theta and J components here....
+            # Red noise
+            if psr.dmfourierind is not None:
+                fdmindex = np.sum(self.npf[:ii])
+                nfdms = self.npfdm[ii]
+                fslc_theta = slice(fdmindex, fdmindex+nfdms)
+                #v = psr.sr_ZNyvec[psr.Zmask_F_only]
+
+                # Loop over first derivatives
+                for key1, d_Thetavec_d_p1 in psr.d_Thetavec_d_param.iteritems():
+                    BdB = np.zeros(len(psr.sr_Sigma))
+                    BdB[psr.Zmask_D_only] = \
+                            psr.sr_Beta_inv[psr.Zmask_D_only]**2 * \
+                            d_Thetavec_d_p1[fslc_theta]
+                    d_W_d_ea = -np.copy(BdB)
+
+                    # Derivatives wrt eta_a (ea)
+                    d_Sigma_d_ea = -np.dot(psr.sr_Sigma * d_W_d_ea, psr.sr_Sigma)
+                    LWaL = np.dot(psr.sr_Li * d_W_d_ea, psr.sr_Li.T)
+                    PhiLa = get_tril(LWaL)
+                    d_L_d_ea = np.dot(psr.sr_L, PhiLa)
+
+                    # Combination of dL that we'll need more later
+                    LdLTa = np.dot(d_L_d_ea.T, psr.sr_Li.T)
+                    d_LmT_d_ea = -np.dot(psr.sr_Li.T, LdLTa)
+
+                    #######################################################
+                    # Some actual Hessian elements. Non-tensor first order
+                    non_tensor =  np.dot(d_LmT_d_ea.T, lp_grad[psr.sr_pslc])
+                    hessian[psr.sr_pslc, key1] += non_tensor
+                    hessian[key1, psr.sr_pslc] += non_tensor
+
+                    # Don't symmetrize, because we loop over both keys
+                    for key2, d_Thetavec_d_p2 in psr.d_Thetavec_d_param.iteritems():
+                        # Find the key for the second derivative
+                        if (key1, key2) in psr.d2_Thetavec_d2_param:
+                            dkey = (key1, key2)
+                        elif (key2, key1) in psr.d2_Thetavec_d2_param:
+                            dkey = (key2, key1)
+                        else:
+                            raise ValueError("key not in d2_Thetavec_d2_param!")
+                        d2_Thetavec_d_p1p2 = psr.d2_Thetavec_d2_param[dkey]
+
+                        # The derivatives of W (=Sigma^{-1})
+                        d_W_d_eb = np.zeros(len(psr.sr_Sigma))
+                        d2_W_d_eab = np.zeros(len(psr.sr_Sigma))
+                        d_W_d_eb[psr.Zmask_D_only] = \
+                                -psr.sr_Beta_inv[psr.Zmask_D_only]**2 * \
+                                d_Thetavec_d_p2[fslc_theta]
+                        d2_W_d_eab[psr.Zmask_D_only] = \
+                                -psr.sr_Beta_inv[psr.Zmask_D_only]**2 * \
+                                d2_Thetavec_d_p1p2[fslc_theta] + \
+                                2*psr.sr_Beta_inv[psr.Zmask_D_only]**3 * \
+                                d_Thetavec_d_p1[fslc_theta] * \
+                                d_Thetavec_d_p2[fslc_theta]
+
+                        # Derivatives wrt eta_b (eb)
+                        LWbL = np.dot(psr.sr_Li * d_W_d_eb, psr.sr_Li.T)
+                        PhiLb = get_tril(LWbL)
+                        d_L_d_eb = np.dot(psr.sr_L, PhiLb)
+                        d_Sigma_d_eb = -np.dot(psr.sr_Sigma * d_W_d_eb, psr.sr_Sigma)
+
+                        # INEFFICIENT, BUT CODE BELOW FOR d2_mu_d2_eab HAS ERROR
+                        d2_Sigma_d_eab = -np.dot(d_Sigma_d_eb * d_W_d_ea,
+                                psr.sr_Sigma) - np.dot(psr.sr_Sigma *
+                                        d2_W_d_eab, psr.sr_Sigma) - \
+                                np.dot(psr.sr_Sigma * d_W_d_ea, d_Sigma_d_eb)
+
+                        # Get the Phi's for the cross-dL second derivatives
+                        Phi_first_ba = get_tril(
+                                np.dot(psr.sr_Li, np.dot(d_L_d_eb, LWaL)))
+                        Phi_first_ab = get_tril(
+                                np.dot(LWaL, np.dot(d_L_d_eb.T, psr.sr_Li.T)))
+                        Phi_second_ab = get_tril(
+                                np.dot(psr.sr_Li * d2_W_d_eab, psr.sr_Li.T))
+
+                        # Second derivatives of the Cholesky factor
+                        d2_L_deadeb = np.dot(d_L_d_eb, PhiLa) - \
+                                np.dot(psr.sr_L, Phi_first_ba) - \
+                                np.dot(psr.sr_L, Phi_first_ab) + \
+                                np.dot(psr.sr_L, Phi_second_ab)
+
+                        # For second derivatives of b, we need the
+                        # p_coefficients
+                        p_vals = p[psr.sr_pslc]
+                        p_coeff_first_ab = np.dot(psr.sr_Li.T,
+                                np.dot(d_L_d_ea.T, np.dot(psr.sr_Li.T,
+                                        np.dot(d_L_d_eb.T, np.dot(psr.sr_Li.T,
+                                                p_vals)))))
+                        p_coeff_first_ba = np.dot(psr.sr_Li.T,
+                                np.dot(d_L_d_eb.T, np.dot(psr.sr_Li.T,
+                                        np.dot(d_L_d_ea.T, np.dot(psr.sr_Li.T,
+                                                p_vals)))))
+                        p_coeff_second_ab = np.dot(psr.sr_Li.T,
+                                np.dot(d2_L_deadeb.T, np.dot(psr.sr_Li.T,
+                                        p_vals)))
+
+                        # Second derivatives of mu (THIS PIECE HAS AN ERROR)
+                        #Sigmav = np.dot(psr.sr_Sigma, psr.sr_ZNyvec)
+                        #dSv = np.dot(d_Sigma_d_eb, psr.sr_ZNyvec)
+                        #d2_mu_d2_eab = np.dot(d_Sigma_d_eb * d_W_d_ea, Sigmav) \
+                        #        + np.dot(psr.sr_Sigma * d_W_d_ea, dSv) \
+                        #        - np.dot(psr.sr_Sigma * d2_W_d_eab, Sigmav)
+                        d2_mu_d2_eab = np.dot(d2_Sigma_d_eab, psr.sr_ZNyvec)
+
+                        # Second derivatives of b
+                        d2_b_d_eab = d2_mu_d2_eab - p_coeff_second_ab + \
+                                p_coeff_first_ab + p_coeff_first_ba
+                        
+                        # Non-tensor Hessian components
+                        hessian[key1, key2] += np.sum(d2_b_d_eab *
+                                lp_grad[psr.sr_pslc])
+
+                        # Log-jacobian Hessian components
+                        LdLa = np.dot(psr.sr_Li, d_L_d_ea)
+                        LdLb = np.dot(psr.sr_Li, d_L_d_eb)
+                        LdLab = np.dot(psr.sr_Li, d2_L_deadeb)
+                        hessian[key1, key2] += np.trace(np.dot(LdLa, LdLb)) - \
+                                               np.trace(LdLab)
+
+            if psr.jitterind is not None:
+                uindex = np.sum(self.npu[:ii])
+                nus = self.npu[ii]
+                #fslc_j = slice(uindex, uindex+nus)
+
+                # Loop over first derivatives
+                for key1, d_Jvec_d_p1 in psr.d_Jvec_d_param.iteritems():
+                    BdB = np.zeros(len(psr.sr_Sigma))
+                    BdB[psr.Zmask_U_only] = \
+                            psr.sr_Beta_inv[psr.Zmask_U_only]**2 * \
+                            d_Jvec_d_p1
+                    d_W_d_ea = -np.copy(BdB)
+
+                    # Derivatives wrt eta_a (ea)
+                    d_Sigma_d_ea = -np.dot(psr.sr_Sigma * d_W_d_ea, psr.sr_Sigma)
+                    LWaL = np.dot(psr.sr_Li * d_W_d_ea, psr.sr_Li.T)
+                    PhiLa = get_tril(LWaL)
+                    d_L_d_ea = np.dot(psr.sr_L, PhiLa)
+
+                    # Combination of dL that we'll need more later
+                    LdLTa = np.dot(d_L_d_ea.T, psr.sr_Li.T)
+                    d_LmT_d_ea = -np.dot(psr.sr_Li.T, LdLTa)
+
+                    #######################################################
+                    # Some actual Hessian elements. Non-tensor first order
+                    non_tensor =  np.dot(d_LmT_d_ea.T, lp_grad[psr.sr_pslc])
+                    hessian[psr.sr_pslc, key1] += non_tensor
+                    hessian[key1, psr.sr_pslc] += non_tensor
+
+                    # Don't symmetrize, because we loop over both keys
+                    for key2, d_Jvec_d_p2 in psr.d_Jvec_d_param.iteritems():
+                        # Find the key for the second derivative
+                        if (key1, key2) in psr.d2_Jvec_d2_param:
+                            dkey = (key1, key2)
+                        elif (key2, key1) in psr.d2_Jvec_d2_param:
+                            dkey = (key2, key1)
+                        else:
+                            raise ValueError("key not in d2_Jvec_d2_param!")
+                        d2_Jvec_d_p1p2 = psr.d2_Jvec_d2_param[dkey]
+
+                        # The derivatives of W (=Sigma^{-1})
+                        d_W_d_eb = np.zeros(len(psr.sr_Sigma))
+                        d2_W_d_eab = np.zeros(len(psr.sr_Sigma))
+                        d_W_d_eb[psr.Zmask_U_only] = \
+                                -psr.sr_Beta_inv[psr.Zmask_U_only]**2 * \
+                                d_Jvec_d_p2
+                        d2_W_d_eab[psr.Zmask_U_only] = \
+                                -psr.sr_Beta_inv[psr.Zmask_U_only]**2 * \
+                                d2_Jvec_d_p1p2 + \
+                                2*psr.sr_Beta_inv[psr.Zmask_U_only]**3 * \
+                                d_Jvec_d_p1 * \
+                                d_Jvec_d_p2
+
+                        # Derivatives wrt eta_b (eb)
+                        LWbL = np.dot(psr.sr_Li * d_W_d_eb, psr.sr_Li.T)
+                        PhiLb = get_tril(LWbL)
+                        d_L_d_eb = np.dot(psr.sr_L, PhiLb)
+                        d_Sigma_d_eb = -np.dot(psr.sr_Sigma * d_W_d_eb, psr.sr_Sigma)
+
+                        # INEFFICIENT, BUT CODE BELOW FOR d2_mu_d2_eab HAS ERROR
+                        d2_Sigma_d_eab = -np.dot(d_Sigma_d_eb * d_W_d_ea,
+                                psr.sr_Sigma) - np.dot(psr.sr_Sigma *
+                                        d2_W_d_eab, psr.sr_Sigma) - \
+                                np.dot(psr.sr_Sigma * d_W_d_ea, d_Sigma_d_eb)
+
+                        # Get the Phi's for the cross-dL second derivatives
+                        Phi_first_ba = get_tril(
+                                np.dot(psr.sr_Li, np.dot(d_L_d_eb, LWaL)))
+                        Phi_first_ab = get_tril(
+                                np.dot(LWaL, np.dot(d_L_d_eb.T, psr.sr_Li.T)))
+                        Phi_second_ab = get_tril(
+                                np.dot(psr.sr_Li * d2_W_d_eab, psr.sr_Li.T))
+
+                        # Second derivatives of the Cholesky factor
+                        d2_L_deadeb = np.dot(d_L_d_eb, PhiLa) - \
+                                np.dot(psr.sr_L, Phi_first_ba) - \
+                                np.dot(psr.sr_L, Phi_first_ab) + \
+                                np.dot(psr.sr_L, Phi_second_ab)
+
+                        # For second derivatives of b, we need the
+                        # p_coefficients
+                        p_vals = p[psr.sr_pslc]
+                        p_coeff_first_ab = np.dot(psr.sr_Li.T,
+                                np.dot(d_L_d_ea.T, np.dot(psr.sr_Li.T,
+                                        np.dot(d_L_d_eb.T, np.dot(psr.sr_Li.T,
+                                                p_vals)))))
+                        p_coeff_first_ba = np.dot(psr.sr_Li.T,
+                                np.dot(d_L_d_eb.T, np.dot(psr.sr_Li.T,
+                                        np.dot(d_L_d_ea.T, np.dot(psr.sr_Li.T,
+                                                p_vals)))))
+                        p_coeff_second_ab = np.dot(psr.sr_Li.T,
+                                np.dot(d2_L_deadeb.T, np.dot(psr.sr_Li.T,
+                                        p_vals)))
+
+                        # Second derivatives of mu (THIS PIECE HAS AN ERROR)
+                        #Sigmav = np.dot(psr.sr_Sigma, psr.sr_ZNyvec)
+                        #dSv = np.dot(d_Sigma_d_eb, psr.sr_ZNyvec)
+                        #d2_mu_d2_eab = np.dot(d_Sigma_d_eb * d_W_d_ea, Sigmav) \
+                        #        + np.dot(psr.sr_Sigma * d_W_d_ea, dSv) \
+                        #        - np.dot(psr.sr_Sigma * d2_W_d_eab, Sigmav)
+                        d2_mu_d2_eab = np.dot(d2_Sigma_d_eab, psr.sr_ZNyvec)
+
+                        # Second derivatives of b
+                        d2_b_d_eab = d2_mu_d2_eab - p_coeff_second_ab + \
+                                p_coeff_first_ab + p_coeff_first_ba
+                        
+                        # Non-tensor Hessian components
+                        hessian[key1, key2] += np.sum(d2_b_d_eab *
+                                lp_grad[psr.sr_pslc])
+
+                        # Log-jacobian Hessian components
+                        LdLa = np.dot(psr.sr_Li, d_L_d_ea)
+                        LdLb = np.dot(psr.sr_Li, d_L_d_eb)
+                        LdLab = np.dot(psr.sr_Li, d2_L_deadeb)
+                        hessian[key1, key2] += np.trace(np.dot(LdLa, LdLb)) - \
+                                               np.trace(LdLab)
 
         return hessian
 
