@@ -9335,20 +9335,21 @@ class ptaLikelihood(object):
                     gradient[key] -= 0.5 * np.trace(np.dot(c_inv, scor_sin))
 
             # The gradients for the B hyper-parameters (red noise)
-            for key, d_Phivec_d_p in psr.d_Phivec_d_param.iteritems():
-                # Inner-product of the prior
-                gradient[key] += 0.5 * np.sum(Binv_b_rn**2 * d_Phivec_d_p)
+            for pp, psr in enumerate(self.ptapsrs):
+                for key, d_Phivec_d_p in psr.d_Phivec_d_param.iteritems():
+                    # Inner-product of the prior
+                    gradient[key] += 0.5 * np.sum(Binv_b_rn**2 * d_Phivec_d_p)
 
-                # Determinant of the prior
-                gradient[key] -= 0.5 * np.sum(Binv_diag_rn * d_Phivec_d_p)
+                    # Determinant of the prior
+                    gradient[key] -= 0.5 * np.sum(Binv_diag_rn * d_Phivec_d_p)
 
-            # The gradients for the B hyper-parameters (DM variations)
-            for key, d_Thetavec_d_p in psr.d_Thetavec_d_param.iteritems():
-                # Inner product
-                gradient[key] += 0.5 * np.sum(Binv_b_dm_sqr * d_Thetavec_d_p)
+                # The gradients for the B hyper-parameters (DM variations)
+                for key, d_Thetavec_d_p in psr.d_Thetavec_d_param.iteritems():
+                    # Inner product
+                    gradient[key] += 0.5 * np.sum(Binv_b_dm_sqr * d_Thetavec_d_p)
 
-                # Determinant
-                gradient[key] -= 0.5 * np.sum(Binv_diag_dm * d_Thetavec_d_p)
+                    # Determinant
+                    gradient[key] -= 0.5 * np.sum(Binv_diag_dm * d_Thetavec_d_p)
 
         ll = -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) - \
             0.5*corr_xi2 - 0.5*corr_ldet
