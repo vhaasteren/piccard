@@ -214,6 +214,8 @@ class likelihoodWrapper(object):
 
         # Transformation properties
         hessian = self.logjac_hessian(p)
+        # INEFFICIENT: For a full PTA, getting the full dxdp here is really
+        #              inefficient. Do it at least per-pulsar?
         dxdpf = self.dxdp_full(p)
 
         hessian += np.dot(dxdpf.T, np.dot(orig_hessian, dxdpf))
@@ -221,6 +223,9 @@ class likelihoodWrapper(object):
         # We also need the gradient
         # TODO: Why is there a minus sign? -=
         #       I guess the interval d2xd2p has a '-' wrong. Check that!
+        #       Stingray transforms do all this in logjac_hessian. Yes, that is
+        #       indeed confusing...  Stingrays are just quite messily
+        #       implemented
         hessian -= np.diag(self.d2xd2p(p)*orig_lp_grad)
 
         return hessian
