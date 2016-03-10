@@ -386,8 +386,6 @@ class fullStingrayLikelihood(stingrayLikelihood):
 
         hessian = np.zeros((len(p), len(p)))
 
-        done_test_vals = False
-
         for ii, psr in enumerate(self.ptapsrs):
             psr.sr_pslc = self.get_par_psr_sigma_inds(ii, psr)
 
@@ -410,28 +408,23 @@ class fullStingrayLikelihood(stingrayLikelihood):
                     BdB[psr.Zmask_F_only] = \
                             psr.sr_Beta_inv[psr.Zmask_F_only]**2 * \
                             d_Phivec_d_p1[fslc_phi]
-                    d_W_d_ea = -np.copy(BdB)
+                    d_W_d_ea = -np.copy(BdB)                            # OK
 
                     # Derivatives wrt eta_a (ea)
                     d_Sigma_d_ea = -np.dot(psr.sr_Sigma * d_W_d_ea, psr.sr_Sigma)
-                    LWaL = np.dot(psr.sr_Li * d_W_d_ea, psr.sr_Li.T)
-                    PhiLa = get_tril(LWaL)
-                    d_L_d_ea = np.dot(psr.sr_L, PhiLa)
+                    LWaL = np.dot(psr.sr_Li * d_W_d_ea, psr.sr_Li.T)    # OK
+                    PhiLa = get_tril(LWaL)                              # OK
+                    d_L_d_ea = np.dot(psr.sr_L, PhiLa)                  # OK
 
                     # Combination of dL that we'll need more later
-                    LdLTa = np.dot(d_L_d_ea.T, psr.sr_Li.T)
-                    d_LmT_d_ea = -np.dot(psr.sr_Li.T, LdLTa)
+                    LdLTa = np.dot(d_L_d_ea.T, psr.sr_Li.T)             # OK
+                    d_LmT_d_ea = -np.dot(psr.sr_Li.T, LdLTa)            # OK
 
                     #######################################################
                     # Some actual Hessian elements. Non-tensor first order
-                    non_tensor =  np.dot(d_LmT_d_ea, lp_grad[psr.sr_pslc]).T # .T?
-                    hessian[psr.sr_pslc, key1] += non_tensor
-                    hessian[key1, psr.sr_pslc] += non_tensor # These values are
-                                                             # WAY too large
-                    if not done_test_vals:
-                        #print("non_tensor: ", key1, non_tensor)
-                        done_test_vals = True
-                    # These ones correlate 3 with 9 (RNsi -- PX)
+                    non_tensor =  np.dot(d_LmT_d_ea.T, lp_grad[psr.sr_pslc])
+                    hessian[psr.sr_pslc, key1] += non_tensor            # OK
+                    hessian[key1, psr.sr_pslc] += non_tensor            # OK
 
                     # Don't symmetrize, because we loop over both keys
                     for key2, d_Phivec_d_p2 in psr.d_Phivec_d_param.iteritems():
@@ -460,12 +453,8 @@ class fullStingrayLikelihood(stingrayLikelihood):
                         # Derivatives wrt eta_b (eb)
                         d_Sigma_d_eb = -np.dot(psr.sr_Sigma * d_W_d_eb, psr.sr_Sigma)
                         LWbL = np.dot(psr.sr_Li * d_W_d_eb, psr.sr_Li.T)
-                        PhiLb = get_tril(LWbL)
-                        d_L_d_eb = np.dot(psr.sr_L, PhiLb)
-
-                        # Combination of dL that we'll need more later
-                        #LdLTb = np.dot(d_L_d_ea.T, psr.sr_Li.T)
-                        #d_LmT_d_eb = -np.dot(psr.sr_Li.T, LdLTb)
+                        PhiLb = get_tril(LWbL)                          # OK
+                        d_L_d_eb = np.dot(psr.sr_L, PhiLb)              # OK
 
                         # Get the Phi's for the cross-dL second derivatives
                         Phi_first_ba = get_tril(
@@ -479,7 +468,7 @@ class fullStingrayLikelihood(stingrayLikelihood):
                         d2_L_deadeb = np.dot(d_L_d_eb, PhiLa) - \
                                 np.dot(psr.sr_L, Phi_first_ba) - \
                                 np.dot(psr.sr_L, Phi_first_ab) + \
-                                np.dot(psr.sr_L, Phi_second_ab)
+                                np.dot(psr.sr_L, Phi_second_ab)             # OK
 
                         # For second derivatives of b, we need the
                         # p_coefficients
@@ -511,7 +500,7 @@ class fullStingrayLikelihood(stingrayLikelihood):
                         hessian[key1, key2] += np.sum(d2_b_d_eab *
                                 lp_grad[psr.sr_pslc])
 
-                        # Log-jacobian Hessian components
+                        # Log-jacobian Hessian components                   # OK
                         LdLa = np.dot(psr.sr_Li, d_L_d_ea)
                         LdLb = np.dot(psr.sr_Li, d_L_d_eb)
                         LdLab = np.dot(psr.sr_Li, d2_L_deadeb)
