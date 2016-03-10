@@ -238,6 +238,7 @@ class hpStingrayLikelihood(stingrayLikelihood):
                 #           since we are already looping over psr above
 
                 # Only red-noise -- red-noise crosses
+                # INEFFICIENT: psra and psrb can just be psr, no for loops
                 for psra in self.ptapsrs:
                     for key1, d_Phivec_d_p1 in psra.d_Phivec_d_param.iteritems():
                         # First derivatives of non-tensor component
@@ -266,7 +267,7 @@ class hpStingrayLikelihood(stingrayLikelihood):
                 d2_phi_d2_phi = 0.5 * Sigmavec / phivec**2
 
                 # Only red-noise -- second derivatives
-                for key, d2_Phivec_d2_p in self.d2_Phivec_d2_param.iteritems():
+                for key, d2_Phivec_d2_p in psr.d2_Phivec_d2_param.iteritems():
 
                     if key[0] == key[1]:
                         # Log-jacobian
