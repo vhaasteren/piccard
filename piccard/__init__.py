@@ -12,8 +12,9 @@ from hmcwrappers import *
 from piccard_hmc import *
 from resampler import *
 from distsampling import *
+from pynuts import *
 
-__version__ = 2014.12
+__version__ = 2016.03
 
 def test():
     # Run some tests here

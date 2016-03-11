@@ -10,9 +10,11 @@ import glob
 import sys
 import json
 import tempfile
+import pickle
 
 from piccard import *
 import pytwalk                  # Internal module
+import pynuts                   # Internal module
 import pydnest                  # Internal module
 import rjmcmchammer as rjemcee  # Internal module
 from triplot import *
@@ -2382,6 +2384,38 @@ def RunPTMCMC(likob, steps, chainsdir, covfile=None, burnin=10000, resume=False,
     sampler.sample(p0, steps, thin=thin, burn=burnin, isave=isave, maxIter=maxIter)
 
     return sampler
+
+def RunNUTS(likob, steps, chainsdir, burnin=100, delta=0.6, savelikob=True):
+    """
+    Run a No-U-Turn-Sampler
+    """
+    paramfile = os.path.join(chainsdir, 'ptparameters.txt')
+    picklefile = os.path.join(chainsdir, 'likob.pickle')
+    samplefile = os.path.join(chainsdir, 'samples.txt')
+    chainfile = os.path.join(chainsdir, 'chain_1.txt')
+
+    # Save the parameters to file
+    likob.saveModelParameters(paramfile)
+    likob.saveResiduals(chainsdir)
+
+    if savelikob:
+        with open(picklefile, 'w') as fil:
+            pickle.dump(likob, fil)
+
+    ndim = likob.dimensions
+
+    # Run the NUTS
+    samples, lnprob, epsilon = nuts6(
+            likob.logposterior_grad, steps, burnin, likob.pstart,
+            delta, outFile=samplefile)
+
+    # Obtain the original samples, and write the chain
+    chain = wl.fullbackward(samples)
+    llp = np.array([lnprob, lnprob, epsilon, epsilon]).T
+    output = np.append(chain, llp, axis=1)
+    np.savetxt(chainfile, output)
+
+    return None
 
 
 """
