@@ -2405,13 +2405,13 @@ def RunNUTS(likob, steps, chainsdir, burnin=100, delta=0.6, savelikob=True):
     ndim = likob.dimensions
 
     # Run the NUTS
-    samples, lnprob, epsilon = nuts6(
+    samples, lnprob, epsilon = pynuts.nuts6(
             likob.logposterior_grad, steps, burnin, likob.pstart,
             delta, outFile=samplefile)
 
     # Obtain the original samples, and write the chain
-    chain = wl.fullbackward(samples)
-    llp = np.array([lnprob, lnprob, epsilon, epsilon]).T
+    chain = likob.fullbackward(samples)
+    llp = np.array([lnprob, lnprob, lnprob, lnprob]).T
     output = np.append(chain, llp, axis=1)
     np.savetxt(chainfile, output)
 
