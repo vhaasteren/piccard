@@ -8954,7 +8954,7 @@ class ptaLikelihood(object):
                 if not np.all(s > 0):
                     raise ValueError("ERROR: Sigma singular according to SVD")
                 SigmaLD = np.sum(np.log(s))
-                rSr = np.dot(Nx, np.dot(Vh.T / s, np.dot(U.T, Nx)))
+                rSr = np.dot(Zx, np.dot(Vh.T / s, np.dot(U.T, Zx)))
         else:
             SigmaLD = 0.0
             ThetaLD = 0.0
@@ -8965,6 +8965,650 @@ class ptaLikelihood(object):
         return -0.5*np.sum(self.npobs-self.npm)*np.log(2*np.pi) \
                 -0.5*np.sum(Jldet) - 0.5*np.sum(rGr) \
                 +0.5*rSr - 0.5*SigmaLD - 0.5*PhiLD - 0.5*ThetaLD - 0.5*BetaLD
+
+    def get_index_sigmapsr_from_sigma(self, pp, which='N'):
+        """Return the indices for a single pulsar for the sigma matrix"""
+        if which=='N':
+            npz = self.npz_n
+        else:
+            npz = self.npz
+
+        return np.arange(np.sum(npz[:pp]), np.sum(npz[:pp+1]))
+
+    def get_index_zpsr_from_sigma(self, pp, sig='phi', which='N'):
+        """Return the frequency indices for a single pulsar from sigma"""
+        indices = self.get_index_sigmapsr_from_sigma(pp, which=which)
+        psr = self.ptapsrs[pp]
+
+        if sig == 'phi':
+            msk = psr.Zmask_F_only
+        elif sig == 'theta':
+            msk = psr.Zmask_D_only
+        elif sig == 'jitter':
+            msk = psr.Zmask_U_only
+
+        return indices[msk]
+
+    def get_index_zfull_from_sigma(self, sig='phi', which='N'):
+        """Return the frequency indices for a single pulsar from sigma"""
+        indices = np.array([], dtype=np.int)
+
+        for pp in range(len(self.ptapsrs)):
+            indices = np.append(indices,
+                    self.get_index_zpsr_from_sigma(pp, sig=sig, which=which))
+
+        return indices
+
+    def mark12loglikelihood_grad(self, parameters):
+        """
+        mark12 loglikelihood of the pta model/likelihood implementation,
+        including the gradients
+
+        This likelihood uses the T-matrix/Z-matrix definitions, while
+        marginalizing over the ecorr/jitter using the Cython jitter extension.
+        So... we need the sorted TOAs, obviously
+
+        # For the model, the 'gibbsmodel' description is used
+        """
+        npsrs = len(self.ptapsrs)
+
+        self.set_hyper_pars(parameters, calc_gradient=True)
+
+        # The red signals (don't form matrices (slow); use the Gibbs expansion)
+        # Is this faster: ?
+        #self.constructPhiAndTheta(parameters, make_matrix=False, \
+        #        gibbs_expansion=True)
+
+        self.gibbs_construct_all_freqcov()
+
+        # The white noise
+        #self.setPsrNoise(parameters)
+
+        # Band-limited red noise
+        # NOT WITH GRADIENTS YET!!!
+        for pp, psr in enumerate(self.ptapsrs):
+            self.setBeta(parameters, pp=pp)
+
+        if self.haveDetSources:
+            self.updateDetSources(parameters)
+
+        # The return quantities
+        logl = 0.0
+        gradient = np.zeros_like(parameters)
+
+        # Size of the full matrix is:
+        #nt = np.sum(self.npz) - np.sum(self.npu)# Size full T-matrix
+        nt = np.sum(self.npz_n)                 # Size full T-matrix
+        nf = np.sum(self.npf)                   # Size full F-matrix
+        Sigma = np.zeros((nt, nt))              # Full Sigma matrix
+        FPhi = np.zeros((nf, nf))               # RN full Phi matrix
+        Finds = np.zeros(nf, dtype=np.int)      # T<->F translation indices
+        ZNZ = np.zeros((nt, nt))                # Full ZNZ matrix
+        Zx = np.zeros(nt)
+        Jldet = np.zeros(npsrs)                 # All log(det(N)) values
+        ThetaLD = 0.0
+        PhiLD = 0.0
+        BetaLD = 0.0
+        rGr = np.zeros(npsrs)                   # All rNr values
+        sind = 0                                # Sigma-index
+        phind = 0                               # Z/T-index
+
+        l_Nx = []                               # Store all Nr values
+        l_Zx = []                               # Store all TNr values
+
+        for ii, psr in enumerate(self.ptapsrs):
+            # The T-matrix is just the Z-matrix, minus the ecorr/jitter
+            #tsize = psr.Zmat.shape[1] - np.sum(psr.Zmask_U)
+            #Zmat = psr.Zmat[:,:tsize]
+            Zmat = psr.Zmat_N
+            tsize = Zmat.shape[1]
+
+            # Use jitter extension for ZNZ
+            Jldet[ii], ZNZp = cython_block_shermor_2D(Zmat, psr.Nvec, \
+                    psr.Jvec, psr.Uinds)
+            Nx = cython_block_shermor_0D(psr.detresiduals, \
+                    psr.Nvec, psr.Jvec, psr.Uinds)
+            Zx[sind:sind+tsize] = np.dot(Zmat.T, Nx)
+            l_Nx.append(Nx)
+            l_Zx.append(Zx[sind:sind+tsize])
+
+            Jldet[ii], rGr[ii] = cython_block_shermor_1D(\
+                    psr.detresiduals, psr.Nvec, psr.Jvec, psr.Uinds)
+
+            ZNZ[sind:sind+tsize, sind:sind+tsize] = ZNZp
+
+            # Create the prior (Sigma = ZNZ + Phi)
+            nms = self.npm[ii]
+            nfs = self.npf[ii]
+            nfbs = self.npfb[ii]
+            nfdms = self.npfdm[ii]
+            findex = np.sum(self.npf[:ii])
+            fdmindex = np.sum(self.npfdm[:ii])
+            fbindex = np.sum(self.npfb[:ii])
+            if 'design' in self.gibbsmodel:
+                phind += nms         
+            if 'rednoise' in self.gibbsmodel:
+                # Red noise, excluding GWS
+
+                # WE DO NOT DO npsr=1 here
+                """
+                if npsrs == 1:
+                    inds = slice(sind+phind, sind+phind+nfs)
+                    di = np.diag_indices(nfs)
+                    Sigma[inds, inds][di] += 1.0 / ( \
+                            self.Phivec[findex:findex+nfs] + \
+                            self.Svec[findex:findex+nfs])
+                    PhiLD += np.sum(np.log(self.Phivec[findex:findex+nfs] + \
+                            self.Svec[findex:findex+nfs]))
+                    phind += nfs
+                elif npsrs > 1:
+                """
+                if True:
+                    # We need to do the full array at once. Do that below
+                    # Here, we construct the indexing matrices
+                    Finds[findex:findex+nfs] = np.arange(phind, phind+nfs)
+                    phind += nfs
+            if 'freqrednoise' in self.gibbsmodel:
+                inds = slice(sind+phind, sind+phind+nfbs)
+                di = np.diag_indices(nfbs)
+                Sigma[inds, inds][di] += 1.0 / self.Betavec[fbindex:fbindex+nfbs]
+                BetaLD += np.sum(np.log(self.Betavec[fbindex:fbindex+nfbs]))
+                phind += nfbs
+            if 'dm' in self.gibbsmodel:
+                inds = slice(sind+phind, sind+phind+nfdms)
+                di = np.diag_indices(nfdms)
+                Sigma[inds, inds][di] += 1.0 / self.Thetavec[fdmindex:fdmindex+nfdms]
+                ThetaLD += np.sum(np.log(self.Thetavec[fdmindex:fdmindex+nfdms]))
+                phind += nfdms
+
+            sind += tsize
+
+        #if npsrs > 1 and 'rednoise' in self.gibbsmodel:
+        if 'rednoise' in self.gibbsmodel:
+            msk_ind = np.zeros(self.freqmask.shape, dtype=np.int)
+            msk_ind[self.freqmask] = np.arange(np.sum(self.freqmask))
+            msk_zind = np.arange(np.sum(self.npf))
+            for mode in range(0, self.freqmask.shape[1], 2):
+                freq = int(mode/2)          # Which frequency
+
+                # We had pre-calculated the Cholesky factor and the inverse
+                # (in gibbs_construct_all_freqcov)
+                rncov_inv = self.Scor_im_inv[freq]
+                cf = self.Scor_im_cf[freq]
+                PhiLD += 4 * np.sum(np.log(np.diag(cf[0])))
+
+                # We have the inverse for the individual modes now. Add them to
+                # the full prior covariance matrix
+
+                # Firstly the Cosine mode
+                newmsk = np.zeros(self.freqmask.shape, dtype=np.bool)
+                newmsk[:, mode] = self.freqmask[:, mode]
+                mode_ind = msk_ind[newmsk]
+                z_ind = msk_zind[mode_ind]
+                FPhi[np.array([z_ind]).T, z_ind] += rncov_inv
+
+                # Secondly the Sine mode
+                newmsk[:] = False
+                newmsk[:, mode+1] = self.freqmask[:, mode+1]
+                mode_ind = msk_ind[newmsk]
+                z_ind = msk_zind[mode_ind]
+                FPhi[np.array([z_ind]).T, z_ind] += rncov_inv
+
+            Sigma[np.array([Finds]).T, Finds] += FPhi
+
+        Binv = np.copy(Sigma)
+
+        # If we have a non-trivial prior matrix, invert that stuff
+        if 'rednoise' in self.gibbsmodel or \
+                'dm' in self.gibbsmodel or \
+                'freqrednoise' in self.gibbsmodel:
+            Sigma += ZNZ
+
+            # With Sigma constructed, we can invert it
+            try:
+                cf = sl.cho_factor(Sigma)
+                SigmaLD = 2*np.sum(np.log(np.diag(cf[0])))
+                #rSr = np.dot(Zx, sl.cho_solve(cf, Zx))
+                Sigma_inv = sl.cho_solve(cf, np.eye(len(Sigma)))
+            except np.linalg.LinAlgError:
+                print "Using SVD... return -inf"
+                return -np.inf
+
+                U, s, Vh = sl.svd(Sigma)
+                if not np.all(s > 0):
+                    raise ValueError("ERROR: Sigma singular according to SVD")
+                SigmaLD = np.sum(np.log(s))
+                #rSr = np.dot(Zx, np.dot(Vh.T / s, np.dot(U.T, Zx)))
+                Sigma_inv = np.dot(Vh.T / s, U.T)
+            rSr = np.dot(Zx, np.dot(Sigma_inv, Zx))
+        else:
+            SigmaLD = 0.0
+            ThetaLD = 0.0
+            PhiLD = 0.0
+            BetaLD = 0.0
+            rSr = 0.0
+
+        logl = -0.5*np.sum(self.npobs-self.npm)*np.log(2*np.pi) \
+                -0.5*np.sum(Jldet) - 0.5*np.sum(rGr) \
+                +0.5*rSr - 0.5*SigmaLD - 0.5*PhiLD - 0.5*ThetaLD - 0.5*BetaLD
+        
+        # Now that we have Sigma_inv, calculate the gradients
+        # Have l_Nx, l_Zx
+        TNr = np.hstack(l_Zx)
+        SigmaTNr = np.dot(Sigma_inv, TNr)
+        BSTNr = np.dot(Binv, SigmaTNr)
+        # INEFFICIENT:
+        BSB = np.dot(Binv, np.dot(Sigma_inv, Binv))
+        for ii, psr in enumerate(self.ptapsrs):
+            zindex = np.sum(self.npz[:ii])
+            zlen = np.sum(self.npz[:ii+1])
+            findex = np.sum(self.npf[:ii])
+            flen = np.sum(self.npf[:ii+1])
+            sslc = slice(np.sum(self.npz[:ii]), np.sum(self.npz[:ii+1]))
+            fslc_phi = slice(np.sum(self.npf[:ii]), np.sum(self.npf[:ii+1]))
+            fslc_theta = slice(np.sum(self.npfdm[:ii]), np.sum(self.npfdm[:ii+1]))
+
+            # Gradient for Nvec hyper-parameters
+            if 'jitter' in self.gibbsmodel or np.sum(psr.Jvec) == 0:
+                # Not including jitter in N
+                # DOES THIS WORK WITH JITTER??
+                TSr = np.dot(psr.Zmat, SigmaTNr[sslc])
+                #NTSr = cython_block_shermor_0D(TSr, psr.Nvec, psr.Jvec,
+                #        psr.Uinds)
+                NTSr = TSr / psr.Nvec
+
+                for key, d_Nvec_d_p in psr.d_Nvec_d_param.iteritems():
+                    TNT = np.dot(psr.Zmat.T * (d_Nvec_d_p/psr.Nvec**2), psr.Zmat)
+
+                    gradient[key] += 0.5 * np.sum(l_Nx[ii] ** 2 * d_Nvec_d_p)
+                    gradient[key] -= np.sum(NTSr * l_Nx[ii] * d_Nvec_d_p)
+                    gradient[key] += 0.5 * np.sum(NTSr ** 2 * d_Nvec_d_p)
+                    gradient[key] -= 0.5 * np.sum(d_Nvec_d_p / psr.Nvec)
+                    gradient[key] += 0.5 * np.sum(TNT * Sigma_inv[sslc,sslc])
+
+            else:
+                # Not including jitter in N
+                # DOES THIS WORK WITH JITTER??
+                # ALSO INEFFICIENT!
+                sslc = slice(np.sum(self.npz[:ii]), np.sum(self.npz[:ii+1]))
+                TSr = np.dot(psr.Zmat.T, SigmaTNr[sslc])
+                NTSr = cython_block_shermor_0D(TSr, psr.Nvec, psr.Jvec,
+                        psr.Uinds)
+
+                for key, d_Nvec_d_p in psr.d_Nvec_d_param.iteritems():
+                    gradient[key] += 0.5 * np.sum(l_Nx[ii] ** 2 / d_Nvec_d_p)
+                    gradient[key] -= np.sum(NTSr * l_Nx[ii] / d_Nvec_d_p)
+                    gradient[key] += 0.5 * np.sum(NTSr ** 2 / d_Nvec_d_p)
+                    gradient[key] -= 0.5 * cython_logdet_dN(psr.Nvec, psr.Jvec,
+                            d_Nvec_d_p, psr.Uinds)
+                    gradient[key] += 0.5 * 0.0 # pass...
+
+
+            # Red noise gradients and GWB
+            # MODIFY THE 'N' here...
+            msk1D = self.get_index_zpsr_from_sigma(ii, sig='phi', which='N')
+            msk2D = np.atleast_2d(msk1D)
+            Bt = BSTNr[msk1D]
+            Bi = Binv[msk2D.T, msk2D]
+            BSBs = BSB[msk2D.T, msk2D]
+
+            # Red noise
+            for key, d_Phivec_d_p in psr.d_Phivec_d_param.iteritems():
+                gradient[key] += 0.5 * np.sum(d_Phivec_d_p[fslc_phi] * Bt**2)
+                gradient[key] -= 0.5 * np.sum(np.diag(Bi) * d_Phivec_d_p[fslc_phi])
+                gradient[key] += 0.5 * np.sum(np.diag(BSBs) * d_Phivec_d_p[fslc_phi])
+
+            # DM variations
+            msk1D = self.get_index_zpsr_from_sigma( ii, sig='phi', which='N')
+            msk2D = np.atleast_2d(msk1D)
+            Bt = BSTNr[msk1D]
+            Bi = Binv[msk2D.T, msk2D]
+            BSBs = BSB[msk2D.T, msk2D]
+            for key, d_Thetavec_d_p in psr.d_Thetavec_d_param.iteritems():
+                gradient[key] += 0.5 * np.sum(d_Thetavec_d_p[fslc_theta] * Bt**2)
+                gradient[key] -= 0.5 * np.sum(np.diag(Bi) * d_Thetavec_d_p_theta)
+                gradient[key] += 0.5 * np.sum(np.diag(BSBs) * d_Thetavec_d_p_theta)
+
+            # Perhaps do Jitter here as well?
+
+        # GWB gradients
+        msk1D = self.get_index_zfull_from_sigma(sig='phi', which='N')
+        msk2D = np.atleast_2d(msk1D)
+        Bt = BSTNr[msk1D]
+        Bi = Binv[msk2D.T, msk2D]
+        BSBs = BSB[msk2D.T, msk2D]
+
+        # GWB
+        for key, d_Svec_d_p in self.d_Svec_d_param.iteritems():
+            # INEFFICIENT: create d_B_d_etaB
+            npsrs = len(self.ptapsrs)
+            ns = len(d_Svec_d_p)
+            d_B_d_etaB = np.zeros((ns, ns))
+            for aa in range(npsrs):
+                slca = slice(np.sum(self.npf[:aa]), np.sum(self.npf[:aa+1]))
+                for bb in range(npsrs):
+                    slcb = slice(np.sum(self.npf[:bb]), np.sum(self.npf[:bb+1]))
+
+                    minfreq = min(self.npff[aa], self.npff[bb])
+
+                    d_B_d_etaB[slca,slcb] += \
+                            self.Scor[aa, bb] * np.diag(d_Svec_d_p[:minfreq])
+
+            gradient[key] += 0.5 * np.sum(Bt * np.dot(d_B_d_etaB, Bt))
+            gradient[key] -= 0.5 * np.sum(Bi * d_B_d_etaB)
+            gradient[key] += 0.5 * np.sum(BSBs * d_B_d_etaB)
+
+            """
+            gradient[key] += 0.5 * np.sum(d_Svec_d_p * Bt**2)
+            gradient[key] -= 0.5 * np.sum(np.diag(Bi) * d_Svec_d_p)
+            gradient[key] += 0.5 * np.sum(np.diag(BSBs) * d_Svec_d_p)
+            """
+
+
+        return logl, gradient
+
+    def mark12hessian(self, parameters, set_hyper_pars=True):
+        """
+        mark12 loglikelihood of the pta model/likelihood implementation,
+        including the gradients
+
+        This likelihood uses the T-matrix/Z-matrix definitions, while
+        marginalizing over the ecorr/jitter using the Cython jitter extension.
+        So... we need the sorted TOAs, obviously
+
+        # For the model, the 'gibbsmodel' description is used
+        """
+        npsrs = len(self.ptapsrs)
+
+        if set_hyper_pars:
+            self.set_hyper_pars(parameters, calc_gradient=True,
+                    calc_hessian=True)
+            if self.haveDetSources:
+                self.set_det_sources(parameters, calc_gradient=True)
+
+        self.gibbs_construct_all_freqcov()
+
+        # Band-limited red noise
+        # NOT WITH GRADIENTS YET!!!
+        for pp, psr in enumerate(self.ptapsrs):
+            self.setBeta(parameters, pp=pp)
+
+        # The return quantities
+        logl = 0.0
+        gradient = np.zeros_like(parameters)
+
+        # Size of the full matrix is:
+        #nt = np.sum(self.npz) - np.sum(self.npu)# Size full T-matrix
+        nt = np.sum(self.npz_n)                 # Size full T-matrix
+        nf = np.sum(self.npf)                   # Size full F-matrix
+        Sigma = np.zeros((nt, nt))              # Full Sigma matrix
+        FPhi = np.zeros((nf, nf))               # RN full Phi matrix
+        Finds = np.zeros(nf, dtype=np.int)      # T<->F translation indices
+        ZNZ = np.zeros((nt, nt))                # Full ZNZ matrix
+        Zx = np.zeros(nt)
+        Jldet = np.zeros(npsrs)                 # All log(det(N)) values
+        ThetaLD = 0.0
+        PhiLD = 0.0
+        BetaLD = 0.0
+        rGr = np.zeros(npsrs)                   # All rNr values
+        sind = 0                                # Sigma-index
+        phind = 0                               # Z/T-index
+
+        l_Nx = []                               # Store all Nr values
+        l_Zx = []                               # Store all TNr values
+
+        for ii, psr in enumerate(self.ptapsrs):
+            # The T-matrix is just the Z-matrix, minus the ecorr/jitter
+            #tsize = psr.Zmat.shape[1] - np.sum(psr.Zmask_U)
+            #Zmat = psr.Zmat[:,:tsize]
+            Zmat = psr.Zmat_N
+            tsize = Zmat.shape[1]
+
+            # Use jitter extension for ZNZ
+            Jldet[ii], ZNZp = cython_block_shermor_2D(Zmat, psr.Nvec, \
+                    psr.Jvec, psr.Uinds)
+            Nx = cython_block_shermor_0D(psr.detresiduals, \
+                    psr.Nvec, psr.Jvec, psr.Uinds)
+            Zx[sind:sind+tsize] = np.dot(Zmat.T, Nx)
+            l_Nx.append(Nx)
+            l_Zx.append(Zx[sind:sind+tsize])
+
+            Jldet[ii], rGr[ii] = cython_block_shermor_1D(\
+                    psr.detresiduals, psr.Nvec, psr.Jvec, psr.Uinds)
+
+            ZNZ[sind:sind+tsize, sind:sind+tsize] = ZNZp
+
+            # Create the prior (Sigma = ZNZ + Phi)
+            nms = self.npm[ii]
+            nfs = self.npf[ii]
+            nfbs = self.npfb[ii]
+            nfdms = self.npfdm[ii]
+            findex = np.sum(self.npf[:ii])
+            fdmindex = np.sum(self.npfdm[:ii])
+            fbindex = np.sum(self.npfb[:ii])
+            if 'design' in self.gibbsmodel:
+                phind += nms         
+            if 'rednoise' in self.gibbsmodel:
+                # Red noise, excluding GWS
+
+                # WE DO NOT DO npsr=1 here
+                """
+                if npsrs == 1:
+                    inds = slice(sind+phind, sind+phind+nfs)
+                    di = np.diag_indices(nfs)
+                    Sigma[inds, inds][di] += 1.0 / ( \
+                            self.Phivec[findex:findex+nfs] + \
+                            self.Svec[findex:findex+nfs])
+                    PhiLD += np.sum(np.log(self.Phivec[findex:findex+nfs] + \
+                            self.Svec[findex:findex+nfs]))
+                    phind += nfs
+                elif npsrs > 1:
+                """
+                if True:
+                    # We need to do the full array at once. Do that below
+                    # Here, we construct the indexing matrices
+                    Finds[findex:findex+nfs] = np.arange(phind, phind+nfs)
+                    phind += nfs
+            if 'freqrednoise' in self.gibbsmodel:
+                inds = slice(sind+phind, sind+phind+nfbs)
+                di = np.diag_indices(nfbs)
+                Sigma[inds, inds][di] += 1.0 / self.Betavec[fbindex:fbindex+nfbs]
+                BetaLD += np.sum(np.log(self.Betavec[fbindex:fbindex+nfbs]))
+                phind += nfbs
+            if 'dm' in self.gibbsmodel:
+                inds = slice(sind+phind, sind+phind+nfdms)
+                di = np.diag_indices(nfdms)
+                Sigma[inds, inds][di] += 1.0 / self.Thetavec[fdmindex:fdmindex+nfdms]
+                ThetaLD += np.sum(np.log(self.Thetavec[fdmindex:fdmindex+nfdms]))
+                phind += nfdms
+
+            sind += tsize
+
+        #if npsrs > 1 and 'rednoise' in self.gibbsmodel:
+        if 'rednoise' in self.gibbsmodel:
+            msk_ind = np.zeros(self.freqmask.shape, dtype=np.int)
+            msk_ind[self.freqmask] = np.arange(np.sum(self.freqmask))
+            msk_zind = np.arange(np.sum(self.npf))
+            for mode in range(0, self.freqmask.shape[1], 2):
+                freq = int(mode/2)          # Which frequency
+
+                # We had pre-calculated the Cholesky factor and the inverse
+                # (in gibbs_construct_all_freqcov)
+                rncov_inv = self.Scor_im_inv[freq]
+                cf = self.Scor_im_cf[freq]
+                PhiLD += 4 * np.sum(np.log(np.diag(cf[0])))
+
+                # We have the inverse for the individual modes now. Add them to
+                # the full prior covariance matrix
+
+                # Firstly the Cosine mode
+                newmsk = np.zeros(self.freqmask.shape, dtype=np.bool)
+                newmsk[:, mode] = self.freqmask[:, mode]
+                mode_ind = msk_ind[newmsk]
+                z_ind = msk_zind[mode_ind]
+                FPhi[np.array([z_ind]).T, z_ind] += rncov_inv
+
+                # Secondly the Sine mode
+                newmsk[:] = False
+                newmsk[:, mode+1] = self.freqmask[:, mode+1]
+                mode_ind = msk_ind[newmsk]
+                z_ind = msk_zind[mode_ind]
+                FPhi[np.array([z_ind]).T, z_ind] += rncov_inv
+
+            Sigma[np.array([Finds]).T, Finds] += FPhi
+
+        Binv = np.copy(Sigma)
+
+        # If we have a non-trivial prior matrix, invert that stuff
+        if 'rednoise' in self.gibbsmodel or \
+                'dm' in self.gibbsmodel or \
+                'freqrednoise' in self.gibbsmodel:
+            Sigma += ZNZ
+
+            # With Sigma constructed, we can invert it
+            try:
+                cf = sl.cho_factor(Sigma)
+                SigmaLD = 2*np.sum(np.log(np.diag(cf[0])))
+                #rSr = np.dot(Zx, sl.cho_solve(cf, Zx))
+                Sigma_inv = sl.cho_solve(cf, np.eye(len(Sigma)))
+            except np.linalg.LinAlgError:
+                print "Using SVD... return -inf"
+                return -np.inf
+
+                U, s, Vh = sl.svd(Sigma)
+                if not np.all(s > 0):
+                    raise ValueError("ERROR: Sigma singular according to SVD")
+                SigmaLD = np.sum(np.log(s))
+                #rSr = np.dot(Zx, np.dot(Vh.T / s, np.dot(U.T, Zx)))
+                Sigma_inv = np.dot(Vh.T / s, U.T)
+            rSr = np.dot(Zx, np.dot(Sigma_inv, Zx))
+        else:
+            SigmaLD = 0.0
+            ThetaLD = 0.0
+            PhiLD = 0.0
+            BetaLD = 0.0
+            rSr = 0.0
+
+        logl = -0.5*np.sum(self.npobs-self.npm)*np.log(2*np.pi) \
+                -0.5*np.sum(Jldet) - 0.5*np.sum(rGr) \
+                +0.5*rSr - 0.5*SigmaLD - 0.5*PhiLD - 0.5*ThetaLD - 0.5*BetaLD
+        
+        # Now that we have Sigma_inv, calculate the gradients
+        # Have l_Nx, l_Zx
+        TNr = np.hstack(l_Zx)
+        SigmaTNr = np.dot(Sigma_inv, TNr)
+        BSTNr = np.dot(Binv, SigmaTNr)
+        # INEFFICIENT:
+        BSB = np.dot(Binv, np.dot(Sigma_inv, Binv))
+        for ii, psr in enumerate(self.ptapsrs):
+            zindex = np.sum(self.npz[:ii])
+            zlen = np.sum(self.npz[:ii+1])
+            findex = np.sum(self.npf[:ii])
+            flen = np.sum(self.npf[:ii+1])
+            sslc = slice(np.sum(self.npz[:ii]), np.sum(self.npz[:ii+1]))
+            fslc_phi = slice(np.sum(self.npf[:ii]), np.sum(self.npf[:ii+1]))
+            fslc_theta = slice(np.sum(self.npfdm[:ii]), np.sum(self.npfdm[:ii+1]))
+
+            # Gradient for Nvec hyper-parameters
+            if 'jitter' in self.gibbsmodel or np.sum(psr.Jvec) == 0:
+                # Not including jitter in N
+                # DOES THIS WORK WITH JITTER??
+                TSr = np.dot(psr.Zmat, SigmaTNr[sslc])
+                #NTSr = cython_block_shermor_0D(TSr, psr.Nvec, psr.Jvec,
+                #        psr.Uinds)
+                NTSr = TSr / psr.Nvec
+
+                for key, d_Nvec_d_p in psr.d_Nvec_d_param.iteritems():
+                    TNT = np.dot(psr.Zmat.T * (d_Nvec_d_p/psr.Nvec**2), psr.Zmat)
+
+                    gradient[key] += 0.5 * np.sum(l_Nx[ii] ** 2 * d_Nvec_d_p)
+                    gradient[key] -= np.sum(NTSr * l_Nx[ii] * d_Nvec_d_p)
+                    gradient[key] += 0.5 * np.sum(NTSr ** 2 * d_Nvec_d_p)
+                    gradient[key] -= 0.5 * np.sum(d_Nvec_d_p / psr.Nvec)
+                    gradient[key] += 0.5 * np.sum(TNT * Sigma_inv[sslc,sslc])
+
+            else:
+                # Not including jitter in N
+                # DOES THIS WORK WITH JITTER??
+                # ALSO INEFFICIENT!
+                sslc = slice(np.sum(self.npz[:ii]), np.sum(self.npz[:ii+1]))
+                TSr = np.dot(psr.Zmat.T, SigmaTNr[sslc])
+                NTSr = cython_block_shermor_0D(TSr, psr.Nvec, psr.Jvec,
+                        psr.Uinds)
+
+                for key, d_Nvec_d_p in psr.d_Nvec_d_param.iteritems():
+                    gradient[key] += 0.5 * np.sum(l_Nx[ii] ** 2 / d_Nvec_d_p)
+                    gradient[key] -= np.sum(NTSr * l_Nx[ii] / d_Nvec_d_p)
+                    gradient[key] += 0.5 * np.sum(NTSr ** 2 / d_Nvec_d_p)
+                    gradient[key] -= 0.5 * cython_logdet_dN(psr.Nvec, psr.Jvec,
+                            d_Nvec_d_p, psr.Uinds)
+                    gradient[key] += 0.5 * 0.0 # pass...
+
+
+            # Red noise gradients and GWB
+            # MODIFY THE 'N' here...
+            msk1D = self.get_index_zpsr_from_sigma(ii, sig='phi', which='N')
+            msk2D = np.atleast_2d(msk1D)
+            Bt = BSTNr[msk1D]
+            Bi = Binv[msk2D.T, msk2D]
+            BSBs = BSB[msk2D.T, msk2D]
+
+            # Red noise
+            for key, d_Phivec_d_p in psr.d_Phivec_d_param.iteritems():
+                gradient[key] += 0.5 * np.sum(d_Phivec_d_p[fslc_phi] * Bt**2)
+                gradient[key] -= 0.5 * np.sum(np.diag(Bi) * d_Phivec_d_p[fslc_phi])
+                gradient[key] += 0.5 * np.sum(np.diag(BSBs) * d_Phivec_d_p[fslc_phi])
+
+            # DM variations
+            msk1D = self.get_index_zpsr_from_sigma( ii, sig='phi', which='N')
+            msk2D = np.atleast_2d(msk1D)
+            Bt = BSTNr[msk1D]
+            Bi = Binv[msk2D.T, msk2D]
+            BSBs = BSB[msk2D.T, msk2D]
+            for key, d_Thetavec_d_p in psr.d_Thetavec_d_param.iteritems():
+                gradient[key] += 0.5 * np.sum(d_Thetavec_d_p[fslc_theta] * Bt**2)
+                gradient[key] -= 0.5 * np.sum(np.diag(Bi) * d_Thetavec_d_p_theta)
+                gradient[key] += 0.5 * np.sum(np.diag(BSBs) * d_Thetavec_d_p_theta)
+
+            # Perhaps do Jitter here as well?
+
+        # GWB gradients
+        msk1D = self.get_index_zfull_from_sigma(sig='phi', which='N')
+        msk2D = np.atleast_2d(msk1D)
+        Bt = BSTNr[msk1D]
+        Bi = Binv[msk2D.T, msk2D]
+        BSBs = BSB[msk2D.T, msk2D]
+
+        # GWB
+        for key, d_Svec_d_p in self.d_Svec_d_param.iteritems():
+            # INEFFICIENT: create d_B_d_etaB
+            npsrs = len(self.ptapsrs)
+            ns = len(d_Svec_d_p)
+            d_B_d_etaB = np.zeros((ns, ns))
+            for aa in range(npsrs):
+                slca = slice(np.sum(self.npf[:aa]), np.sum(self.npf[:aa+1]))
+                for bb in range(npsrs):
+                    slcb = slice(np.sum(self.npf[:bb]), np.sum(self.npf[:bb+1]))
+
+                    minfreq = min(self.npff[aa], self.npff[bb])
+
+                    d_B_d_etaB[slca,slcb] += \
+                            self.Scor[aa, bb] * np.diag(d_Svec_d_p[:minfreq])
+
+            gradient[key] += 0.5 * np.sum(Bt * np.dot(d_B_d_etaB, Bt))
+            gradient[key] -= 0.5 * np.sum(Bi * d_B_d_etaB)
+            gradient[key] += 0.5 * np.sum(BSBs * d_B_d_etaB)
+
+            """
+            gradient[key] += 0.5 * np.sum(d_Svec_d_p * Bt**2)
+            gradient[key] -= 0.5 * np.sum(np.diag(Bi) * d_Svec_d_p)
+            gradient[key] += 0.5 * np.sum(np.diag(BSBs) * d_Svec_d_p)
+            """
+
+
+        return logl, gradient
+
+
 
     def set_hyper_pars(self, parameters, calc_gradient=True, calc_hessian=False):
         """Set the hyper parameter dependents
@@ -9119,9 +9763,15 @@ class ptaLikelihood(object):
 
     def mark14loglikelihood(self, parameters, set_hyper_pars=True):
         """
-        mark14 loglikelihood. Used for full hierarchical model, with
-        transformations
+        mark14 loglikelihood. Used for full hierarchical model (with
+        transformations on top of that possible)
+
+        ll = -0.5*(dt - Tb)^T N^{-1} (dt - Tb)      (1)
+             -0.5*log(det(N))                       (2)
+             -0.5*b^T B^{-1} b                      (3)
+             -0.5*log(det(B))                       (4)
         """
+        # Set all the hyper parameter quantities
         if set_hyper_pars:
             self.set_hyper_pars(parameters, calc_gradient=True)
             self.set_det_sources(parameters, calc_gradient=True)
@@ -9135,6 +9785,15 @@ class ptaLikelihood(object):
         # matrix-vector products
         Binv_b_dm_sqr = np.zeros_like(self.Thetavec)
         Binv_diag_dm = np.zeros_like(self.Thetavec)
+
+        # rGr is term (1) per pulsar
+        # GNGldet is term (2) per pulsar
+        # bBb is term (3) per pulsar (excluding red noise)
+        # ldB is term (4) per pulsar (excluding red noise)
+        # corr_xi2 is term (3) full array (red noise and other)
+        # corr_ldet is term (4) full array (red noise and other)
+        bBb = np.zeros_like(self.rGr)
+        ldB = np.zeros_like(self.GNGldet)
 
         for ii, psr in enumerate(self.ptapsrs):
             # Gradient for Nvec hyper-parameters
@@ -9185,8 +9844,10 @@ class ptaLikelihood(object):
                 bsqr = parameters[pslc]**2
                 phivec = self.Phivec[fslc] + self.Svec[fslc]
 
-                self.rGr[ii] += np.sum(bsqr / phivec)
-                self.GNGldet[ii] += np.sum(np.log(phivec))
+                #self.rGr[ii] += np.sum(bsqr / phivec)
+                #self.GNGldet[ii] += np.sum(np.log(phivec))
+                bBb[ii] += np.sum(bsqr / phivec)
+                ldB[ii] += np.sum(np.log(phivec))
 
                 # Explicitly do the gradient wrt b of the prior
                 gradient[pslc] += d_Pr_d_b[pslc]
@@ -9219,8 +9880,10 @@ class ptaLikelihood(object):
                 bsqr = parameters[pslc]**2
                 thetavec = self.Thetavec[fslc]
 
-                self.rGr[ii] += np.sum(bsqr / thetavec)
-                self.GNGldet[ii] += np.sum(np.log(thetavec))
+                #self.rGr[ii] += np.sum(bsqr / thetavec)
+                #self.GNGldet[ii] += np.sum(np.log(thetavec))
+                bBb[ii] += np.sum(bsqr / thetavec)
+                ldB[ii] += np.sum(np.log(thetavec))
 
                 # Explicitly do the gradient wrt b of the prior
                 gradient[pslc] += d_Pr_d_b[pslc]
@@ -9230,6 +9893,7 @@ class ptaLikelihood(object):
                 Binv_b_dm_sqr[fslc] = bsqr / thetavec**2
                 Binv_diag_dm[fslc] = 1.0 / thetavec
 
+                # BUG: fix code below for DM variations
                 """
                 # Gradient for Thetavec hyper-parameters
                 for key, d_Thetavec_d_p in self.d_Thetavec_d_param.iteritems():
@@ -9249,8 +9913,10 @@ class ptaLikelihood(object):
                 bsqr = parameters[pslc]**2
                 jvec = psr.Jvec
 
-                self.rGr[ii] += np.sum(bsqr / jvec)
-                self.GNGldet[ii] += np.sum(np.log(jvec))
+                #self.rGr[ii] += np.sum(bsqr / jvec)
+                #self.GNGldet[ii] += np.sum(np.log(jvec))
+                bBb[ii] += np.sum(bsqr / jvec)
+                ldB[ii] += np.sum(np.log(jvec))
 
                 # Explicitly do the gradient wrt b of the prior
                 gradient[pslc] += d_Pr_d_b[pslc]
@@ -9352,6 +10018,7 @@ class ptaLikelihood(object):
                     gradient[key] -= 0.5 * np.sum(Binv_diag_dm * d_Thetavec_d_p)
 
         ll = -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) - \
+            0.5*np.sum(bBb) - 0.5*np.sum(ldB) - \
             0.5*corr_xi2 - 0.5*corr_ldet
 
         return ll, gradient
@@ -11616,7 +12283,10 @@ class ptaLikelihood(object):
         return ll+lp, lp_grad + ll_grad
     
     def logposterior_grad(self, parameters):
-        if self.likfunc == 'mark13':
+        if self.likfunc == 'mark12':
+            # NOT DOING THE PRIOR (yet)
+            return self.mark12loglikelihood_grad(parameters)
+        elif self.likfunc == 'mark13':
             return self.mark13logposterior(parameters)
         elif self.likfunc == 'mark14':
             return self.mark14logposterior(parameters)
