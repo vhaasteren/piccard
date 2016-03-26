@@ -378,6 +378,7 @@ class DataFile(object):
             raise ValueError("Pulsar position not properly available")
         self.writeData(psrGroup, 'raj', np.float(raj), overwrite=overwrite)
         self.writeData(psrGroup, 'decj', np.float(decj), overwrite=overwrite)
+        self.writeData(psrGroup, 'f0', np.float(t2pulsar['F0'].val), overwrite=overwrite)
 
         # Now obtain and write the timing model parameters
         actpars = self.get_used_t2pars(t2pulsar, inc_inactive)
@@ -533,6 +534,7 @@ class DataFile(object):
         self.writeData(psrGroup, 'designmatrix', M, overwrite=overwrite)
         self.writeData(psrGroup, 'raj', raj, overwrite=overwrite)
         self.writeData(psrGroup, 'decj', decj, overwrite=overwrite)
+        self.writeData(psrGroup, 'f0', F0, overwrite=overwrite)
 
         # Now obtain and write the timing model parameters
         tmpname = ['Offset', 'F0']
@@ -691,6 +693,7 @@ class DataFile(object):
         psr.detresiduals = np.array(self.getData(psrname, 'prefitRes'))
         psr.freqs = np.array(self.getData(psrname, 'freq'))
         psr.Mmat = np.array(self.getData(psrname, 'designmatrix'))
+        psr.P0 = 1.0 / np.float(self.getData(psrname, 'f0'))
 
         # We do not read the (co)G-matrix anymore here. Happens when
         # initialising the model

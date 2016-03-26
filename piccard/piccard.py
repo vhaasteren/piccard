@@ -86,6 +86,8 @@ class ptaPulsar(object):
 
         self.raj = 0
         self.decj = 0
+        self.P0 = 0.0
+        self.outlier_prob = 0.0
         self.toas = None
         self.toaerrs = None
         self.prefitresiduals = None
@@ -256,6 +258,12 @@ class ptaPulsar(object):
         else:
             decjind = np.flatnonzero(np.array(self.ptmdescription) == 'DECJ')
             self.decj = np.array(h5df.getData(psrname, 'tmp_valpre'))[decjind]
+
+        if h5df.hasField(psrname, 'f0'):
+            self.P0 = 1.0/np.float(h5df.getData(psrname, 'f0'))
+        else:
+            f0ind = np.flatnonzero(np.array(self.ptmdescription) == 'F0')
+            self.P0 = 1.0/np.array(h5df.getData(psrname, 'tmp_valpre'))[f0ind]
 
         # Read the flags, and the residuals, and determine the sorting/slicing
         toas = np.array(h5df.getData(psrname, 'TOAs'))
@@ -2889,6 +2897,9 @@ class ptaLikelihood(object):
         elif signal['stype'] == 'jittermode_xi':
             self.addSignalFourierMode(signal)
             self.ptapsrs[signal['pulsarind']].jitterind = index
+
+        elif signal['stype'] == 'outlierprob':
+            self.addSignalOutlier(signal)
         else:
             # Some other unknown signal
             self.ptasignals.append(signal)
@@ -3155,6 +3166,38 @@ class ptaLikelihood(object):
         # Assert that this signal applies to a pulsar
         if signal['pulsarind'] < 0 or signal['pulsarind'] >= len(self.ptapsrs):
             raise ValueError("ERROR: Fourier coefficient signal applied to non-pulsar ({0})".format(signal['pulsarind']))
+
+        self.ptasignals.append(signal.copy())
+
+    """
+    Add an outlier signal
+
+    Required keys in signal
+    @param psrind:      Index of the pulsar this efac applies to
+    @param index:       Index of first parameter in total parameters array
+    @param flagname:    Name of the flag this efac applies to (field-name)
+    @param flagvalue:   Value of the flag this efac applies to (e.g. CPSR2)
+    @param bvary:       List of indicators, specifying whether parameters can vary
+    @param pmin:        Minimum bound of prior domain
+    @param pmax:        Maximum bound of prior domain
+    @param pwidth:      Typical width of the parameters (e.g. initial stepsize)
+    @param pstart:      Typical start position for the parameters
+
+    # TODO: make prior flat in log?
+    """
+    def addSignalOutlier(self, signal):
+        # Assert that all the correct keys are there...
+        keys = ['pulsarind', 'stype', 'corr', 'flagname', 'flagvalue', 'bvary', \
+                'pmin', 'pmax', 'pwidth', 'pstart', 'parindex']
+        if not all(k in signal for k in keys):
+            raise ValueError("ERROR: Not all signal keys are present in efac signal. Keys: {0}. Required: {1}".format(signal.keys(), keys))
+
+        #signal['Nvec'] = self.ptapsrs[signal['pulsarind']].toaerrs**2
+
+        #if signal['flagname'] != 'pulsarname':
+        #    # This outlier only applies to some TOAs, not all of 'm
+        #    ind = self.ptapsrs[signal['pulsarind']].flags != signal['flagvalue']
+        #    signal['Nvec'][ind] = 0.0
 
         self.ptasignals.append(signal.copy())
 
@@ -3483,6 +3526,7 @@ class ptaLikelihood(object):
             varyBWMSign=True, nPsrBWM=1, \
             incGlitch=False, nGlitch=1, glitchEpoch=None, varyGlitchEpoch=True, \
             bwmFraction=0.7, \
+            incOutliers=False, outlierVal=0.001, varyOutlier=True, \
             incTimingModel=False, nonLinear=False, \
             keepTimingModelPars = None, \
             varyEfac=True, incEquad=False, \
@@ -4069,6 +4113,23 @@ class ptaLikelihood(object):
                         "prior":'flatlog'
                         })
                     signals.append(newsignal)
+
+            if incOutliers:
+                newsignal = OrderedDict({
+                    "stype":'outlierprob',
+                    "corr":"single",
+                    "pulsarind":pp,
+                    "flagname":"pulsarname",
+                    "flagvalue":m2psr.name,
+                    "bvary":[varyOutlier],
+                    "pmin":[0.0],
+                    "pmax":[1.0],
+                    "pwidth":[0.00001],
+                    "pstart":[outlierVal],
+                    "interval":[True],
+                    "prior":"flatlog"
+                    })
+                signals.append(newsignal)
 
         if incGWB:
             if not 'rednoise' in gibbsmodel:
@@ -6442,6 +6503,7 @@ class ptaLikelihood(object):
         self.sig_Theta_inds = []
         self.sig_Beta_inds = []
         self.sig_Det_inds = []
+        self.sig_Outlier_inds = []
         for pp, psr in enumerate(self.ptapsrs):
             psr.sig_N_inds = []
             psr.sig_NJ_inds = []
@@ -6449,6 +6511,7 @@ class ptaLikelihood(object):
             psr.sig_Theta_inds = []
             psr.sig_Beta_inds = []
             psr.sig_Det_inds = []
+            psr.sig_Outlier_inds = []
 
         slistNJ = ['efac', 'equad', 'jitter', 'cequad']
         slistN = ['efac', 'equad']
@@ -6459,6 +6522,7 @@ class ptaLikelihood(object):
         slistDet = ['lineartimingmodel', 'nonlineartimingmodel',
                 'timingmodel_xi', 'fouriermode_xi', 'dmfouriermode_xi',
                 'jittermode_xi']
+        slistOutlier = ['outlierprob']
 
         # Loop over all white noise signals, and fill the pulsar Nvec
         for ss, m2signal in enumerate(self.ptasignals):
@@ -6488,6 +6552,10 @@ class ptaLikelihood(object):
                 if pp >= 0:
                     psr.sig_Det_inds.append(ss)
                 self.sig_Det_inds.append(ss)
+            if m2signal['stype'] in slistOutlier:
+                if pp >= 0:
+                    self.sig_Outlier_inds.append(ss)
+                self.sig_Outlier_inds.append(ss)
 
         psr.sig_N_inds = np.array(psr.sig_N_inds)
         psr.sig_NJ_inds = np.array(psr.sig_NJ_inds)
@@ -6767,6 +6835,34 @@ class ptaLikelihood(object):
                     pcdoubled = (Amp * pic_spy**3 / m2signal['Tmax']) * ((1 + (freqpy/fc)**2)**(-0.5*alpha))
                     # Fill the Beta matrix
                     self.Betavec[findex:findex+2*nfreq] += pcdoubled
+
+
+    def setPb_outliers(self, parameters, selection=None):
+        """
+        Set the Pb outlier parameters
+        
+        @param parameters:  the full array of parameters
+        @param selection::  mask of signals to include
+        @param pp:          index of pulsar to do
+        
+        """
+        if selection is None:
+            selection = np.array([1]*len(self.ptasignals), dtype=np.bool)
+
+        # Loop over all signals, and fill the phi matrix
+        #for m2signal in self.ptasignals:
+        #for ss, m2signal in enumerate(self.ptasignals):
+        for pp, psr in enumerate(self.ptapsrs):
+            for ss in psr.sig_Outlier_inds:
+                if selection[ss]:
+                    # Create a parameters array for this particular signal
+                    sparameters = m2signal['pstart'].copy()
+                    sparameters[m2signal['bvary']] = \
+                            parameters[m2signal['parindex']:m2signal['parindex']+m2signal['npars']]
+
+                    if m2signal['stype'] == 'outlierprob':
+                        psr.outlier_prob = sparameters[0]
+
 
 
     """
@@ -9624,6 +9720,9 @@ class ptaLikelihood(object):
         self.setPsrNoise(parameters, calc_gradient=calc_gradient,
                 calc_hessian=calc_hessian)
 
+        # The outlier parameters
+        self.setPb_outliers(parameters)
+
     def set_det_sources(self, parameters, calc_gradient=True):
         """Update the deterministic-source dependents
         
@@ -9794,12 +9893,23 @@ class ptaLikelihood(object):
         # corr_ldet is term (4) full array (red noise and other)
         bBb = np.zeros_like(self.rGr)
         ldB = np.zeros_like(self.GNGldet)
+        logl_outlier = np.zeros_like(self.rGr)
 
         for ii, psr in enumerate(self.ptapsrs):
+            # From psr
+            # Set P0 and Pb
+            P0 = psr.P0
+            Pb = psr.outlier_prob
+
             # Gradient for Nvec hyper-parameters
             if 'jitter' in self.gibbsmodel or np.sum(psr.Jvec) == 0:
                 self.rGr[ii] = np.sum(psr.detresiduals**2 / psr.Nvec)
                 self.GNGldet[ii] = np.sum(np.log(psr.Nvec))
+
+                expl = psr.detresiduals**2 / psr.Nvec
+                expd = np.log(psr.Nvec) + np.log(2*np.pi)
+                expt = (1 - Pb) * np.exp(-0.5*expl - 0.5*expd) + Pb / P0
+                logl_outlier[ii] = np.sum(expt)
 
                 for key, d_Nvec_d_p in psr.d_Nvec_d_param.iteritems():
                     # Inner product
@@ -10017,7 +10127,8 @@ class ptaLikelihood(object):
                     # Determinant
                     gradient[key] -= 0.5 * np.sum(Binv_diag_dm * d_Thetavec_d_p)
 
-        ll = -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) - \
+        #ll = -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) - \
+        ll = np.sum(logl_outlier) + \
             0.5*np.sum(bBb) - 0.5*np.sum(ldB) - \
             0.5*corr_xi2 - 0.5*corr_ldet
 
