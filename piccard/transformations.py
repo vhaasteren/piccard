@@ -374,6 +374,14 @@ class likelihoodWrapper(object):
     #def d2_Thetavec_d2_param(self):
     #    return self.likob.d2_Thetavec_d2_param
 
+    @property
+    def likfunc(self):
+        return self.likob.likfunc
+
+    @likfunc.setter
+    def likfunc(self, value):
+        self.likob.likfunc = value
+
 
 class intervalLikelihood(likelihoodWrapper):
     """

@@ -209,6 +209,7 @@ class ptaPulsar(object):
         self.d2_Thetavec_d2_param = dict()      # For Hessian
         self.d_Betavec_d_param = dict()         # For gradients
         self.d2_Betavec_d2_param = dict()       # For Hessian
+        self.d_Pb_ind = []
 
         # To select the number of Frequency modes
         self.bfinc = None        # Number of modes of all internal matrices
@@ -1211,7 +1212,7 @@ class ptaPulsar(object):
         # For creating the auxiliaries it does not really matter: we are now
         # creating all quantities per default
         # TODO: set this parameter in another place?
-        if twoComponent and not likfunc in ['mark14', 'mark13', 'mark12', 'gibbs']:
+        if twoComponent and not likfunc in ['mark15', 'mark14', 'mark13', 'mark12', 'gibbs']:
             self.twoComponentNoise = True
 
         # Before writing anything to file, we need to know right away how many
@@ -1943,7 +1944,7 @@ class ptaPulsar(object):
                     #h5df.addData(self.name, 'pic_AoGE', self.AoGE)
                     #h5df.addData(self.name, 'pic_AoGEE', self.AoGEE)
 
-        if likfunc in ['mark14', 'mark13', 'mark12', 'gibbs']:
+        if likfunc in ['mark15', 'mark14', 'mark13', 'mark12', 'gibbs']:
             # Set the band-limited F-matrices
             self.FBmats = []
             self.Fbands = []
@@ -2009,7 +2010,7 @@ class ptaPulsar(object):
                 h5df.addData(self.name, 'pic_tmpConv', self.tmpConv)
                 h5df.addData(self.name, 'pic_tmpConvi', self.tmpConvi)
 
-        if likfunc in ['mark14', 'mark13']:
+        if likfunc in ['mark15', 'mark14', 'mark13']:
 
             # Define the stingray transformation (for EFAC = 1)
             self.defineStingrayTransform()
@@ -2073,7 +2074,7 @@ class ptaPulsar(object):
         # G/H compression matrices
         vslice = self.isort
         mslice = (self.isort, slice(None, None, None))
-        if not likfunc in ['mark14', 'mark13', 'mark12', 'gibbs']:
+        if not likfunc in ['mark15', 'mark14', 'mark13', 'mark12', 'gibbs']:
             self.Gmat = np.array(h5df.getData(self.name, 'pic_Gmat', \
                     dontread=memsave, isort=mslice))
             self.Gcmat = np.array(h5df.getData(self.name, 'pic_Gcmat', \
@@ -2108,7 +2109,7 @@ class ptaPulsar(object):
 
         # If compression is not done, but Hmat represents a compression matrix,
         # we need to re-evaluate the lot. Raise an error
-        if not noGmat and not likfunc in ['mark14', 'mark13', 'mark12', 'gibbs']:
+        if not noGmat and not likfunc in ['mark15', 'mark14', 'mark13', 'mark12', 'gibbs']:
             if compression == 'dont':
                 pass
             elif (compression == 'None' or compression is None) and \
@@ -2358,7 +2359,7 @@ class ptaPulsar(object):
                     isort=mslice))
             self.avetoas = np.array(h5df.getData(self.name, 'pic_avetoas'))
 
-        if likfunc in ['mark14', 'mark13', 'mark12', 'gibbs']:
+        if likfunc in ['mark15', 'mark14', 'mark13', 'mark12', 'gibbs']:
             self.Zmat = np.array(h5df.getData(self.name, 'pic_Zmat', \
                     isort=mslice))
             self.tmpConv = np.array(h5df.getData(self.name, 'pic_tmpConv'))
@@ -2418,7 +2419,7 @@ class ptaPulsar(object):
             self.Wvec = np.zeros(self.Mmat.shape[0]-self.Mmat.shape[1])
             self.Wovec = np.zeros(0)
 
-        if likfunc in ['mark14', 'mark13']:
+        if likfunc in ['mark15', 'mark14', 'mark13']:
 
             # Define the stingray transformation (for EFAC = 1)
             self.defineStingrayTransform()
@@ -2645,8 +2646,6 @@ class ptaLikelihood(object):
         # Whether we use the option of forcing the frequency lines to be ordered in
         # the prior
         self.orderFrequencyLines = False
-        self.haveStochSources = False
-        self.haveDetSources = False
 
         # Keep track of which signals we have, and what they do
         # Here it's for the full likelihood (we also do it per pulsar)
@@ -2698,6 +2697,10 @@ class ptaLikelihood(object):
 
         self.Fmat_gw = None      # The F-matrix, but for GWs
         self.Ffreqs_gw = None    # Frequencies of the GWs
+
+        self._outlier_sig_dict = dict()     # Hacky under the radar
+                                            # communication for outliers
+        self.have_outliers = False          # Whether or not we have outliers
 
         # Other quantities that we do not want to re-initialise every likelihood call
         self.rGr = None          # mark1, mark3, mark?, mark6
@@ -2900,6 +2903,7 @@ class ptaLikelihood(object):
 
         elif signal['stype'] == 'outlierprob':
             self.addSignalOutlier(signal)
+            self.have_outliers = True
         else:
             # Some other unknown signal
             self.ptasignals.append(signal)
@@ -3314,7 +3318,7 @@ class ptaLikelihood(object):
             self.npu[ii] = len(psr.avetoas)
 
             if self.likfunc in ['mark1', 'mark4', 'mark4ln', 'mark6', \
-                    'mark6fa', 'mark8', 'mark10', 'mark13', 'mark14', 'mark12', 'gibbs']:
+                    'mark6fa', 'mark8', 'mark10', 'mark13', 'mark14', 'mark15', 'mark12', 'gibbs']:
                 self.npfdm[ii] = len(psr.Fdmfreqs)
                 self.npffdm[ii] = len(psr.Fdmfreqs)
 
@@ -3328,13 +3332,13 @@ class ptaLikelihood(object):
                 self.npgos[ii] = len(psr.toas) - self.npgs[ii] #- psr.Mmat.shape[1]
                 psr.Nwvec = np.zeros(self.npgs[ii])
                 psr.Nwovec = np.zeros(self.npgos[ii])
-            elif self.likfunc in ['mark14', 'mark13', 'mark12', 'gibbs']:
+            elif self.likfunc in ['mark15', 'mark14', 'mark13', 'mark12', 'gibbs']:
                 self.npgs[ii] = len(psr.toas) - psr.Mmat.shape[1]
                 self.npgos[ii] = len(psr.toas) - self.npgs[ii] #- psr.Mmat.shape[1]
                 psr.Nwvec = np.zeros(self.npgs[ii])
                 psr.Nwovec = np.zeros(self.npgos[ii])
 
-            if self.likfunc in ['mark14', 'mark13', 'mark12', 'gibbs']:
+            if self.likfunc in ['mark15', 'mark14', 'mark13', 'mark12', 'gibbs']:
                 self.npm[ii] = psr.Mmat.shape[1]
                 self.npz[ii] = psr.Zmat.shape[1]
                 self.npm_f[ii] = np.sum(psr.Mmask_F)
@@ -3422,7 +3426,7 @@ class ptaLikelihood(object):
             self.rGE = np.zeros(np.sum(self.npff)+np.sum(self.npffdm))
             self.EGGNGGE = np.zeros((np.sum(self.npff)+np.sum(self.npffdm), \
                     np.sum(self.npff)+np.sum(self.npffdm)))
-        elif self.likfunc in ['mark14', 'mark13', 'mark12', 'gibbs']:
+        elif self.likfunc in ['mark15', 'mark14', 'mark13', 'mark12', 'gibbs']:
             # Probably should do mark13 elsewhere, but this should work
             zlen_n = np.sum(self.npz_n)
             zlen_f = np.sum(self.npz_f)
@@ -3558,11 +3562,11 @@ class ptaLikelihood(object):
         gibbsmodel = ['design']
 
         # If we have Gibbs sampling, do not do any compression:
-        if likfunc in ['mark14', 'mark13', 'mark12', 'gibbs'] and \
+        if likfunc in ['mark15', 'mark14', 'mark13', 'mark12', 'gibbs'] and \
                 compression == "None":
             compression = 'dont'
 
-        #if likfunc in ['mark14', 'mark13'] and not (expandJitter and expandCEquad):
+        #if likfunc in ['mark15', 'mark14', 'mark13'] and not (expandJitter and expandCEquad):
         #    print("WARNING: mark13 needs explicit jitter/ecorr. Turned on")
         #    expandJitter = True
         #    expandCEquad = True
@@ -3667,7 +3671,7 @@ class ptaLikelihood(object):
                 if not 'jitter' in gibbsmodel and (expandJitter and expandCEquad):
                     # We are expanding the Jitter/CEquad in the Gibbs sampler
                     gibbsmodel.append('jitter')
-                if separateCEquads and not likfunc in ['mark14', 'mark13', 'mark12', 'gibbs']:
+                if separateCEquads and not likfunc in ['mark15', 'mark14', 'mark13', 'mark12', 'gibbs']:
                     uflagvals = list(set(m2psr.flags))  # Unique flags
                     for flagval in uflagvals:
                         newsignal = OrderedDict({
@@ -3685,7 +3689,7 @@ class ptaLikelihood(object):
                             "prior":'flatlog'
                             })
                         signals.append(newsignal)
-                elif separateCEquads and likfunc in ['mark14', 'mark13', 'mark12', 'gibbs']:
+                elif separateCEquads and likfunc in ['mark15', 'mark14', 'mark13', 'mark12', 'gibbs']:
                     # Need to decide on number of jitter parameters, and
                     # number of epochs with jitter first for Gibbs sampler
                     if not checkTOAsort(m2psr.toas, m2psr.flags, \
@@ -3901,7 +3905,24 @@ class ptaLikelihood(object):
                     })
                 signals.append(newsignal)
 
-            if incTimingModel and not likfunc in ['mark13', 'mark14']:
+            if incOutliers:
+                newsignal = OrderedDict({
+                    "stype":'outlierprob',
+                    "corr":"single",
+                    "pulsarind":pp,
+                    "flagname":"pulsarname",
+                    "flagvalue":m2psr.name,
+                    "bvary":[varyOutlier],
+                    "pmin":[0.0],
+                    "pmax":[1.0],
+                    "pwidth":[0.00001],
+                    "pstart":[outlierVal],
+                    "interval":[True],
+                    "prior":"flatlog"
+                    })
+                signals.append(newsignal)
+
+            if incTimingModel and not likfunc in ['mark13', 'mark14', 'mark15']:
                 if nonLinear:
                     # Get the parameter errors from libstempo. Initialise the
                     # libstempo object
@@ -3934,7 +3955,8 @@ class ptaLikelihood(object):
                     #tmperrs = m2psr.ptmparerrs
                     tmpest = m2psr.ptmpars
 
-                if keepTimingModelPars is None and not likfunc in ['mark13', 'mark14']:
+                if keepTimingModelPars is None and not likfunc in ['mark13',
+                        'mark14', 'mark15']:
                     # Figure out which parameters we'll keep in the design matrix
                     jumps = []
                     for tmpar in m2psr.ptmdescription:
@@ -3950,7 +3972,7 @@ class ptaLikelihood(object):
                     # marginalise over).
                     #(newM, newG, newGc, newptmpars, newptmdescription) = \
                     #        m2psr.getModifiedDesignMatrix(removeAll=True)
-                elif not likfunc in ['mark13', 'mark14']:
+                elif not likfunc in ['mark13', 'mark14', 'mark15']:
                     newptmdescription = m2psr.getNewTimingModelParameterList( \
                             keep=False, tmpars=keepTimingModelPars)
                 else:
@@ -4010,7 +4032,7 @@ class ptaLikelihood(object):
                     })
                 signals.append(newsignal)
 
-            if likfunc in ['mark13', 'mark14']:
+            if likfunc in ['mark13', 'mark14', 'mark15']:
                 if 'design' in gibbsmodel:
                     nmodes = m2psr.Mmat.shape[1]
                     bvary = [True]*nmodes
@@ -4113,23 +4135,6 @@ class ptaLikelihood(object):
                         "prior":'flatlog'
                         })
                     signals.append(newsignal)
-
-            if incOutliers:
-                newsignal = OrderedDict({
-                    "stype":'outlierprob',
-                    "corr":"single",
-                    "pulsarind":pp,
-                    "flagname":"pulsarname",
-                    "flagvalue":m2psr.name,
-                    "bvary":[varyOutlier],
-                    "pmin":[0.0],
-                    "pmax":[1.0],
-                    "pwidth":[0.00001],
-                    "pstart":[outlierVal],
-                    "interval":[True],
-                    "prior":"flatlog"
-                    })
-                signals.append(newsignal)
 
         if incGWB:
             if not 'rednoise' in gibbsmodel:
@@ -4721,7 +4726,7 @@ class ptaLikelihood(object):
         else:
             separateEfacs = (numEfacs + numEquads + numJits) > 2
 
-        if self.likfunc in ['mark14', 'mark13', 'mark12', 'gibbs']:
+        if self.likfunc in ['mark15', 'mark14', 'mark13', 'mark12', 'gibbs']:
             # For now, only trim the quantization matrix Umat for Gibbs/mark12
             trimquant = True
         else:
@@ -4730,7 +4735,7 @@ class ptaLikelihood(object):
 
         # When doing Gibbs, we really do not want to separate this stuff
         # TODO: Why are we always separating efacs for Gibbs?
-        if likfunc in ['gibbs', 'mark14', 'mark13', 'mark12']:
+        if likfunc in ['gibbs', 'mark15', 'mark14', 'mark13', 'mark12']:
             separateEfacs[:] = True
 
         # Modify design matrices, and create pulsar Auxiliary quantities
@@ -4865,6 +4870,9 @@ class ptaLikelihood(object):
                 elif sig['stype'] == 'jitter':
                     flagname = sig['flagname']
                     flagvalue = 'jitter'+sig['flagvalue']
+                elif sig['stype'] == 'outlierprob':
+                    flagname = sig['flagname']
+                    flagvalue = 'outlier_prob_'+sig['flagvalue']
                 elif sig['stype'] == 'spectrum':
                     flagname = 'frequency'
 
@@ -6145,6 +6153,7 @@ class ptaLikelihood(object):
         """
         d_L_d_b = np.zeros_like(parameters)
         d_Pr_d_b = np.zeros_like(parameters)
+        self._outlier_sig_dict = dict()
 
         if selection is None:
             selection = np.array([1]*len(self.ptasignals), dtype=np.bool)
@@ -6288,18 +6297,31 @@ class ptaLikelihood(object):
                         pp = m2signal['pulsarind']
                         psr = self.ptapsrs[pp]
 
-                        if 'jitter' in self.gibbsmodel or np.sum(psr.Jvec) == 0.0:
-                            d_L_d_xi = np.dot(psr.Mmat_g.T, psr.detresiduals / psr.Nvec)
-                        else:
-                            # TODO: speed-update. This cython-piece is present
-                            #       below for Red noise and DM as well!
-                            d_L_d_xi = np.dot(psr.Mmat_g.T,
-                                    cython_block_shermor_0D(psr.detresiduals,
-                                            psr.Nvec, psr.Jvec, psr.Uinds))
-
                         parslice = slice(m2signal['parindex'],
                                 m2signal['parindex']+m2signal['npars'])
                         smask = m2signal['bvary']
+
+                        if self.have_outliers and self.likfunc in ['mark15']:
+                            d_L_d_xi = np.zeros(psr.Mmat_g.shape[1])
+
+                            # Assume we do jitter explicitly then
+                            if not pp in self._outlier_sig_dict:
+                                self._outlier_sig_dict[pp] = []
+
+                            d_L_d_b_o = psr.Mmat_g.T * (psr.detresiduals /
+                                    psr.Nvec)[None, :]
+                            self._outlier_sig_dict[pp].append((parslice,
+                                    d_L_d_b_o[smask,:]))
+                        else:
+                            if 'jitter' in self.gibbsmodel or np.sum(psr.Jvec) == 0.0:
+                                d_L_d_xi = np.dot(psr.Mmat_g.T, psr.detresiduals / psr.Nvec)
+                            else:
+                                # TODO: speed-update. This cython-piece is present
+                                #       below for Red noise and DM as well!
+                                d_L_d_xi = np.dot(psr.Mmat_g.T,
+                                        cython_block_shermor_0D(psr.detresiduals,
+                                                psr.Nvec, psr.Jvec, psr.Uinds))
+
                         d_L_d_b[parslice] = d_L_d_xi[smask]
                     elif m2signal['stype'] == 'fouriermode_xi':
                         if not np.all(m2signal['bvary']):
@@ -6315,12 +6337,24 @@ class ptaLikelihood(object):
                         phislice = slice(findex, findex+nfs)
                         phivec = self.Phivec[phislice] + self.Svec[:nfs]
 
-                        if 'jitter' in self.gibbsmodel or np.sum(psr.Jvec) == 0.0:
-                            d_L_d_xi = np.dot(psr.Fmat.T, psr.detresiduals / psr.Nvec)
+                        if self.have_outliers and self.likfunc in ['mark15']:
+                            # Assume we do jitter explicitly then
+                            d_L_d_xi = np.zeros(psr.Fmat.shape[1])
+
+                            if not pp in self._outlier_sig_dict:
+                                self._outlier_sig_dict[pp] = []
+
+                            d_L_d_b_o = psr.Fmat.T * (psr.detresiduals /
+                                    psr.Nvec)[None, :]
+                            self._outlier_sig_dict[pp].append((parslice,
+                                    d_L_d_b_o[smask,:]))
                         else:
-                            d_L_d_xi = np.dot(psr.Fmat.T,
-                                    cython_block_shermor_0D(psr.detresiduals,
-                                            psr.Nvec, psr.Jvec, psr.Uinds))
+                            if 'jitter' in self.gibbsmodel or np.sum(psr.Jvec) == 0.0:
+                                d_L_d_xi = np.dot(psr.Fmat.T, psr.detresiduals / psr.Nvec)
+                            else:
+                                d_L_d_xi = np.dot(psr.Fmat.T,
+                                        cython_block_shermor_0D(psr.detresiduals,
+                                                psr.Nvec, psr.Jvec, psr.Uinds))
 
                         d_Pr_d_xi = - sparameters / phivec
                         d_L_d_b[parslice] = d_L_d_xi[smask]
@@ -6338,12 +6372,23 @@ class ptaLikelihood(object):
                         nfdms = self.npfdm[pp]
                         thetaslice = slice(fdmindex, fdmindex+nfdms)
 
-                        if 'jitter' in self.gibbsmodel or np.sum(psr.Jvec) == 0.0:
-                            d_L_d_xi = np.dot(psr.DF.T, psr.detresiduals / psr.Nvec)
+                        if self.have_outliers and self.likfunc in ['mark15']:
+                            d_L_d_xi = np.zeros(psr.DF.shape[1])
+                            # Assume we do jitter explicitly then
+                            if not pp in self._outlier_sig_dict:
+                                self._outlier_sig_dict[pp] = []
+
+                            d_L_d_b_o = psr.DF.T * (psr.detresiduals /
+                                    psr.Nvec)[None, :]
+                            self._outlier_sig_dict[pp].append((parslice,
+                                    d_L_d_b_o[smask,:]))
                         else:
-                            d_L_d_xi = np.dot(psr.DF.T,
-                                    cython_block_shermor_0D(psr.detresiduals,
-                                            psr.Nvec, psr.Jvec, psr.Uinds))
+                            if 'jitter' in self.gibbsmodel or np.sum(psr.Jvec) == 0.0:
+                                d_L_d_xi = np.dot(psr.DF.T, psr.detresiduals / psr.Nvec)
+                            else:
+                                d_L_d_xi = np.dot(psr.DF.T,
+                                        cython_block_shermor_0D(psr.detresiduals,
+                                                psr.Nvec, psr.Jvec, psr.Uinds))
 
                         d_Pr_d_xi = -sparameters / self.Thetavec[thetaslice]
                         d_L_d_b[parslice] = d_L_d_xi[smask]
@@ -6358,7 +6403,20 @@ class ptaLikelihood(object):
                                 m2signal['parindex']+m2signal['npars'])
                         smask = m2signal['bvary']
 
-                        d_L_d_xi = cython_UTx(psr.detresiduals / psr.Nvec, psr.Uinds)
+                        if have_outliers and self.likfunc in ['mark15']:
+                            raise NotImplementedError("Jitter outliers not done")
+                            d_L_d_xi = np.zeros(psr.Mmat_g.shape[1])
+                            # Assume we do jitter explicitly then
+                            if not pp in self._outlier_sig_dict:
+                                self._outlier_sig_dict[pp] = []
+
+                            d_L_d_b_o = psr.DF.T * (psr.detresiduals /
+                                    psr.Nvec)[None, :]
+                            self._outlier_sig_dict[pp].append((parslice,
+                                    d_L_d_b_o[smask,:]))
+                        else:
+                            d_L_d_xi = cython_UTx(psr.detresiduals / psr.Nvec, psr.Uinds)
+
                         d_Pr_d_xi = -sparameters / psr.Jvec
                         d_L_d_b[parslice] = d_L_d_xi[smask]
                         d_Pr_d_b[parslice] = d_Pr_d_xi[smask]
@@ -6554,7 +6612,7 @@ class ptaLikelihood(object):
                 self.sig_Det_inds.append(ss)
             if m2signal['stype'] in slistOutlier:
                 if pp >= 0:
-                    self.sig_Outlier_inds.append(ss)
+                    psr.sig_Outlier_inds.append(ss)
                 self.sig_Outlier_inds.append(ss)
 
         psr.sig_N_inds = np.array(psr.sig_N_inds)
@@ -6854,14 +6912,19 @@ class ptaLikelihood(object):
         #for ss, m2signal in enumerate(self.ptasignals):
         for pp, psr in enumerate(self.ptapsrs):
             for ss in psr.sig_Outlier_inds:
+                m2signal = self.ptasignals[ss]
                 if selection[ss]:
                     # Create a parameters array for this particular signal
                     sparameters = m2signal['pstart'].copy()
+                    parslc = np.arange(m2signal['parindex'],
+                            m2signal['parindex']+m2signal['npars'])
                     sparameters[m2signal['bvary']] = \
-                            parameters[m2signal['parindex']:m2signal['parindex']+m2signal['npars']]
+                            parameters[parslc]
 
                     if m2signal['stype'] == 'outlierprob':
                         psr.outlier_prob = sparameters[0]
+                        if np.sum(m2signal['bvary']) > 0:
+                            psr.d_Pb_ind = parslc
 
 
 
@@ -9893,23 +9956,12 @@ class ptaLikelihood(object):
         # corr_ldet is term (4) full array (red noise and other)
         bBb = np.zeros_like(self.rGr)
         ldB = np.zeros_like(self.GNGldet)
-        logl_outlier = np.zeros_like(self.rGr)
 
         for ii, psr in enumerate(self.ptapsrs):
-            # From psr
-            # Set P0 and Pb
-            P0 = psr.P0
-            Pb = psr.outlier_prob
-
             # Gradient for Nvec hyper-parameters
             if 'jitter' in self.gibbsmodel or np.sum(psr.Jvec) == 0:
                 self.rGr[ii] = np.sum(psr.detresiduals**2 / psr.Nvec)
                 self.GNGldet[ii] = np.sum(np.log(psr.Nvec))
-
-                expl = psr.detresiduals**2 / psr.Nvec
-                expd = np.log(psr.Nvec) + np.log(2*np.pi)
-                expt = (1 - Pb) * np.exp(-0.5*expl - 0.5*expd) + Pb / P0
-                logl_outlier[ii] = np.sum(expt)
 
                 for key, d_Nvec_d_p in psr.d_Nvec_d_param.iteritems():
                     # Inner product
@@ -10127,8 +10179,7 @@ class ptaLikelihood(object):
                     # Determinant
                     gradient[key] -= 0.5 * np.sum(Binv_diag_dm * d_Thetavec_d_p)
 
-        #ll = -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) - \
-        ll = np.sum(logl_outlier) + \
+        ll = -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) - \
             0.5*np.sum(bBb) - 0.5*np.sum(ldB) - \
             0.5*corr_xi2 - 0.5*corr_ldet
 
@@ -10847,6 +10898,300 @@ class ptaLikelihood(object):
 
 
         return hessian
+
+
+    def mark15loglikelihood(self, parameters, set_hyper_pars=True):
+        """
+        mark15 loglikelihood. Used for full hierarchical model (with
+        transformations on top of that possible)
+
+        ll = -0.5*(dt - Tb)^T N^{-1} (dt - Tb)      (1)
+             -0.5*log(det(N))                       (2)
+             -0.5*b^T B^{-1} b                      (3)
+             -0.5*log(det(B))                       (4)
+        """
+        # Set all the hyper parameter quantities
+        if set_hyper_pars:
+            self.set_hyper_pars(parameters, calc_gradient=True)
+            self.set_det_sources(parameters, calc_gradient=True)
+
+        # We will have to do the d_Pr_d_b ourselves here in the likelihood
+        d_L_d_b, d_Pr_d_b = self._d_L_d_b, self._d_Pr_d_b
+
+        # We'll do the d_L_d_b below, because we have outliers
+        gradient = np.zeros_like(d_L_d_b)
+
+        # For efficiency in calculating gradients, we'll have to store some
+        # matrix-vector products
+        Binv_b_dm_sqr = np.zeros_like(self.Thetavec)
+        Binv_diag_dm = np.zeros_like(self.Thetavec)
+
+        # rGr is term (1) per pulsar
+        # GNGldet is term (2) per pulsar
+        # bBb is term (3) per pulsar (excluding red noise)
+        # ldB is term (4) per pulsar (excluding red noise)
+        # corr_xi2 is term (3) full array (red noise and other)
+        # corr_ldet is term (4) full array (red noise and other)
+        bBb = np.zeros_like(self.rGr)
+        ldB = np.zeros_like(self.GNGldet)
+        logl_outlier = np.zeros_like(self.rGr)
+
+        for ii, psr in enumerate(self.ptapsrs):
+            # From psr
+            # Set P0 and Pb
+            P0 = psr.P0
+            Pb = psr.outlier_prob
+
+            # Gradient for Nvec hyper-parameters
+            if 'jitter' in self.gibbsmodel or np.sum(psr.Jvec) == 0:
+                self.rGr[ii] = np.sum(psr.detresiduals**2 / psr.Nvec)
+                self.GNGldet[ii] = np.sum(np.log(psr.Nvec))
+
+                lln = psr.detresiduals**2 / psr.Nvec
+                lld = np.log(psr.Nvec) + np.log(2*np.pi)
+                logL0 = -0.5*lln-0.5*lld
+                bigL0 = (1. - Pb) * np.exp(logL0)
+                bigL = bigL0 + Pb / P0
+                logl_outlier[ii] = np.sum(np.log(bigL))
+
+                # Gradients wrt low-level parameters
+                for pslc, d_L_d_b_o in self._outlier_sig_dict[ii]:
+                    # d_L_d_b_o is d_L_d_b for every TOA (npar x ntoa)
+                    gradient[pslc] += np.sum(
+                            d_L_d_b_o * bigL0[None,:]/bigL[None,:], axis=1)
+
+                # Gradient wrt Pb
+                for pbind in psr.d_Pb_ind:
+                    gradient[pbind] += np.sum((-np.exp(logL0)+1.0/P0)/bigL)
+                            
+
+                for key, d_Nvec_d_p in psr.d_Nvec_d_param.iteritems():
+                    # Inner product
+                    #gradient[key] += 0.5 * np.sum(psr.detresiduals**2 *
+                    #        d_Nvec_d_p / psr.Nvec**2)
+                    d_L_d_b_o = 0.5*(psr.detresiduals**2 * d_Nvec_d_p /
+                            psr.Nvec**2 - d_Nvec_d_p / psr.Nvec)
+
+                    # Determinant
+                    #gradient[key] += -0.5 * np.sum(d_Nvec_d_p / psr.Nvec)
+                    
+                    gradient[key] += np.sum(d_L_d_b_o * bigL0/bigL)
+            else:
+                Jldet, Nr = cython_block_shermor_0D_ld(psr.detresiduals,
+                                psr.Nvec, psr.Jvec, psr.Uinds)
+
+                self.rGr[ii] = np.sum(psr.detresiduals*Nr)
+                self.GNGldet[ii] = Jldet
+
+                for key, d_Nvec_d_p in psr.d_Nvec_d_param.iteritems():
+                    # Inner product
+                    gradient[key] += 0.5 * np.sum(Nr**2 * d_Nvec_d_p)
+
+                    # Determinant
+                    gradient[key] -= 0.5 * cython_logdet_dN(psr.Nvec, psr.Jvec,
+                            d_Nvec_d_p, psr.Uinds)
+
+                for key, d_Jvec_d_p in psr.d_Jvec_d_param.iteritems():
+                    UNr = cython_UTx(Nr, psr.Uinds)
+
+                    # Inner product
+                    gradient[key] += 0.5 * np.sum(UNr**2 * d_Jvec_d_p)
+
+                    # Determinant
+                    gradient[key] += -0.5 * cython_logdet_dJ(
+                            psr.Nvec, psr.Jvec, d_Jvec_d_p, psr.Uinds)
+
+
+            if psr.fourierind is not None and len(self.ptapsrs) == 1:
+                findex = np.sum(self.npf[:ii])
+                nfreq = self.npf[ii]
+                ind = psr.fourierind
+                fslc = slice(findex, findex+nfreq)
+                pslc = slice(ind, ind+nfreq)
+
+                bsqr = parameters[pslc]**2
+                phivec = self.Phivec[fslc] + self.Svec[fslc]
+
+                #self.rGr[ii] += np.sum(bsqr / phivec)
+                #self.GNGldet[ii] += np.sum(np.log(phivec))
+                bBb[ii] += np.sum(bsqr / phivec)
+                ldB[ii] += np.sum(np.log(phivec))
+
+                # Explicitly do the gradient wrt b of the prior
+                gradient[pslc] += d_Pr_d_b[pslc]
+
+                # Gradient for Phivec hyper-parameters
+                # We are not trying to be efficient here, since there is only
+                # one pulsar. For multi-pulsar efficiency, see below
+                for key, d_Phivec_d_p in psr.d_Phivec_d_param.iteritems():
+                    # Inner product
+                    gradient[key] += 0.5 * np.sum(bsqr * d_Phivec_d_p / phivec**2)
+
+                    # Determinant
+                    gradient[key] -= 0.5 * np.sum(d_Phivec_d_p / phivec)
+
+                # Gradient for Svec hyper-parameters
+                for key, d_Svec_d_p in self.d_Svec_d_param.iteritems():
+                    # Inner product
+                    gradient[key] += 0.5 * np.sum(bsqr * d_Svec_d_p / phivec**2)
+
+                    # Determinant
+                    gradient[key] -= 0.5 * np.sum(d_Svec_d_p / phivec)
+
+            if psr.dmfourierind is not None:
+                fdmindex = np.sum(self.npfdm[:ii])
+                nfreqdm = self.npfdm[ii]
+                ind = psr.dmfourierind
+                fslc = slice(fdmindex, fdmindex+nfreqdm)
+                pslc = slice(ind, ind+nfreqdm)
+
+                bsqr = parameters[pslc]**2
+                thetavec = self.Thetavec[fslc]
+
+                #self.rGr[ii] += np.sum(bsqr / thetavec)
+                #self.GNGldet[ii] += np.sum(np.log(thetavec))
+                bBb[ii] += np.sum(bsqr / thetavec)
+                ldB[ii] += np.sum(np.log(thetavec))
+
+                # Explicitly do the gradient wrt b of the prior
+                gradient[pslc] += d_Pr_d_b[pslc]
+
+                # For computational efficiency, we'll have to memorize the
+                # B^{-1} b vectors
+                Binv_b_dm_sqr[fslc] = bsqr / thetavec**2
+                Binv_diag_dm[fslc] = 1.0 / thetavec
+
+                # BUG: fix code below for DM variations
+                """
+                # Gradient for Thetavec hyper-parameters
+                for key, d_Thetavec_d_p in self.d_Thetavec_d_param.iteritems():
+                    # Inner product
+                    gradient[key] += 0.5 * np.sum(bsqr * d_Thetavec_d_p / thetavec**2)
+
+                    # Determinant
+                    gradient[key] -= 0.5 * np.sum(d_Thetavec_d_p / thetavec)
+                """
+
+            if psr.jitterind is not None:
+                uindex = np.sum(self.npu[:ii])
+                npus = self.npu[ii]
+                ind = psr.jitterind
+                pslc = slice(ind, ind+npus)
+
+                bsqr = parameters[pslc]**2
+                jvec = psr.Jvec
+
+                #self.rGr[ii] += np.sum(bsqr / jvec)
+                #self.GNGldet[ii] += np.sum(np.log(jvec))
+                bBb[ii] += np.sum(bsqr / jvec)
+                ldB[ii] += np.sum(np.log(jvec))
+
+                # Explicitly do the gradient wrt b of the prior
+                gradient[pslc] += d_Pr_d_b[pslc]
+
+                # Gradient for Thetavec hyper-parameters
+                for key, d_Jvec_d_p in psr.d_Jvec_d_param.iteritems():
+                    # Inner product
+                    gradient[key] += 0.5 * np.sum(bsqr * d_Jvec_d_p / jvec**2)
+
+                    # Determinant
+                    gradient[key] -= 0.5 * np.sum(d_Jvec_d_p / jvec)
+
+        # Do correlated signals for the full array here
+        corr_xi2 = 0.0
+        corr_ldet = 0.0
+        if 'rednoise' in self.gibbsmodel and len(self.ptapsrs) > 1:
+            # Re-create the overlap reduction function Cholesky decomposition
+            # per frequency
+            self.gibbs_construct_all_freqcov()
+
+            # Set the freqb matrix (Fourier coefficients)
+            for pp, psr in enumerate(self.ptapsrs):
+                nfreq = self.npf[ii]
+                ind = psr.fourierind
+                pslc = slice(ind, ind+nfreq)
+                self.freqb[pp, self.freqmask[pp,:]] = parameters[pslc]
+
+            # For computational efficiency, we'll have to memorize the
+            # B^{-1} b vectors
+            Binv_b_rn = np.zeros_like(self.Phivec)
+            Binv_diag_rn = np.zeros_like(self.Phivec)
+
+            # Do some fancy stuff here per frequency
+            for ii in range(0, len(self.Svec), 2):
+                msk = self.freqmask[:, ii]
+                pinds_cos = self.freqpinds[msk, ii]
+                pinds_sin = self.freqpinds[msk, ii+1]
+                finds_cos = self.freqfinds[msk, ii]
+                finds_sin = self.freqfinds[msk, ii+1]
+
+                # The covariance between sin/cos modes is identical
+                cf = self.Scor_im_cf[int(ii / 2)]
+                c_inv = self.Scor_im_inv[int(ii / 2)]
+
+                # Cosine mode loglik
+                bc = self.freqb[msk, ii]
+                Lx_c = sl.cho_solve(cf, bc)
+                corr_xi2 += np.sum(Lx_c*bc)
+                corr_ldet += 2*np.sum(np.log(np.diag(cf[0])))
+
+                # Cosine mode gradient
+                gradient[pinds_cos] -= sl.cho_solve(cf, bc)
+
+                # Sine mode
+                bs = self.freqb[msk, ii+1]
+                Lx_s = sl.cho_solve(cf, bs)
+                corr_xi2 += np.sum(Lx_s*bs)
+                corr_ldet += 2*np.sum(np.log(np.diag(cf[0])))
+
+                # Sine mode gradient
+                gradient[pinds_sin] -= sl.cho_solve(cf, bs)
+
+                # Fill the gradient memorizations
+                Binv_b_rn[finds_cos] = Lx_c
+                Binv_b_rn[finds_sin] = Lx_s
+                Binv_diag_rn[finds_cos] = np.diag(c_inv)
+                Binv_diag_rn[finds_sin] = np.diag(c_inv)
+
+                # Gradient for Svec hyper-parameters
+                for key, d_Svec_d_p in self.d_Svec_d_param.iteritems():
+                    d_phivec_cos = d_Svec_d_p[finds_cos]    # Sin & Cos the same
+                    d_phivec_sin = d_Svec_d_p[finds_sin]    # Sin & Cos the same
+                    scor_cos = self.Scor[msk,:][:,msk] * d_phivec_cos
+                    scor_sin = self.Scor[msk,:][:,msk] * d_phivec_sin
+
+                    # Inner-product of the prior
+                    gradient[key] += 0.5 * np.sum(Lx_c * np.dot(scor_cos, Lx_c))
+                    gradient[key] += 0.5 * np.sum(Lx_s * np.dot(scor_sin, Lx_s))
+
+                    # Determinant of the prior
+                    gradient[key] -= 0.5 * np.trace(np.dot(c_inv, scor_cos))
+                    gradient[key] -= 0.5 * np.trace(np.dot(c_inv, scor_sin))
+
+            # The gradients for the B hyper-parameters (red noise)
+            for pp, psr in enumerate(self.ptapsrs):
+                for key, d_Phivec_d_p in psr.d_Phivec_d_param.iteritems():
+                    # Inner-product of the prior
+                    gradient[key] += 0.5 * np.sum(Binv_b_rn**2 * d_Phivec_d_p)
+
+                    # Determinant of the prior
+                    gradient[key] -= 0.5 * np.sum(Binv_diag_rn * d_Phivec_d_p)
+
+                # The gradients for the B hyper-parameters (DM variations)
+                for key, d_Thetavec_d_p in psr.d_Thetavec_d_param.iteritems():
+                    # Inner product
+                    gradient[key] += 0.5 * np.sum(Binv_b_dm_sqr * d_Thetavec_d_p)
+
+                    # Determinant
+                    gradient[key] -= 0.5 * np.sum(Binv_diag_dm * d_Thetavec_d_p)
+
+        #ll = -0.5*np.sum(self.rGr) - 0.5*np.sum(self.GNGldet) - \
+        ll = np.sum(logl_outlier) - \
+            0.5*np.sum(bBb) - 0.5*np.sum(ldB) - \
+            0.5*corr_xi2 - 0.5*corr_ldet
+
+        return ll, gradient
+
 
 
 
@@ -12164,6 +12509,8 @@ class ptaLikelihood(object):
             elif self.likfunc == 'mark14':
                 ll, _ = self.mark14loglikelihood(parameters)
                 #print("WARNING: ignoring gradient information!")
+            elif self.likfunc == 'mark15':
+                ll, _ = self.mark15loglikelihood(parameters)
             elif self.likfunc == 'mark12':
                 ll = self.mark12loglikelihood(parameters)
 
@@ -12364,7 +12711,7 @@ class ptaLikelihood(object):
 
         if self.likfunc in ['mark1', 'mark2', 'mark3', 'mark3nc', 'mark3fa',
             'mark4', 'mark4ln', 'mark6', 'mark6fa', 'mark13', 'mark14',
-            'mark12', 'gibbs']:
+            'mark15', 'mark12', 'gibbs']:
             lp = self.mark4logprior(parameters)
         elif self.likfunc == 'mark7':
             lp = self.mark7logprior(parameters)
@@ -12392,6 +12739,11 @@ class ptaLikelihood(object):
         lp, lp_grad = self.mark13logprior_fast(parameters)
         ll, ll_grad = self.mark14loglikelihood(parameters)
         return ll+lp, lp_grad + ll_grad
+
+    def mark15logposterior(self, parameters):
+        lp, lp_grad = self.mark13logprior_fast(parameters)
+        ll, ll_grad = self.mark15loglikelihood(parameters)
+        return ll+lp, lp_grad + ll_grad
     
     def logposterior_grad(self, parameters):
         if self.likfunc == 'mark12':
@@ -12401,16 +12753,20 @@ class ptaLikelihood(object):
             return self.mark13logposterior(parameters)
         elif self.likfunc == 'mark14':
             return self.mark14logposterior(parameters)
+        elif self.likfunc == 'mark15':
+            return self.mark15logposterior(parameters)
         else:
-            raise ValueError("Gradient only supported in mark13/mark14")
+            raise ValueError("Gradient only supported in mark13/mark14/mark15")
 
     def loglikelihood_grad(self, parameters, **kwargs):
         if self.likfunc == 'mark13':
             return self.mark13loglikelihood(parameters, **kwargs)
         elif self.likfunc == 'mark14':
             return self.mark14loglikelihood(parameters, **kwargs)
+        elif self.likfunc == 'mark15':
+            return self.mark15loglikelihood(parameters, **kwargs)
         else:
-            raise ValueError("Gradient only supported in mark13/mark14")
+            raise ValueError("Gradient only supported in mark13/mark14/mark15")
 
     def logprior_grad(self, parameters):
         return self.mark13logprior_fast(parameters)
@@ -12438,6 +12794,9 @@ class ptaLikelihood(object):
     def hessian(self, parameters, **kwargs):
         if self.likfunc == 'mark14':
             return self.mark14hessian(parameters, **kwargs)
+        if self.likfunc == 'mark15':
+            raise NotImplementedError("Mark15 Hessian not implemented")
+            return self.mark15hessian(parameters, **kwargs)
         else:
             raise NotImplementedError("Hessian only implemented in mark14")
         return None
