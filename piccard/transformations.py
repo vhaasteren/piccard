@@ -774,7 +774,7 @@ class whitenedLikelihood(likelihoodWrapper):
         """Given the Hessian matrix, calculate the inverse square root"""
         try:
             # Try Cholesky
-            self._ch = sl.cholesky(-hessian, lower=True)
+            self._ch = sl.cholesky(hessian, lower=True)
 
             # Fast solve
             self._chi = sl.solve_triangular(self._ch, np.eye(len(self._ch)),

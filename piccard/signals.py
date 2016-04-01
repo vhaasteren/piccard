@@ -460,7 +460,6 @@ def bwmsignal(parameters, raj, decj, t):
     return pol * amp * heaviside(t - epoch) * (t - epoch)
 
 
-
 def bwmsignal_psr(parameters, t):
     """
     Function that calculates the pulsar-term gravitational-wave burst-with-memory
@@ -488,6 +487,47 @@ def bwmsignal_psr(parameters, t):
 
     # Return the time-series for the pulsar
     return amp * s * heaviside(t - epoch) * (t - epoch)
+
+def bwmsignal_psr_grad(parameters, t):
+    """
+    Function that calculates the pulsar-term gravitational-wave burst-with-memory
+    signal, as described in:
+    Seto et al, van haasteren and Levin, phsirkov et al, Cordes and Jenet.
+
+    This version only has a burst epoch and a strain in order to characterize a
+    pulsar-term BWM signal.
+
+    parameter[0] = TOA time (sec) the burst hits the earth
+    parameter[1] = log-amplitude of the burst (strain h)
+    parameter[2] = extra multiplier (typically -1 or 1, for sign of signal)
+
+    t = timestamps where the waveform should be returned
+
+    returns the waveform as induced timing residuals (seconds)
+
+    """
+    # Define the heaviside function
+    heaviside = lambda x: 0.5 * (np.sign(x) + 1)
+
+    # Signal definitions
+    s = np.sign(parameters[2])
+    amp = 10**parameters[1]
+    epoch = (parameters[0] - pic_T0) * pic_spd
+
+    # Effective signal amplitude
+    esa = amp * s * heaviside(t - epoch)
+
+    # Return matrix
+    rv = np.zeros((len(t), 3))
+
+    # Derivative wrt burst epoch
+    rv[:,0] = -esa * pic_spd
+
+    # Derivative wrt amplitude
+    rv[:,1] = np.log(10) * esa * (t - epoch)
+
+    return rv
+
 
 def glitchsignal(parameters, t):
     """

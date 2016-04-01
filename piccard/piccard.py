@@ -3922,6 +3922,36 @@ class ptaLikelihood(object):
                     })
                 signals.append(newsignal)
 
+            if incPsrBWM:
+                for ii in range(nPsrBWM):
+                    toamax = self.ptapsrs[0].toas[0]
+                    toamin = self.ptapsrs[0].toas[0]
+                    for psr in self.ptapsrs:
+                        if toamax < np.max(psr.toas):
+                            toamax = np.max(psr.toas)
+                        if toamin > np.min(psr.toas):
+                            toamin = np.min(psr.toas)
+                    toamin = pic_T0 + toamin/pic_spd
+                    toamax = pic_T0 + toamax/pic_spd
+                    toamed = 0.5 * (toamax+toamin)
+                    toawid = 0.5 * (toamax-toamin)
+                    epochmin = toamed - bwmFraction * toawid
+                    epochmax = toamed + bwmFraction * toawid
+
+                    newsignal = OrderedDict({
+                        "stype":'psrbwm',
+                        "corr":"single",
+                        "pulsarind":pp,
+                        "bvary":[True, True, varyBWMSign],
+                        "pmin":[epochmin, -18.0, -1.0],
+                        "pmax":[epochmax, -10.0, 1.0],
+                        "pwidth":[30, 0.1, 0.1],
+                        "pstart":[0.5*(toamax+toamin), -15.0, signPsrBWM],
+                        "interval":[True]*3,
+                        "prior":'flatlog'
+                        })
+                    signals.append(newsignal)
+
             if incTimingModel and not likfunc in ['mark13', 'mark14', 'mark15']:
                 if nonLinear:
                     # Get the parameter errors from libstempo. Initialise the
@@ -4373,37 +4403,6 @@ class ptaLikelihood(object):
                 "prior":'flatlog'
                 })
             signals.append(newsignal)
-
-        if incPsrBWM:
-            for pp, m2psr in enumerate(self.ptapsrs):
-                for ii in range(nPsrBWM):
-                    toamax = self.ptapsrs[0].toas[0]
-                    toamin = self.ptapsrs[0].toas[0]
-                    for psr in self.ptapsrs:
-                        if toamax < np.max(psr.toas):
-                            toamax = np.max(psr.toas)
-                        if toamin > np.min(psr.toas):
-                            toamin = np.min(psr.toas)
-                    toamin = pic_T0 + toamin/pic_spd
-                    toamax = pic_T0 + toamax/pic_spd
-                    toamed = 0.5 * (toamax+toamin)
-                    toawid = 0.5 * (toamax-toamin)
-                    epochmin = toamed - bwmFraction * toawid
-                    epochmax = toamed + bwmFraction * toawid
-
-                    newsignal = OrderedDict({
-                        "stype":'psrbwm',
-                        "corr":"single",
-                        "pulsarind":pp,
-                        "bvary":[True, True, varyBWMSign],
-                        "pmin":[epochmin, -18.0, -1.0],
-                        "pmax":[epochmax, -10.0, 1.0],
-                        "pwidth":[30, 0.1, 0.1],
-                        "pstart":[0.5*(toamax+toamin), -15.0, signPsrBWM],
-                        "interval":[True]*3,
-                        "prior":'flatlog'
-                        })
-                    signals.append(newsignal)
 
         if incGlitch:
             for pp, m2psr in enumerate(self.ptapsrs):
@@ -6288,8 +6287,38 @@ class ptaLikelihood(object):
 
                         #        self.ptapsrs[pp].detresiduals -= bwmsig
 
-                        if calc_gradient:
-                            raise NotImplementedError("No gradients available yet")
+                        raise NotImplementedError("No gradients available yet")
+                    elif m2signal['stype'] == 'psrbwm':
+                        pp = m2signal['pulsarind']
+                        psr = self.ptapsrs[pp]
+                        parslice = slice(m2signal['parindex'],
+                                m2signal['parindex']+m2signal['npars'])
+                        smask = m2signal['bvary']
+
+                        sgrad = bwmsignal_psr_grad(sparameters, psr.toas)
+
+                        if self.have_outliers and self.likfunc in ['mark15']:
+                            d_L_d_xi = np.zeros(sgrad.shape[1])
+
+                            # Assume we do jitter explicitly then
+                            if not pp in self._outlier_sig_dict:
+                                self._outlier_sig_dict[pp] = []
+
+                            d_L_d_b_o = sgrad.T * (psr.detresiduals /
+                                    psr.Nvec)[None, :]
+                            self._outlier_sig_dict[pp].append((parslice,
+                                    d_L_d_b_o[smask,:]))
+                        else:
+                            if 'jitter' in self.gibbsmodel or np.sum(psr.Jvec) == 0.0:
+                                d_L_d_xi = np.dot(sgrad.T, psr.detresiduals / psr.Nvec)
+                            else:
+                                # TODO: speed-update. This cython-piece is present
+                                #       below for Red noise and DM as well!
+                                d_L_d_xi = np.dot(sgrad.T,
+                                        cython_block_shermor_0D(psr.detresiduals,
+                                                psr.Nvec, psr.Jvec, psr.Uinds))
+
+                        d_L_d_b[parslice] = d_L_d_xi[smask]
                     elif m2signal['stype'] == 'timingmodel_xi':
                         if not np.all(m2signal['bvary']):
                             raise ValueError("Fixing xi-parameters not allowed")
@@ -6403,14 +6432,14 @@ class ptaLikelihood(object):
                                 m2signal['parindex']+m2signal['npars'])
                         smask = m2signal['bvary']
 
-                        if have_outliers and self.likfunc in ['mark15']:
-                            raise NotImplementedError("Jitter outliers not done")
-                            d_L_d_xi = np.zeros(psr.Mmat_g.shape[1])
+                        if self.have_outliers and self.likfunc in ['mark15']:
+                            d_L_d_xi = np.zeros(self.npu[pp])
+
                             # Assume we do jitter explicitly then
                             if not pp in self._outlier_sig_dict:
                                 self._outlier_sig_dict[pp] = []
 
-                            d_L_d_b_o = psr.DF.T * (psr.detresiduals /
+                            d_L_d_b_o = psr.Umat.T * (psr.detresiduals /
                                     psr.Nvec)[None, :]
                             self._outlier_sig_dict[pp].append((parslice,
                                     d_L_d_b_o[smask,:]))
