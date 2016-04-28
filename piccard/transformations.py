@@ -782,7 +782,7 @@ class whitenedLikelihood(likelihoodWrapper):
             self._lj = np.sum(np.log(np.diag(self._chi)))
         except sl.LinAlgError:
             # Cholesky fails. Try eigh
-            eigval, eigvec = sl.eigh(-hessian)
+            eigval, eigvec = sl.eigh(hessian)
 
             if not np.all(eigval > 0):
                 # Try SVD here? Or just regularize?
