@@ -782,15 +782,25 @@ class whitenedLikelihood(likelihoodWrapper):
             self._lj = np.sum(np.log(np.diag(self._chi)))
         except sl.LinAlgError:
             # Cholesky fails. Try eigh
-            eigval, eigvec = sl.eigh(hessian)
+            try:
+                eigval, eigvec = sl.eigh(hessian)
 
-            if not np.all(eigval > 0):
-                # Try SVD here? Or just regularize?
-                raise ValueError("Eigh thinks -hessian is not positive definite")
-            
-            self._ch = eigvec * np.sqrt(eigval)
-            self._chi = (eigvec / np.sqrt(eigval)).T
-            self._lj = -0.5*np.sum(np.log(eigval))
+                if not np.all(eigval > 0):
+                    # Try SVD here? Or just regularize?
+                    raise sl.LinAlgError("Eigh thinks hessian is not positive definite")
+                
+                self._ch = eigvec * np.sqrt(eigval)
+                self._chi = (eigvec / np.sqrt(eigval)).T
+                self._lj = -0.5*np.sum(np.log(eigval))
+            except sl.LinAlgError:
+                U, s, Vt = sl.svd(hessian)
+
+                if not np.all(s > 0):
+                    raise sl.LinAlgError("SVD thinks hessian is not positive definite")
+
+                self._ch = U * np.sqrt(s) # eigvec * np.sqrt(eigval)
+                self._chi = (U / np.sqrt(s)).T
+                self._lj = -0.5*np.sum(np.log(s))
 
     def forward(self, x):
         """Forward transformation to whitened parameters"""
