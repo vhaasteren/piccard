@@ -12,7 +12,7 @@ The package mainly contains:
 and subroutines of nuts6:
   build_tree                the main recursion in NUTS
   find_reasonable_epsilon   Heuristic for choosing an initial value of epsilon
-  leapfrog                  Perfom a leapfrog jump in the Hamiltonian space
+  leapfrog                  Perform a leapfrog jump in the Hamiltonian space
   stop_criterion            Compute the stop condition in the main loop
 
 
@@ -55,7 +55,7 @@ Carlo", Matthew D. Hoffman & Andrew Gelman
 """
 import numpy as np
 from numpy import log, exp, sqrt
-import sys, time, os
+import sys, time, os, pickle
 
 __all__ = ['nuts6']
 
@@ -307,7 +307,7 @@ def build_tree(theta, r, grad, logu, v, j, epsilon, f, joint0, ind, traj, force_
     return thetaminus, rminus, gradminus, thetaplus, rplus, gradplus, thetaprime, gradprime, logpprime, nprime, sprime, alphaprime, nalphaprime, ind_plus, ind_minus, ind_prime
 
 
-def nuts6(f, M, Madapt, theta0, delta=0.6, verbose=True, outFile=None,
+def nuts6(f, M, Madapt, theta0, delta=0.6, verbose=True, outFile=None, pickleFile=None,
         trajectoryDir=None, force_epsilon=None, force_trajlen=None, write_burnin=False):
     """
     Implements the No-U-Turn Sampler (NUTS) algorithm 6 from from the NUTS
@@ -355,49 +355,76 @@ def nuts6(f, M, Madapt, theta0, delta=0.6, verbose=True, outFile=None,
     if len(np.shape(theta0)) > 1:
         raise ValueError('theta0 is expected to be a 1-D array')
 
+    if pickleFile and os.path.isfile(pickleFile + '.pickle'):
+        # reloading pickle
+        pickledict = pickle.load(open(pickleFile + '.pickle','rb'))
+        (logp, grad, M, Madapt, theta0, delta, burnin, D,
+         force_epsilon, epsilon, gamma, t0,
+         kappa, mu, epsilonbar, Hbar, traj, mstart) = [pickledict[d] for d in ["logp", "grad", "M", "Madapt", "theta0", "delta", "burnin", "D",
+                                                                               "force_epsilon", "epsilon", "gamma", "t0",
+                                                                               "kappa", "mu", "epsilonbar", "Hbar", "traj",
+                                                                               "mstart"]]
+        # reloading numpy arrays
+        samples = np.load(pickleFile + '-samples.npy')
+        lnprob = np.load(pickleFile + '-lnprob.npy')
+
+        # chop the output file to the pickled length
+        written = mstart if write_burnin else mstart - Madapt 
+        if mstart > written:
+            outfile = open(outFile,'r')
+            choppedfile = open(outFile + '-tmp','w')
+            for i in range(written):
+                choppedfile.write(outfile.readline())
+            choppedfile.close()
+            outfile.close()
+            os.rename(outFile + '-tmp',outFile)
+    else:
+        burnin = True
+
+        D = len(theta0)
+        samples = np.empty((M + Madapt, D), dtype=float)
+        lnprob = np.empty(M + Madapt, dtype=float)
+
+        logp, grad = f(theta0)
+        samples[0, :] = theta0
+        lnprob[0] = logp
+
+        # Choose a reasonable first epsilon by a simple heuristic.
+        if force_epsilon is None:
+            epsilon = find_reasonable_epsilon(theta0, grad, logp, f)
+        else:
+            epsilon = force_epsilon
+
+        # Parameters to the dual averaging algorithm.
+        gamma = 0.05
+        t0 = 10
+        kappa = 0.75
+        mu = log(10. * epsilon)
+
+        # Initialize dual averaging algorithm.
+        epsilonbar = 1
+        Hbar = 0
+
+        if outFile is not None:
+            chainfile = open(outFile, 'w')
+            chainfile.close()
+
+        if trajectoryDir is not None:
+            if os.path.isfile(trajectoryDir):
+                raise IOError("Not a directory: {0}".format(trajectoryDir))
+            elif not os.path.isdir(trajectoryDir):
+                os.mkdir(trajectoryDir)
+
+        # Initialize trajectory memory
+        traj = Trajectory(D, bufsize=1000)
+
+        mstart = 0
+
     # Starting time
     tstart = time.time()
     ptime = tstart
-    burnin = True
 
-    D = len(theta0)
-    samples = np.empty((M + Madapt, D), dtype=float)
-    lnprob = np.empty(M + Madapt, dtype=float)
-
-    logp, grad = f(theta0)
-    samples[0, :] = theta0
-    lnprob[0] = logp
-
-    # Choose a reasonable first epsilon by a simple heuristic.
-    if force_epsilon is None:
-        epsilon = find_reasonable_epsilon(theta0, grad, logp, f)
-    else:
-        epsilon = force_epsilon
-
-    # Parameters to the dual averaging algorithm.
-    gamma = 0.05
-    t0 = 10
-    kappa = 0.75
-    mu = log(10. * epsilon)
-
-    # Initialize dual averaging algorithm.
-    epsilonbar = 1
-    Hbar = 0
-
-    if outFile is not None:
-        chainfile = open(outFile, 'w')
-        chainfile.close()
-
-    if trajectoryDir is not None:
-        if os.path.isfile(trajectoryDir):
-            raise IOError("Not a directory: {0}".format(trajectoryDir))
-        elif not os.path.isdir(trajectoryDir):
-            os.mkdir(trajectoryDir)
-
-    # Initialize trajectory memory
-    traj = Trajectory(D, bufsize=1000)
-
-    for m in range(1, M + Madapt):
+    for m in range(mstart + 1, M + Madapt):
         # Resample momenta (Use mass matrix here for more efficiency).
         r0 = np.random.normal(0, 1, D)
 
@@ -519,6 +546,21 @@ def nuts6(f, M, Madapt, theta0, delta=0.6, verbose=True, outFile=None,
                 np.savetxt(trajfile_minus, traj.get_trajectory(which='minus')[0])
                 np.savetxt(trajfile_used, traj.get_used_trajectory(trajind))
 
+        if m % 100 == 0:
+            pickledict = {"logp": logp, "grad": grad, 
+                          "M": M, "Madapt": Madapt, "theta0": theta0, "delta": delta,
+                          "burnin": burnin, "D": D, "force_epsilon": force_epsilon,
+                          "epsilon": epsilon, "gamma": gamma, "t0": t0,
+                          "kappa": kappa, "mu": mu, "epsilonbar": epsilonbar,
+                          "Hbar": Hbar, "traj": traj, "mstart": m}
+
+            pickle.dump(pickledict,open(pickleFile + '-tmp.pickle','wb'))
+            np.save(pickleFile + '-samples-tmp',samples)
+            np.save(pickleFile + '-lnprob-tmp',lnprob)
+
+            os.rename(pickleFile + '-tmp.pickle',     pickleFile + '.pickle')
+            os.rename(pickleFile + '-samples-tmp.npy',pickleFile + '-samples.npy')
+            os.rename(pickleFile + '-lnprob-tmp.npy', pickleFile + '-lnprob.npy')
 
     samples = samples[Madapt:, :]
     lnprob = lnprob[Madapt:]
